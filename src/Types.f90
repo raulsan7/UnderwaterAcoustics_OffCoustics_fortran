@@ -7,15 +7,16 @@ IMPLICIT NONE
 PUBLIC
 
 
-
 ! ========================================
-! WIND TURBINE
+! WIND TURBINE (For input)
 ! ========================================
-TYPE :: WindTurbine_t
+TYPE :: Config_WindTurbine_t
 
     ! --- Input parameters --- !
-    CHARACTER(len=100) :: rootname              ! [-] Name without extensions of the OpenFAST output files
+    CHARACTER(len=200) :: rootname              ! [-] Name without extensions of the OpenFAST output files
     CHARACTER(len=200) :: OP_output_dir         ! [-] Directory with OpenFast output files
+    CHARACTER(len=200) :: OP_output_path        ! [-] Openfast output file path
+    CHARACTER(len=200) :: OP_SubDyn_path        ! [-] Openfast SubDyn file path
     LOGICAL            :: Binary                ! [-] Wheter OpenFast files are binary (.outb) or not (.out)
     REAL(WP)           :: WindSpeed             ! [m/s] Wind Speed in norm    
     REAL(WP)           :: WindDir               ! [deg] Wind direction 0 deg points to +x axis (anticlockwise from +x)
@@ -24,14 +25,19 @@ TYPE :: WindTurbine_t
     INTEGER(I32)       :: Nnodes                ! [-] Number of structural nodes in the OpenFAST model
     REAL(WP)           :: AxisPos(2)            ! [m] Position of the turbine axis in xy plane
     REAL(WP)           :: BariPos(2)            ! [m] Position of the turbine baricenter in xy plane
+    REAL(WP)           :: From                  ! [-] Fraction to start reading input
+    REAL(WP)           :: Upto                  ! [-] Fraction to stop  reading input
+    INTEGER(I32)       :: skip                  ! [-] skips time snapshots as time(::skip)
+    LOGICAL            :: filter_freqs          ! [-] Wheter to delete non usefull frequencies
+    REAL(WP)           :: freqs_over            ! [-] Frequencies smaller than freqs_over wont be filtered
 
-END TYPE WindTurbine_t
+END TYPE Config_WindTurbine_t
 
 
 ! ========================================
-! ENVIRONMENT
+! ENVIRONMENT (For input)
 ! ========================================
-TYPE :: Environment_t
+TYPE :: Config_Environment_t
 
     ! --- Input parameters --- !
     REAL(WP)           :: depth_base            ! [m] Site depth
@@ -41,13 +47,13 @@ TYPE :: Environment_t
     REAL(WP)           :: attenuation_surface   ! [-] Surface attenuation coefficient
     REAL(WP)           :: attenuation_bottom    ! [-] Seabed  attenuation coefficient
 
-END TYPE Environment_t
+END TYPE Config_Environment_t
 
 
 ! ========================================
-! ACOUSTIC SOLVER
+! ACOUSTIC SOLVER (For input)
 ! ========================================
-TYPE :: Solver_t
+TYPE :: Config_Solver_t
 
     ! --- Input parameters --- !
     LOGICAL            :: debug                 ! [-] More info for debugin
@@ -55,19 +61,20 @@ TYPE :: Solver_t
     CHARACTER(len=200) :: save_path             ! [-] Where to save results
     CHARACTER(len=50)  :: method                ! [-] Acoustic method to use
 
-END TYPE Solver_t
+END TYPE Config_Solver_t
 
 
 ! ========================================
-! CONFIGURATION
+! CONFIGURATION (For input)
 ! ========================================
 TYPE :: Config_t
 
-    TYPE(WindTurbine_t) :: turbine
-    TYPE(Environment_t) :: env
-    TYPE(Solver_t)      :: solver
+    TYPE(Config_WindTurbine_t) :: turbine
+    TYPE(Config_Environment_t) :: env
+    TYPE(Config_Solver_t)      :: solver
 
-END TYPE
+END TYPE Config_t
+
 
 
 

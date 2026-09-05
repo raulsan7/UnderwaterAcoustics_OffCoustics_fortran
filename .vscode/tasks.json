@@ -1,0 +1,33 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "FPM Build (Compilar)",
+      "type": "shell",
+      "command": "fpm build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "FPM Run (Ejecutar normal)",
+      "type": "shell",
+      "command": "fpm run",
+      "problemMatcher": []
+    },
+    {
+      "label": "FPM Run (Optimizado + OpenMP)",
+      "type": "shell",
+      "command": "fpm run --flag \"-O3 -fopenmp\"",
+      "problemMatcher": []
+    },
+    {
+      "label": "FPM Test (Probar)",
+      "type": "shell",
+      "command": "fpm test",
+      "problemMatcher": []
+    }
+  ]
+}

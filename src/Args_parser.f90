@@ -30,24 +30,30 @@ SUBROUTINE read_input_file(file_path, config)
     REAL(WP)           :: attenuation_surface
     REAL(WP)           :: attenuation_bottom
 
-    CHARACTER(len=100) :: rootname
+    CHARACTER(len=200) :: rootname
     CHARACTER(len=200) :: OP_output_dir
+    CHARACTER(len=200) :: OP_output_filename
+    CHARACTER(len=200) :: OP_SubDyn_filename
     LOGICAL            :: Binary
     REAL(WP)           :: WindSpeed
     REAL(WP)           :: WindDir
     REAL(WP)           :: Depth
     INTEGER(I32)       :: Nmembers
     INTEGER(I32)       :: Nnodes
+    INTEGER(I32)       :: skip
     REAL(WP)           :: AxisPos(2)
     REAL(WP)           :: BariPos(2)
+    REAL(WP)           :: From, Upto, freqs_over
+    LOGICAL            :: filter_freqs
 
     ! Namelist definitions
     namelist /solver_config/ debug, in_cluster, save_path, method
     namelist /environment_config/ depth_base, speed_sound_base, density_base, &
                                     reference_pressure, attenuation_surface, &
                                     attenuation_bottom
-    namelist /turbine_config/ rootname, OP_output_dir, Binary, WindSpeed, &
-                                WindDir, Depth, Nmembers, Nnodes, AxisPos, BariPos
+    namelist /turbine_config/ rootname, OP_output_dir, OP_output_filename, OP_SubDyn_filename, &
+                              Binary, WindSpeed, WindDir, Depth, Nmembers, Nnodes, AxisPos, BariPos, &
+                              From, Upto, skip, filter_freqs
 
     ! ==============================
     ! Defaults
@@ -67,17 +73,23 @@ SUBROUTINE read_input_file(file_path, config)
     attenuation_bottom  = 0.5_WP
 
     ! Turbine config
-    rootname      = 'DTU_DeltaWind_mn_ws11.4'
-    OP_output_dir = '../OP_output/'
-    Binary        = .true.
-    WindSpeed     = 11.4_WP
-    WindDir       = 0.0_WP
-    Depth         = 30.0_WP
-    Nmembers      = 8
-    Nnodes        = 5
-    AxisPos       = (/ 0.0_WP, 0.0_WP /)
-    BariPos       = (/ 0.0_WP, 0.0_WP /)
-
+    rootname           = 'DTU_DeltaWind_mn_ws11.4'
+    OP_output_dir      = '../OP_output/'
+    OP_output_filename = 'None'
+    OP_SubDyn_filename = 'None'
+    Binary             = .true.
+    WindSpeed          = 11.4_WP
+    WindDir            = 0.0_WP
+    Depth              = 30.0_WP
+    Nmembers           = 8
+    Nnodes             = 5
+    AxisPos            = (/ 0.0_WP, 0.0_WP /)
+    BariPos            = (/ 0.0_WP, 0.0_WP /)
+    From               = 0.0
+    Upto               = 1.0
+    skip               = 1
+    filter_freqs       = .true.
+    freqs_over         = 10.0_WP
 
 
     ! Open and read namelist file
@@ -128,6 +140,8 @@ SUBROUTINE read_input_file(file_path, config)
 
     config % turbine % rootname        = rootname
     config % turbine % OP_output_dir   = OP_output_dir
+    config % turbine % OP_output_path  = OP_output_filename
+    config % turbine % OP_SubDyn_path  = OP_SubDyn_filename
     config % turbine % Binary          = Binary
     config % turbine % WindSpeed       = WindSpeed
     config % turbine % WindDir         = WindDir
@@ -136,6 +150,11 @@ SUBROUTINE read_input_file(file_path, config)
     config % turbine % Nnodes          = Nnodes
     config % turbine % AxisPos         = AxisPos
     config % turbine % BariPos         = BariPos
+    config % turbine % From            = From
+    config % turbine % Upto            = Upto
+    config % turbine % skip            = skip
+    config % turbine % filter_freqs    = filter_freqs
+    config % turbine % freqs_over    = freqs_over
 
 END SUBROUTINE read_input_file
 

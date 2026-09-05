@@ -1,0 +1,609 @@
+MODULE DTU10MWFloating
+
+USE Kinds
+USE Types, ONLY: Config_WindTurbine_t
+USE WindTurbine, ONLY: WindTurbine_t, drivetrain10MW_excitation_spectrum, init
+
+IMPLICIT NONE
+
+PRIVATE 
+PUBLIC :: DTU10MWFloating_t
+
+
+! ------------------------------
+! Derived type definition
+! ------------------------------
+TYPE, EXTENDS(WindTurbine_t) :: DTU10MWFloating_t
+    ! Physical and structural parameters specific to the DTU 10 MW FLoating CENER DeltaWind version
+    REAL(WP) :: col_D = 14.5_WP         ! [m] Columns Diameter
+    REAL(wp) :: XsecA = 10.875_WP       ! [m] Pontoon width
+    REAL(wp) :: XsecB = 7.0_WP          ! [m] Pontoon height
+    REAL(wp) :: rho_wat = 1025.0_WP     ! [kg/m^3] Water density
+    REAL(wp) :: rho_mat = 7850.0_WP     ! [kg/m^3] Material density
+    REAL(wp) :: t       = 0.023_WP      ! [m] Wall thickness
+    REAL(wp) :: wet_area = 9659.07      ! [m^2] Wetted area
+
+    INTEGER(I32) :: col_members(3,2) = reshape([0,2,4, 1,3,5], [3,2])  ! [-] Column members ID list: [[0,1],[2,3],[4,5]]
+    INTEGER(I32) :: pon_members(3,1) = reshape([6, 7, 8], [3,1])        ! [-] Pontoon members ID lists: [[6],[7],[8]]
+
+    ! Mask needed
+    LOGICAL, ALLOCATABLE :: keep_flat(:)
+
+    CONTAINS
+    ! --- Deferred(abstract) procedures --- !
+    PROCEDURE :: init                          => init_DTU10MWFloating_t
+    PROCEDURE :: compute_force                 => compute_force_DTU10MWFloating_t
+    PROCEDURE :: compute_mass                  => compute_mass_DTU10MWFloating_t
+    PROCEDURE :: filter_frequencies            => filter_frequencies_DTU10MWFloating_t
+    PROCEDURE :: save_specific_params          => save_specific_params_DTU10MWFloating_t
+    PROCEDURE :: get_impedance_corrected_force => get_impedance_corrected_force_DTU10MWFloating_t
+
+END TYPE DTU10MWFloating_t
+
+
+CONTAINS
+
+SUBROUTINE init_DTU10MWFloating_t(self, config)
+    CLASS(DTU10MWFloating_t)  , INTENT(INOUT) :: self
+    TYPE(Config_WindTurbine_t), INTENT(IN)  :: config
+
+    ! Local variables
+    LOGICAL :: exists = .false.
+
+    CALL init(self, config)
+
+
+    ! Define path to rpm curve HARCODED
+    self % path_rpm = "../wind_speed_curves_DTU_10MW/rpm_ws.csv"
+
+    ! Verify that the rpm curve file exists
+    inquire(file= self % path_rpm, exist=exists)
+    if (.not. exists) error stop "DTU10MWFloating_t % init: RPM curve file not found: " // self % path_rpm
+
+    ! Set the case type
+    self % case_type = "Floating"
+
+END SUBROUTINE init_DTU10MWFloating_t
+
+
+SUBROUTINE compute_force_DTU10MWFloating_t(self, config, verbose)
+    USE MathUtils, ONLY: compute_rfft
+    
+    CLASS(DTU10MWFloating_t)  , INTENT(INOUT) :: self
+    TYPE(Config_WindTurbine_t), INTENT(IN)  :: config
+    LOGICAL                   , INTENT(IN)  :: verbose
+
+    ! Local variables
+    INTEGER(I32) :: Nm, Nn, nt, nf, i, j, k, v, Nnodes_wet, Nfreqs_new
+    INTEGER(I32) :: m0, m1, m, global_idx
+    REAL(WP)     :: dt, F_memory_mb
+    LOGICAL      :: verbose_, filter_freqs_
+    INTEGER(I32) :: skipf_
+    REAL(WP)    , ALLOCATABLE :: acc_flat(:,:,:), mass(:), added_mass(:)
+    REAL(WP)    , ALLOCATABLE :: freqs(:), mass_eff(:,:), freqs_new(:)
+    COMPLEX(WP) , ALLOCATABLE :: A_flat(:,:,:), F_temp(:,:,:,:)
+    COMPLEX(WP) , ALLOCATABLE :: A(:,:,:,:), F_filtered(:,:,:,:)
+    LOGICAL     , ALLOCATABLE :: mask_freqs_to_use(:), keep(:,:), keep_flat(:)
+    INTEGER(I32), ALLOCATABLE :: valid_node(:), valid_member(:)
+
+
+    ! Use the parsed configuration for runtime options.
+    filter_freqs_ = config%filter_freqs
+    verbose_      = verbose
+    skipf_        = config%skip
+
+    Nm = self % Nmembers
+    Nn = self % Nnodes
+    nt = size(self % time)
+    dt = self % time(2) - self % time(1)
+
+    ! Acceleration flatten
+    ALLOCATE(acc_flat(nt, Nm*Nn, 3))
+    !$OMP PARALLEL DO COLLAPSE(2) private(i)
+    do j = 1, Nm
+        do k = 1, Nn
+            global_idx = (j-1) * Nn + k
+            do i = 1, nt
+                acc_flat(i, global_idx, 1) = self % acc(i, j, k, 1)
+                acc_flat(i, global_idx, 2) = self % acc(i, j, k, 2)
+                acc_flat(i, global_idx, 3) = self % acc(i, j, k, 3)
+            end do
+        end do
+    end do
+    !$OMP END PARALLEL DO
+
+    ! Compute acceleration RFFT
+    CALL compute_rfft(acc_flat, nt, dt, skipf=skipf_, remove_zero=.true., &
+                      array_out=A_flat, freqs=freqs)
+    self % Freqs = freqs
+    nf = size(freqs)
+
+    ! Recover acceleration in chape (nf, Nm, Nn, 3)
+    ALLOCATE(A(nf, Nm, Nn, 3))
+    !$omp parallel do collapse(2) private(i)
+    do j = 1, Nm
+        do k = 1, Nn
+            do i = 1, nf
+                A(i, j, k, 1) = A_flat(i, (j - 1) * Nn + k, 1)
+                A(i, j, k, 2) = A_flat(i, (j - 1) * Nn + k, 2)
+                A(i, j, k, 3) = A_flat(i, (j - 1) * Nn + k, 3)
+            end do
+        end do
+    end do
+    !$omp end parallel do
+    DEALLOCATE(acc_flat, A_flat)
+
+    ! Compute mass properties
+    CALL self % compute_mass(mass, added_mass)
+
+    ! Convert the 1D arrays into a 2D matrix (Nm, Nn) matching C-order layout
+    ALLOCATE(mass_eff(Nm, Nn))
+    !$omp parallel do collapse(2) private(i, j)
+    do i = 1, Nm
+        do j = 1, Nn
+            global_idx = (i - 1) * Nn + j
+            mass_eff(i, j) = mass(global_idx) + added_mass(global_idx)
+        end do
+    end do
+    !$omp end parallel do
+
+    DEALLOCATE(mass, added_mass)
+
+    ! Compute force via F = -A * mass_eff
+    ALLOCATE(F_temp(nf, Nm, Nn, 3))
+
+    ! Parallelized over space and coordinate directions 
+    !$OMP PARALLEL DO COLLAPSE(3) PRIVATE(i, j, k)
+    do k = 1, 3
+        do j = 1, Nn
+            do i = 1, Nm
+                F_temp(:, i, j, k) = - A(:,i , j, k) * mass_eff(i, j)
+            end do
+        end do
+    end do
+    !$OMP END PARALLEL DO
+
+    DEALLOCATE(A, mass_eff)
+
+    ! Filter frequencies
+    if (filter_freqs_) then
+        mask_freqs_to_use = self % filter_frequencies(config%freqs_over)
+        Nfreqs_new = count(mask_freqs_to_use)
+
+        ALLOCATE(freqs_new(Nfreqs_new))
+        ALLOCATE(F_filtered(Nfreqs_new, Nm, Nn, 3))
+
+        v = 1
+        do i = 1, nf
+            if (mask_freqs_to_use(i)) then
+                freqs_new(v) = self % Freqs(i)
+                F_filtered(v, :, :, :) = F_temp(i, :, :, :)
+                v = v + 1
+            end if
+        end do
+
+        CALL MOVE_ALLOC(freqs_new, self % Freqs)
+        CALL MOVE_ALLOC(F_filtered, F_temp)
+        nf = Nfreqs_new
+        DEALLOCATE(mask_freqs_to_use)
+    end if
+
+    ! DEallocate time and raw accelerations
+    if (ALLOCATED(self % time)) DEALLOCATE(self % time)
+    if (ALLOCATED(self % acc)) DEALLOCATE(self % acc)
+
+    ! Remove duplicate and dry nodes
+    ALLOCATE(keep(Nm, Nn))
+    keep = .true.
+
+    ! Remove the first node of the second member of each column
+    do i = 1, 3
+        m1 = self % col_members(i,2) + 1 ! COnverto to 1-based indexing
+        keep(m1, 1) = .false.
+    end do
+
+    ! Remove dry nodes
+    do j = 1, Nn
+        do i = 1, Nm
+            if (self % x_all(i,j,3) > 0.0_WP) then
+                keep(i, j) = .false.
+            end if
+        end do
+    end do
+
+    ! Flatten mask
+    ALLOCATE(keep_flat(Nm * Nn))
+    do i = 1, Nm
+        do j = 1, Nn
+            keep_flat((i-1)*Nn+j) = keep(i,j)
+        end do
+    end do
+    DEALLOCATE(keep)
+
+    Nnodes_wet = count(keep_flat)
+
+    ! Build a thread-safe index map for retrieving valid wetted nodes
+    ALLOCATE(valid_member(Nnodes_wet), valid_node(Nnodes_wet))
+    v = 1
+    do i = 1, Nm
+        do j = 1, Nn
+            if (keep_flat((i - 1) * Nn + j)) then
+                valid_member(v) = i
+                valid_node(v) = j
+                v = v + 1
+            end if
+        end do
+    end do
+
+    ! Extract coordinates of submerged/non-duplicate nodes: self % x (Nnodes_wet, 3)
+    ALLOCATE(self % x(Nnodes_wet, 3))
+    !$omp parallel do private(v, i, j)
+    do v = 1, Nnodes_wet
+        i = valid_member(v)
+        j = valid_node(v)
+        self % x(v, :) = self % x_all(i, j, :)
+    end do
+    !$omp end parallel do
+
+    ! Extract corresponding forces: self % F (nf, Nnodes_wet, 3)
+    ALLOCATE(self % F(nf, Nnodes_wet, 3))
+    !$omp parallel do collapse(2) private(v, i, j, k)
+    do k = 1, 3
+        do v = 1, Nnodes_wet
+            i = valid_member(v)
+            j = valid_node(v)
+            self % F(:, v, k) = F_temp(:, i, j, k)
+        end do
+    end do
+    !$omp end parallel do
+
+    ! Store the keep_flat array on the turbine instance for future impedance correction
+    if (ALLOCATED(self % keep_flat)) DEALLOCATE(self % keep_flat)
+    CALL move_alloc(keep_flat, self % keep_flat)
+
+    DEALLOCATE(F_temp, valid_member, valid_node)
+
+    ! ==================================================================
+    ! 6. Summary verbose printout
+    ! ==================================================================
+    if (verbose_) then
+        F_memory_mb = real(storage_size(self % F) * size(self % F) / 8, WP) / 1024.0_WP / 1024.0_WP
+        print '(A)', repeat('=', 70)
+        print '(A)', 'FORCE COMPUTATION COMPLETED (FLOATING PLATFORM)'
+        print '(A)', repeat('-', 68)
+        print '(A, I6)', 'Nodes (wet): ', Nnodes_wet
+        print '(A, I6)', 'Frequencies: ', nf
+        print '(A, F6.2, A)', 'Memory (F):  ', F_memory_mb, ' MB'
+        print '(A)', repeat('=', 70)
+    end if
+
+
+END SUBROUTINE compute_force_DTU10MWFloating_t
+
+
+SUBROUTINE compute_mass_DTU10MWFloating_t(self, mass, added_mass)
+    USE MathUtils, ONLY: divide_span
+
+    CLASS(DTU10MWFloating_t), INTENT(INOUT) :: self
+    REAL(WP), ALLOCATABLE, INTENT(OUT)   :: mass(:)
+    REAL(WP), ALLOCATABLE, INTENT(OUT)   :: added_mass(:)
+
+    ! Local variables
+    INTEGER(I32) :: Nm, Nn, Nnodes_total, i, j, k, v, col_m0, col_m1, pon_m, global_idx
+    REAL(WP)     :: length, R_outer_col, R_inner_col
+    REAL(WP)     :: A_struct_col, A_added_col, A_struct_pon, A_added_pon
+
+    ! Representative geometry arrays
+    REAL(WP), ALLOCATABLE :: col_pos(:,:)       ! Coordinates of full column (2*Nn - 1, 3)
+    REAL(WP), ALLOCATABLE :: nodes_col_1d(:)    ! 1D coordinates along column axis (2*Nn - 1)
+    REAL(WP), ALLOCATABLE :: ds_col(:)          ! Spacing intervals for columns (2*Nn - 1)
+    REAL(WP), ALLOCATABLE :: mass_col(:)        ! Dry mass along representative column (2*Nn - 1)
+    REAL(WP), ALLOCATABLE :: added_mass_col(:)  ! Fluid added mass along column (2*Nn - 1)
+
+    REAL(WP), ALLOCATABLE :: arc_length(:)      ! Cumulative arc-length along pontoon (Nn)
+    REAL(WP), ALLOCATABLE :: ds_pon(:)          ! Spacing intervals for pontoons (Nn)
+    REAL(WP), ALLOCATABLE :: mass_pon(:)        ! Dry mass along representative pontoon (Nn)
+    REAL(WP), ALLOCATABLE :: added_mass_pon(:)  ! Fluid added mass along pontoon (Nn)
+
+    ! Intermediate 2D distribution arrays (Nm, Nn)
+    REAL(WP), ALLOCATABLE :: mass_2D(:,:)
+    REAL(WP), ALLOCATABLE :: added_mass_2D(:,:)
+
+    Nm = self % Nmembers
+    Nn = self % Nnodes
+    Nnodes_total = Nm * Nn
+
+    ! Retrieve representative member IDs (converting from 0-based to 1-based indexing)
+    col_m0 = self % col_members(1, 1) + 1
+    col_m1 = self % col_members(1, 2) + 1
+    pon_m  = self % pon_members(1, 1) + 1
+
+
+    ! ==================================================================
+    ! 1. REPRESENTATIVE COLUMN CALCULATIONS
+    ! ==================================================================
+    ! Concatenate column node coordinates dropping the duplicate shared node
+    ALLOCATE(col_pos(2 * Nn - 1, 3))
+    col_pos(1:Nn, :) = self % x_all(col_m0, :, :)
+    col_pos(Nn + 1 : 2 * Nn - 1, :) = self % x_all(col_m1, 2:Nn, :)
+
+    ! Compute physical column height
+    length = norm2(col_pos(2 * Nn - 1, :) - col_pos(1, :))
+
+    ! Generate linearly spaced 1D coordinates from 0 to total length
+    ALLOCATE(nodes_col_1d(2 * Nn - 1))
+    do i = 1, 2 * Nn - 1
+        nodes_col_1d(i) = (real(i - 1, WP) * length) / real(2 * Nn - 2, WP)
+    end do
+
+    ! Calculate spacing intervals
+    ds_col = divide_span(nodes_col_1d)
+
+    ! Cylindrical cross-section areas
+    R_outer_col  = self % col_D / 2.0_WP
+    R_inner_col  = R_outer_col - self % t
+    A_struct_col = PI * (R_outer_col**2 - R_inner_col**2)
+    A_added_col  = PI * R_outer_col**2
+
+    ! Distributed structural mass and added mass for columns
+    ALLOCATE(mass_col(2 * Nn - 1), added_mass_col(2 * Nn - 1))
+    mass_col       = A_struct_col * self % rho_mat * ds_col
+    added_mass_col = A_added_col * self % rho_wat * ds_col
+
+    ! Add localized top/bottom steel closure lids mass (plate volume * density)
+    mass_col(1)           = mass_col(1) + (PI * R_outer_col**2 * self % rho_mat * self % t)
+    mass_col(2 * Nn - 1)  = mass_col(2 * Nn - 1) + (PI * R_outer_col**2 * self % rho_mat * self % t)
+
+    DEALLOCATE(col_pos, nodes_col_1d, ds_col)
+
+
+    ! ==================================================================
+    ! 2. REPRESENTATIVE PONTOON CALCULATIONS
+    ! ==================================================================
+    ! Calculate cumulative horizontal arc-length along the pontoon axis
+    ALLOCATE(arc_length(Nn))
+    arc_length(1) = 0.0_WP
+    do i = 2, Nn
+        arc_length(i) = arc_length(i-1) + norm2(self % x_all(pon_m, i, :) - self % x_all(pon_m, i-1, :))
+    end do
+
+    ! Calculate spacing intervals
+    ds_pon = divide_span(arc_length)
+
+    ! Hollow square cross-section areas
+    A_struct_pon = (self % XsecA * self % XsecB) - &
+                   ((self % XsecA - 2.0_WP * self % t) * (self % XsecB - 2.0_WP * self % t))
+    A_added_pon  = self % XsecA * self % XsecB
+
+    ! Distributed structural mass and added mass for pontoons
+    ALLOCATE(mass_pon(Nn), added_mass_pon(Nn))
+    mass_pon       = A_struct_pon * self % rho_mat * ds_pon
+    added_mass_pon = A_added_pon * self % rho_wat * ds_pon
+
+    DEALLOCATE(arc_length, ds_pon)
+
+
+    ! ==================================================================
+    ! 3. ASSEMBLE STRUCTURAL MASS GRID & FLATTEN
+    ! ==================================================================
+    ALLOCATE(mass_2D(Nm, Nn), added_mass_2D(Nm, Nn))
+    mass_2D       = 0.0_WP
+    added_mass_2D = 0.0_WP
+
+    ! Broadcast columns (mapping split spans contiguously)
+    do i = 1, 3
+        col_m0 = self % col_members(i, 1) + 1
+        col_m1 = self % col_members(i, 2) + 1
+
+        mass_2D(col_m0, :) = mass_col(1 : Nn)
+        mass_2D(col_m1, :) = mass_col(Nn : 2 * Nn - 1)
+
+        added_mass_2D(col_m0, :) = added_mass_col(1 : Nn)
+        added_mass_2D(col_m1, :) = added_mass_col(Nn : 2 * Nn - 1)
+    end do
+
+    ! Broadcast pontoons
+    do i = 1, 3
+        pon_m = self % pon_members(i, 1) + 1
+
+        mass_2D(pon_m, :)       = mass_pon(:)
+        added_mass_2D(pon_m, :) = added_mass_pon(:)
+    end do
+
+    DEALLOCATE(mass_col, added_mass_col, mass_pon, added_mass_pon)
+
+    ! Allocate outputs of size Nnodes_total (Nm * Nn)
+    ALLOCATE(mass(Nnodes_total), added_mass(Nnodes_total))
+
+    ! Flatten in C-order matching Python's flatten exactly
+    do i = 1, Nm
+        do j = 1, Nn
+            global_idx = (i - 1) * Nn + j
+            mass(global_idx)       = mass_2D(i, j)
+            added_mass(global_idx) = added_mass_2D(i, j)
+        end do
+    end do
+
+    DEALLOCATE(mass_2D, added_mass_2D)
+
+END SUBROUTINE compute_mass_DTU10MWFloating_t
+
+
+FUNCTION filter_frequencies_DTU10MWFloating_t(self, freqs_over) RESULT(mask)
+    USE IOUtils, ONLY: read_curve
+    USE MathUtils, ONLY: generate_timeseries_banded_sines, filter_non_usefull_freqs
+
+    CLASS(DTU10MWFloating_t), INTENT(INOUT) :: self
+    REAL(WP), INTENT(IN), OPTIONAL        :: freqs_over
+    LOGICAL, ALLOCATABLE                  :: mask(:)
+
+    ! Local variables
+    CHARACTER(len=20), ALLOCATABLE :: keys(:)
+    REAL(WP)         , ALLOCATABLE :: freqs_amp(:,:)
+    REAL(WP)         , ALLOCATABLE :: freqs_to_use(:)
+    REAL(WP)                       :: rpm, freqs_over_ = 10.0_WP
+
+    REAL(WP), ALLOCATABLE :: tmp_signal(:)
+
+    if (PRESENT(freqs_over)) freqs_over_ = freqs_over
+
+    ! Read rpm at current wind speed
+    rpm = read_curve(self % path_rpm, self % WindSpeed)
+
+    ! Generate drivetrain excitation spectrum
+    CALL drivetrain10MW_excitation_spectrum(rpm=rpm, freqs_amp=freqs_amp, keys=keys)
+
+    ! Get allowed frequencies
+    CALL generate_timeseries_banded_sines(peaks=freqs_amp, keys=keys, t=self % Time, &
+                                         zeta=0.02_WP, used_freqs=.true., a=tmp_signal, &
+                                         freqs_out=freqs_to_use)
+
+    ! Build mask
+    mask = filter_non_usefull_freqs(self % Freqs, freqs_to_use, freqs_over_)
+
+    DEALLOCATE(tmp_signal)
+
+    DEALLOCATE(freqs_amp, keys, freqs_to_use)
+
+END FUNCTION filter_frequencies_DTU10MWFloating_t
+
+
+SUBROUTINE save_specific_params_DTU10MWFloating_t(self, save_path, ichar)
+    USE IOUtils, ONLY: save_to_hdf5
+
+    CLASS(DTU10MWFloating_t), INTENT(IN) :: self
+    CHARACTER(len=*)      , INTENT(IN) :: save_path
+    CHARACTER(len=*)      , INTENT(IN), OPTIONAL :: ichar
+    
+    if (PRESENT(ichar)) then
+        CALL save_to_hdf5(save_path, "col_D_"       // ichar, self % col_D)
+        CALL save_to_hdf5(save_path, "XsecA_"       // ichar, self % XsecA)
+        CALL save_to_hdf5(save_path, "XsecB_"       // ichar, self % XsecB)
+        CALL save_to_hdf5(save_path, "t_"           // ichar, self % t)
+        CALL save_to_hdf5(save_path, "rho_mat_"     // ichar, self % rho_mat)
+        CALL save_to_hdf5(save_path, "wet_area_"    // ichar, self % wet_area)
+        CALL save_to_hdf5(save_path, "col_members_" // ichar, self % col_members)
+        CALL save_to_hdf5(save_path, "pon_members_" // ichar, self % pon_members)
+    else
+        CALL save_to_hdf5(save_path, "col_D_"      , self % col_D)
+        CALL save_to_hdf5(save_path, "XsecA_"      , self % XsecA)
+        CALL save_to_hdf5(save_path, "XsecB_"      , self % XsecB)
+        CALL save_to_hdf5(save_path, "t_"          , self % t)
+        CALL save_to_hdf5(save_path, "rho_mat_"    , self % rho_mat)
+        CALL save_to_hdf5(save_path, "wet_area_"   , self % wet_area)
+        CALL save_to_hdf5(save_path, "col_members_", self % col_members)
+        CALL save_to_hdf5(save_path, "pon_members_", self % pon_members)
+    end if
+
+END SUBROUTINE save_specific_params_DTU10MWFloating_t
+
+
+FUNCTION get_impedance_corrected_force_DTU10MWFloating_t(self, c) RESULT(corrected_F)
+    USE MathUtils, ONLY: alpha_hankel
+    CLASS(DTU10MWFloating_t), INTENT(IN) :: self
+    REAL(WP) , INTENT(IN) :: c
+    COMPLEX(WP) , ALLOCATABLE :: corrected_F(:,:,:)
+
+    ! Local variables (CORRECTED: Added idx and p_idx to the list)
+    INTEGER(I32) :: Nm, Nn, Nnodes_wet, nf, c_idx, p_idx, m, j, i, m0, m1, global_idx, idx
+    INTEGER(I32), ALLOCATABLE :: original_to_wet(:)
+    COMPLEX(WP), ALLOCATABLE :: alpha_full(:,:)
+    REAL(WP), ALLOCATABLE :: k(:)
+    COMPLEX(WP), ALLOCATABLE :: alpha_col(:), alpha_pon(:)
+    REAL(WP) :: D_pon
+
+    Nm = self % Nmembers
+    Nn = self % Nnodes
+    Nnodes_wet = size(self % x, 1)
+    nf = size(self % Freqs)
+
+    ! 1. Map original flat node indices to wetted nodes (-1 for dry/removed nodes)
+    ALLOCATE(original_to_wet(Nm * Nn))
+    original_to_wet = -1
+    idx = 1
+    do i = 1, Nm * Nn
+        if (self % keep_flat(i)) then
+            original_to_wet(i) = idx
+            idx = idx + 1
+        end if
+    end do
+
+    ! 2. Initialize the full scattering correction array (nf, Nnodes_wet) with 1.0
+    ALLOCATE(alpha_full(nf, Nnodes_wet))
+    alpha_full = (1.0_WP, 0.0_WP)
+
+    ! 3. Compute Wavenumber vector k
+    ALLOCATE(k(nf))
+    k = (2.0_WP * PI * self % Freqs) / c
+
+    ! ==================================================================
+    ! 4. COLUMNS SHIELDING CORRECTION (Cylindrical Hankel factors)
+    ! ==================================================================
+    alpha_col = alpha_hankel(k, self % col_D) ! Shape (nf)
+
+    do c_idx = 1, 3
+        m0 = self % col_members(c_idx, 1) + 1  ! Convert from 0-based to 1-based
+        m1 = self % col_members(c_idx, 2) + 1
+
+        ! First column member (all nodes)
+        do j = 1, Nn
+            global_idx = (m0 - 1) * Nn + j
+            idx = original_to_wet(global_idx)
+            if (idx >= 1) then
+                alpha_full(:, idx) = alpha_col(:)
+            end if
+        end do
+
+        ! Second column member (skip first node as it is duplicate/removed)
+        do j = 2, Nn
+            global_idx = (m1 - 1) * Nn + j
+            idx = original_to_wet(global_idx)
+            if (idx >= 1) then
+                alpha_full(:, idx) = alpha_col(:)
+            end if
+        end do
+    end do
+    DEALLOCATE(alpha_col)
+
+    ! ==================================================================
+    ! 5. PONTOONS SHIELDING CORRECTION (Equivalent diameter Hankel factors)
+    ! ==================================================================
+    ! Equivalent circular diameter based on square cross-section area
+    D_pon = 2.0_WP * sqrt((self % XsecA * self % XsecB) / PI)
+    alpha_pon = alpha_hankel(k, D_pon) ! Shape (nf)
+
+    do p_idx = 1, 3
+        m = self % pon_members(p_idx, 1) + 1  ! Convert from 0-based to 1-based
+        
+        do j = 1, Nn
+            global_idx = (m - 1) * Nn + j
+            idx = original_to_wet(global_idx)
+            if (idx >= 1) then
+                alpha_full(:, idx) = alpha_pon(:)
+            end if
+        end do
+    end do
+    DEALLOCATE(alpha_pon)
+
+    ! ==================================================================
+    ! 6. APPLY CORRECTION: F_corrected = F * abs(alpha_full)
+    ! ==================================================================
+    ALLOCATE(corrected_F(nf, Nnodes_wet, 3))
+
+    ! High-performance vectorized multiplication over spatial components
+    !$omp parallel do collapse(3) private(i, j, m)
+    do m = 1, 3
+        do j = 1, Nnodes_wet
+            do i = 1, nf
+                corrected_F(i, j, m) = self % F(i, j, m) * abs(alpha_full(i, j))
+            end do
+        end do
+    end do
+    !$omp end parallel do
+
+    ! Cleanup
+    DEALLOCATE(original_to_wet, alpha_full, k)
+
+END FUNCTION get_impedance_corrected_force_DTU10MWFloating_t
+
+END MODULE DTU10MWFloating

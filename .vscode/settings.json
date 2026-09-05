@@ -1,0 +1,14 @@
+{
+  "fortran.linter.compiler": "gfortran",
+  "fortran.linter.includePaths": [
+    "${workspaceFolder}/build/**",
+    "/usr/include/**",
+    "/usr/local/include/**",
+    "/opt/homebrew/include/**",
+    "C:/msys64/mingw64/include/**"
+  ],
+  "fortran.fortls.directories": [
+    "${workspaceFolder}/src/**",
+    "${workspaceFolder}/app/**"
+  ]
+}
