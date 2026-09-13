@@ -46,13 +46,14 @@ TYPE, ABSTRACT :: WindTurbine_t
     CHARACTER(len=:), ALLOCATABLE :: case_type          ! [-] Tag to distinguish turbine
 
     ! --- Derived variables --- !
-
+    LOGICAL :: is_monopile                              ! [-] Wheter turbine is monopile or floating
 
     CONTAINS
     ! --- Shared procedures --- !
     PROCEDURE :: init                           ! Constructor
     PROCEDURE :: read_input                     ! Reads OpenFast outputs
     PROCEDURE :: translate_align_with_WindDir   ! Place nodes correctly
+    PROCEDURE :: turbine_to_source
 
 
     ! --- Deferred procedures --- !
@@ -128,7 +129,7 @@ CONTAINS
 SUBROUTINE init(self, config)
 
     CLASS(WindTurbine_t)      , INTENT(INOUT) :: self
-    TYPE(Config_WindTurbine_t), INTENT(IN)    :: config
+    TYPE(Config_WindTurbine_t), INTENT(INOUT) :: config
 
     ! Local variables
     CHARACTER(len=5) :: ext
@@ -220,16 +221,16 @@ SUBROUTINE read_input(self, config, verbose)
 
     if (verbose) then
         dt = self%Time(2) - self%Time(1)
-        print*,''
-        print '(A)', repeat('=', 70)
-        print '(A)', 'TURBINE: ' // trim(self%rootname)
-        print '(A)', repeat('-', 68)
-        print '(A, A)',  'Type: ', trim(self%case_type)
-        print '(A, F5.1, A, F5.1, A)', 'Wind Speed: ', self%WindSpeed, ' m/s   | Wind Direction: ', self%WindDir, ' deg'
-        print '(A, F5.1, A, F4.1, A, F4.1, A)', 'Water Depth: ', self%Depth,&
+        write(*,*) ''
+        write(*, '(A)') repeat('=', 70)
+        write(*, '(A)') 'TURBINE: ' // trim(self%rootname)
+        write(*, '(A)') repeat('-', 68)
+        write(*, '(A, A)')  'Type: ', trim(self%case_type)
+        write(*, '(A, F5.1, A, F5.1, A)') 'Wind Speed: ', self%WindSpeed, ' m/s   | Wind Direction: ', self%WindDir, ' deg'
+        write(*, '(A, F5.1, A, F4.1, A, F4.1, A)') 'Water Depth: ', self%Depth,&
          ' m   | Position: (', self%AxisPos(1), ', ', self%AxisPos(2), ') m'
-        print '(A, I6, A, F6.4, A)', 'Time Series: ', size(self%Time), ' samples @ ', dt, ' s/sample'
-        print '(A)', repeat('=', 70)
+        write(*, '(A, I6, A, F6.4, A)') 'Time Series: ', size(self%Time), ' samples @ ', dt, ' s/sample'
+        write(*, '(A)') repeat('=', 70)
         write(*,*) ">> OpenFAST data loaded successfully!"
         write(*,*)
     end if
@@ -287,6 +288,32 @@ SUBROUTINE translate_align_with_WindDir(self)
        !$omp end parallel do
     end if
 END SUBROUTINE
+
+
+SUBROUTINE turbine_to_source(self, config, sources)
+    CLASS(WindTurbine_t)  , INTENT(IN)  :: self
+    TYPE(Config_t)        , INTENT(IN)  :: config
+    TYPE(AcousticSource_t), INTENT(OUT) :: sources
+
+
+    if (.not. ALLOCATED(self % F) .or. .not. ALLOCATED(self % x)) then
+        error stop "turbine_to_source(): turbine forces not computed"
+    end if
+
+    ! Copy coordinates and active frequencies
+    sources % xyz  = self % x
+    sources % Freqs = self % Freqs
+
+    ! Apply force correction
+    if (config % solver % method == "ImageMethod") then
+        sources % force = self % get_impedance_corrected_force(config % env % speed_sound_base)
+    else
+        sources % force = self % F
+    end if
+
+    write(*,*) ">> [AcousticSource] Physical turbine forces translated into mathematical point dipoles"
+
+END SUBROUTINE turbine_to_source
 
 
 

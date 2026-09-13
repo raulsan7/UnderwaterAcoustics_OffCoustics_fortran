@@ -5,7 +5,6 @@
 &solver_config
     debug = .true.
     in_cluster = .false.
-    save_path = './turbine_acoustic_data/'
     method = 'ImageMethod'
 /
 

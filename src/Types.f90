@@ -30,6 +30,7 @@ TYPE :: Config_WindTurbine_t
     INTEGER(I32)       :: skip                  ! [-] skips time snapshots as time(::skip)
     LOGICAL            :: filter_freqs          ! [-] Wheter to delete non usefull frequencies
     REAL(WP)           :: freqs_over            ! [-] Frequencies smaller than freqs_over wont be filtered
+    LOGICAL            :: is_monopile           ! [-] Wheter turbine is monopile or floating
 
 END TYPE Config_WindTurbine_t
 
@@ -60,6 +61,7 @@ TYPE :: Config_Solver_t
     LOGICAL            :: in_cluster            ! [-] Wheter we are working on a cluster
     CHARACTER(len=200) :: save_path             ! [-] Where to save results
     CHARACTER(len=50)  :: method                ! [-] Acoustic method to use
+    INTEGER(I32)       :: block_size
 
 END TYPE Config_Solver_t
 
@@ -76,6 +78,28 @@ TYPE :: Config_t
 END TYPE Config_t
 
 
+! ========================================
+! ACOUSTIC SORCE ABSTRACTION
+! ========================================
+TYPE:: AcousticSource_t
+
+    REAL(WP)   , ALLOCATABLE :: xyz(:,:)            ! [m] Acoustic source coordinates (Nsources, 3)
+    COMPLEX(WP), ALLOCATABLE :: force(:,:,:)        ! [N] Complex dource forces (Nfreqs, Nsources, 3)
+    REAL(WP)   , ALLOCATABLE :: Freqs(:)            ! [Hz] Frequency verctor (Nfreqs)
+
+END TYPE AcousticSource_t
+
+
+! ========================================
+! HELPER FOR METHOD OF IMAGES
+! ========================================
+TYPE :: ImageSystem_t
+
+    REAL(WP)    , ALLOCATABLE :: nodes_pos(:,:)     ! [m] Nodes coordinates (Nnodes, 3)
+    COMPLEX(WP) , ALLOCATABLE :: force(:,:,:)       ! [N] Force array (Nfreqs, Nnodes, 3)
+    INTEGER(I32), ALLOCATABLE :: BC_all(:)          ! [-] Boundary conditions array
+
+END TYPE ImageSystem_t
 
 
 

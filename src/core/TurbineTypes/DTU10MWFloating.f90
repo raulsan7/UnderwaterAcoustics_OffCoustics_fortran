@@ -30,8 +30,11 @@ TYPE, EXTENDS(WindTurbine_t) :: DTU10MWFloating_t
     LOGICAL, ALLOCATABLE :: keep_flat(:)
 
     CONTAINS
-    ! --- Deferred(abstract) procedures --- !
+    ! --- Shared procedures --- !
     PROCEDURE :: init                          => init_DTU10MWFloating_t
+
+
+    ! --- Deferred(abstract) procedures --- !
     PROCEDURE :: compute_force                 => compute_force_DTU10MWFloating_t
     PROCEDURE :: compute_mass                  => compute_mass_DTU10MWFloating_t
     PROCEDURE :: filter_frequencies            => filter_frequencies_DTU10MWFloating_t
@@ -45,7 +48,7 @@ CONTAINS
 
 SUBROUTINE init_DTU10MWFloating_t(self, config)
     CLASS(DTU10MWFloating_t)  , INTENT(INOUT) :: self
-    TYPE(Config_WindTurbine_t), INTENT(IN)  :: config
+    TYPE(Config_WindTurbine_t), INTENT(INOUT) :: config
 
     ! Local variables
     LOGICAL :: exists = .false.
@@ -62,6 +65,10 @@ SUBROUTINE init_DTU10MWFloating_t(self, config)
 
     ! Set the case type
     self % case_type = "Floating"
+    self % is_monopile = .false.
+    config % is_monopile = self % is_monopile
+
+    CALL init(self, config)
 
 END SUBROUTINE init_DTU10MWFloating_t
 

@@ -41,13 +41,14 @@ SUBROUTINE read_input_file(file_path, config)
     INTEGER(I32)       :: Nmembers
     INTEGER(I32)       :: Nnodes
     INTEGER(I32)       :: skip
+    INTEGER(I32)       :: block_size
     REAL(WP)           :: AxisPos(2)
     REAL(WP)           :: BariPos(2)
     REAL(WP)           :: From, Upto, freqs_over
     LOGICAL            :: filter_freqs
 
     ! Namelist definitions
-    namelist /solver_config/ debug, in_cluster, save_path, method
+    namelist /solver_config/ debug, in_cluster, save_path, method, block_size
     namelist /environment_config/ depth_base, speed_sound_base, density_base, &
                                     reference_pressure, attenuation_surface, &
                                     attenuation_bottom
@@ -61,8 +62,9 @@ SUBROUTINE read_input_file(file_path, config)
     ! Solver config
     debug      = .false.
     in_cluster = .false.
-    save_path  = './turbine_acoustic_data/'
+    save_path  = 'None'
     method     = 'ImageMethod'
+    block_size = 128
 
     ! Environment config
     depth_base          = 30.0_WP
@@ -130,6 +132,7 @@ SUBROUTINE read_input_file(file_path, config)
     config % solver % in_cluster       = in_cluster
     config % solver % save_path        = save_path
     config % solver % method           = method
+    config % solver %block_size        = blocK_size
 
     config % env % depth_base          = depth_base
     config % env % speed_sound_base    = speed_sound_base
@@ -154,7 +157,7 @@ SUBROUTINE read_input_file(file_path, config)
     config % turbine % Upto            = Upto
     config % turbine % skip            = skip
     config % turbine % filter_freqs    = filter_freqs
-    config % turbine % freqs_over    = freqs_over
+    config % turbine % freqs_over      = freqs_over
 
 END SUBROUTINE read_input_file
 
