@@ -28,6 +28,7 @@ TYPE :: Config_WindTurbine_t
     REAL(WP)           :: From                  ! [-] Fraction to start reading input
     REAL(WP)           :: Upto                  ! [-] Fraction to stop  reading input
     INTEGER(I32)       :: skip                  ! [-] skips time snapshots as time(::skip)
+    INTEGER(I32)       :: skipf                  ! [-] skips time snapshots as freq(::skipf)
     LOGICAL            :: filter_freqs          ! [-] Wheter to delete non usefull frequencies
     REAL(WP)           :: freqs_over            ! [-] Frequencies smaller than freqs_over wont be filtered
     LOGICAL            :: is_monopile           ! [-] Wheter turbine is monopile or floating
@@ -45,8 +46,6 @@ TYPE :: Config_Environment_t
     REAL(WP)           :: speed_sound_base      ! [m/s] Base speed of sound in fluid
     REAL(WP)           :: density_base          ! [kg/m3] Base fluid density
     REAL(WP)           :: reference_pressure    ! [Pa] Fluid reference pressure
-    REAL(WP)           :: attenuation_surface   ! [-] Surface attenuation coefficient
-    REAL(WP)           :: attenuation_bottom    ! [-] Seabed  attenuation coefficient
 
 END TYPE Config_Environment_t
 
@@ -61,9 +60,29 @@ TYPE :: Config_Solver_t
     LOGICAL            :: in_cluster            ! [-] Wheter we are working on a cluster
     CHARACTER(len=200) :: save_path             ! [-] Where to save results
     CHARACTER(len=50)  :: method                ! [-] Acoustic method to use
-    INTEGER(I32)       :: block_size
+    INTEGER(I32)       :: block_size            ! [-] Block size for each CPU in parallel computations
 
 END TYPE Config_Solver_t
+
+
+! ========================================
+! METHOD OF IMAGES (For input)
+! ========================================
+TYPE :: Config_ImagesMethod_t
+
+    ! --- Input parameters --- !
+    INTEGER(I32) :: N_images
+    REAL(WP)     :: speed_sound
+    REAL(WP)     :: density
+    INTEGER(I32) :: UpperBC
+    INTEGER(I32) :: LowerBC
+    REAL(WP)     :: UpperHBC
+    REAL(WP)     :: LowerHBC
+    REAL(WP)     :: attenuation_surface
+    REAL(WP)     :: attenuation_bottom
+    REAL(WP)     :: epsilon
+
+END TYPE Config_ImagesMethod_t
 
 
 ! ========================================
@@ -74,6 +93,7 @@ TYPE :: Config_t
     TYPE(Config_WindTurbine_t) :: turbine
     TYPE(Config_Environment_t) :: env
     TYPE(Config_Solver_t)      :: solver
+    TYPE(Config_ImagesMethod_t) :: images_method
 
 END TYPE Config_t
 

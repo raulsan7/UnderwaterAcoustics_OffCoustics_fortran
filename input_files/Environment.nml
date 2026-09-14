@@ -1,0 +1,13 @@
+! =====================================================================
+! Environment configuration file
+! =====================================================================
+
+&environment_config
+    depth_base = 30.0
+    speed_sound_base = 1500.0
+    density_base = 1025.0
+    reference_pressure = 1.0e-6
+/
+
+
+! Mandatory: Leave blank space at the end of the file

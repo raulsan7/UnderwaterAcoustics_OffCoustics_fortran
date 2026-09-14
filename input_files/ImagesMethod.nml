@@ -1,0 +1,19 @@
+! =====================================================================
+! Images method configuration file
+! =====================================================================
+
+&ImagesMethod_config
+    N_images = 30
+    speed_sound = 1500.0
+    density = 1025.0
+    UpperBC = -1
+    LowerBC = 1
+    UpperHBC = 0.0
+    LowerHBC = -30.0
+    attenuation_surface = 1.0
+    attenuation_bottom = 0.5
+    epsilon = 1.0e-6
+/
+
+
+! Mandatory: Leave blank space at the end of the file

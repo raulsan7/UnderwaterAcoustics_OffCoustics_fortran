@@ -1,0 +1,14 @@
+! =====================================================================
+! Solver configuration file
+! =====================================================================
+
+&solver_config
+    method = 'ImagesMethod'
+    save_path = 'None'
+    block_size = 128
+    in_cluster = .false.
+    debug = .true.
+/
+
+
+! Mandatory: Leave blank space at the end of the file

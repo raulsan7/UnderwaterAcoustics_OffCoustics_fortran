@@ -1,25 +1,12 @@
 ! =====================================================================
-! Configuration file for the acoustic simulation
+! Turbine configuration file
 ! =====================================================================
-
-&solver_config
-    debug = .true.
-    in_cluster = .false.
-    method = 'ImageMethod'
-/
-
-&environment_config
-    depth_base = 30.0
-    speed_sound_base = 1500.0
-    density_base = 1025.0
-    reference_pressure = 1E-06
-    attenuation_surface = 1.0
-    attenuation_bottom = 0.5
-/
 
 &turbine_config
     rootname = 'DTU_DeltaWind_mn_ws11.4'
     OP_output_dir = '../OP_output/'
+    OP_output_filename = 'None'
+    OP_SubDyn_filename = 'None'
     Binary = .true.
     WindSpeed = 11.4
     WindDir = 0.0
@@ -28,4 +15,13 @@
     Nnodes = 5
     AxisPos = 0.0, 0.0
     BariPos = 0.0, 0.0
+    From = 0.0
+    Upto = 1.0
+    skip = 1
+    skipf = 1
+    filter_freqs = .true.
+    freqs_over = 10.0
 /
+
+
+! Mandatory: Leave blank space at the end of the file

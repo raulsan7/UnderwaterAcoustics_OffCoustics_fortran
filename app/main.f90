@@ -2,10 +2,11 @@ PROGRAM main
     
 USE Kinds
 USE Types
+USE omp_lib
 ! USE AcousticSource
 USE MathUtils, ONLY: format_elapsed
 USE WindTurbine, ONLY: WindTurbine_t
-USE Args_parser, ONLY: read_input_file
+USE Args_parser, ONLY: read_input_files
 USE AcousticSolver, ONLY: AcousticSolver_t
 USE DTU10MWMonopile, ONLY: DTU10MWMonopile_t
 USE DTU10MWFloating, ONLY: DTU10MWFloating_t
@@ -21,9 +22,10 @@ REAL(WP)         :: start_time, elapsed_display
 CHARACTER(len=8) :: tag
 
     WRITE(*,*) "=== Off_coustics_fortran Initialization ==="
+    start_time = real(omp_get_wtime(), WP)
 
     ! 1. Load namelist dinamically
-    CALL read_input_file("input.nml", config)
+    CALL read_input_files("./input_files/", config)
 
     ! (Optional: print Debug if config % solver % debug = .true.)
     if (config % solver % debug) then
@@ -36,8 +38,6 @@ CHARACTER(len=8) :: tag
         write(*,*) "Speed of sound:   ", config%env%speed_sound_base
         write(*,*) "Density base:     ", config%env%density_base
         write(*,*) "Ref pressure:     ", config%env%reference_pressure
-        write(*,*) "Surf attenuation: ", config%env%attenuation_surface
-        write(*,*) "Bot attenuation:  ", config%env%attenuation_bottom
         write(*,*) "--- Turbine physical properties ---"
         write(*,*) "OpenFAST Rootname: ", trim(config%turbine%rootname)
         write(*,*) "OpenFAST Out Dir:  ", trim(config%turbine%OP_output_dir)
@@ -71,19 +71,21 @@ CHARACTER(len=8) :: tag
     write(*,*) "Translating physical forces to mathematical acoustic sources..."
     CALL active_turbine % turbine_to_source(config, active_sources)
 
-    ! 5. Execute generic solver
-    write(*,*) "Launching acoustic propagation solver..."
-    select case(trim(config % solver % method))
-    case("ImageMethod")
-        allocate(MethodImages_t :: active_solver)
-    case("AnalyticalNormalModes")
-        allocate(AnalyticalNormalModes_t :: active_solver)
-    end select
-    !
-    CALL active_solver % init(active_sources, config % solver, config % solver % env)
+    DEALLOCATE(active_turbine)      ! Memory cleanup
+
+    ! ! 5. Execute generic solver
+    ! write(*,*) "Launching acoustic propagation solver..."
+    ! select case(trim(config % solver % method))
+    ! case("ImageMethod")
+    !     allocate(MethodImages_t :: active_solver)
+    ! case("AnalyticalNormalModes")
+    !     allocate(AnalyticalNormalModes_t :: active_solver)
+    ! end select
+    ! !
+    ! CALL active_solver % init(active_sources, config % solver, config % solver % env)
     ! CALL active_solver % run_all()
 
-    !
+    ! Finalize simulation
     CALL format_elapsed(start_time, elapsed_display, tag)
 
     write(*,*)
