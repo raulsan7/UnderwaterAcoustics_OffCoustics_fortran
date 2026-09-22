@@ -38,6 +38,14 @@ INTEGER, PARAMETER :: WP = DP                           ! [-] Working precision,
 ! Physical and mathematical constants
 ! ----------------------------------------
 REAL(WP)   , PARAMETER :: PI = 3.14159265358979323846_WP    ! [-] Pi constant
-COMPLEX(WP), PARAMETER :: I1 = (0.0_WP, 1.0_WP)              ! [-] Imaginary unit
+COMPLEX(WP), PARAMETER :: I1 = (0.0_WP, 1.0_WP)             ! [-] Imaginary unit
+
+
+! ----------------------------------------
+! Default seintinel values
+! ----------------------------------------
+REAL(WP)    , PARAMETER :: DEFAULT_R = -999.0_WP   ! [-] Sentinel for an unset REAL parameter
+INTEGER(I32), PARAMETER :: DEFAULT_I = -999_I32    ! [-] Sentinel for an unset INTEGER parameter
+
 
 END MODULE Kinds
