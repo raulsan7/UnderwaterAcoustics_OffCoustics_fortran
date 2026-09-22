@@ -3,25 +3,38 @@
 ! =====================================================================
 
 &turbine_config
-    case_type = 'DTU10MWMonopile'
-    rootname = 'DTU_DeltaWind_mn_ws11.4'
-    OP_output_dir = '../OP_output/'
-    OP_output_filename = 'None'
-    OP_SubDyn_filename = 'None'
-    Binary = .true.
-    WindSpeed = 11.4
-    WindDir = 0.0
-    Depth = 30.0
-    Nmembers = 8
-    Nnodes = 5
-    AxisPos = 0.0, 0.0
-    BariPos = 0.0, 0.0
-    From = 0.0
-    Upto = 1.0
-    skip = 1
-    skipf = 1
-    filter_freqs = .true.
-    freqs_over = 10.0
+
+    ! --- Turbine identification --- !
+    case_type = 'DTU10MWMonopile'            ! [-] Turbine model: 'DTU10MWMonopile' or 'DTU10MWFloating'
+    rootname = 'DTU_DeltaWind_mn_ws11.4'     ! [-] OpenFAST run name (no extension), used to locate its output files
+
+    ! --- OpenFAST input files --- !
+    OP_output_dir = '../OP_output/'          ! [-] Directory containing the OpenFAST output/SubDyn files
+    OP_output_filename = 'None'              ! [-] OpenFAST output file name; 'None'/'Default' builds it from rootname+dir
+    OP_SubDyn_filename = 'None'               ! [-] OpenFAST SubDyn summary file name; 'None'/'Default' builds it likewise
+    Binary = .true.                          ! [-] Whether the OpenFAST output is binary (.outb) instead of text (.out)
+
+    ! --- Operating point and placement --- !
+    WindSpeed = 11.4                         ! [m/s] Wind speed of this operating point
+    WindDir = 0.0                            ! [deg] Wind direction (0 deg points to +x, anticlockwise)
+    Depth = 30.0                             ! [m] Water depth at the turbine site
+    AxisPos = 0.0, 0.0                       ! [m] Turbine axis (x, y) position in the global frame
+    BariPos = 0.0, 0.0                       ! [m] Turbine baricenter (x, y) position; 0,0 triggers automatic computation
+
+    ! --- Structural model size --- !
+    Nmembers = 8                             ! [-] Number of structural members in the OpenFAST/SubDyn model
+    Nnodes = 5                                ! [-] Number of structural nodes per member
+
+    ! --- Time-series reading window --- !
+    From = 0.0                                ! [-] Fraction of the time series to start reading from
+    Upto = 1.0                                ! [-] Fraction of the time series to stop reading at
+    skip = 1                                  ! [-] Keep 1 out of every "skip" time samples
+    skipf = 1                                 ! [-] Keep 1 out of every "skipf" frequency bins
+
+    ! --- Frequency filtering --- !
+    filter_freqs = .true.                    ! [-] Whether to discard frequencies far from the drivetrain excitation peaks
+    freqs_over = 10.0                         ! [Hz] Frequencies below this value are never filtered out
+
 /
 
 
