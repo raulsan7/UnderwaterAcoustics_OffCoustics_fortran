@@ -12,7 +12,7 @@
 ! Contact : raul.sanz.ramirez@upm.es
 ! Affil.  : ETSIAE, Universidad Politecnica de Madrid
 ! Project : ERC project off-coustics
-! Date    : 2026-09-22
+! Date    : 09/2026
 ! ===============================================================================
 MODULE AcousticSolver
 

@@ -11,7 +11,7 @@
 ! Contact : raul.sanz.ramirez@upm.es
 ! Affil.  : ETSIAE, Universidad Politecnica de Madrid
 ! Project : ERC project off-coustics
-! Date    : 2026-09-22
+! Date    : 09/2026
 ! ===============================================================================
 PROGRAM main
 
@@ -42,6 +42,7 @@ CHARACTER(len=8) :: tag
     ! 1. Load namelist dinamically
     CALL read_input_files("./input_files/", config)
 
+
     ! 2. Polymorphic instance for wind turbine
     SELECT CASE (trim(config % turbine % case_type))
     CASE ('DTU10MWMonopile')
@@ -54,11 +55,13 @@ CHARACTER(len=8) :: tag
     END SELECT
     write(*,*) 'Instantiating ', trim(config % turbine % case_type), ' Turbine...'
 
+
     ! 3. Solve structual dynamics
     write(*,*) "Processing turbine dynamics and structural forces..."
     CALL active_turbine % init(config = config % turbine)
     CALL active_turbine % read_input(config = config % turbine, verbose = .true.)
     CALL active_turbine % compute_force(config = config % turbine, verbose=.true.)
+
 
     ! 4. Translate physical forces to mathematical acoustic sources
     write(*,*) "Translating physical forces to mathematical acoustic sources..."
@@ -75,13 +78,16 @@ CHARACTER(len=8) :: tag
     END SELECT
     write(*,*) "Launching acoustic propagation solver: ", trim(config % solver % method)
     
+
     ! 6. Set acoustic solver
     CALL active_solver % init(active_sources, config)
     CALL active_solver % save_parameters(active_turbine)
 
+
     ! 7. Run acoustic propagation
     DEALLOCATE(active_turbine)      ! Memory cleanup
     CALL active_solver % run_all()
+
 
     ! Finalize simulation
     CALL format_elapsed(start_time, elapsed_display, tag)
