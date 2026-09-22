@@ -388,7 +388,7 @@ SUBROUTINE write_txt_summary_ImageMethod(self, turbine)
     write(u,'(A,I0)')     'Block size   : ', self % block_size
     write(u,'(A,L1)')     'In cluster   : ', self % in_cluster
     write(u,*)
-    write(u,'(A)') repeat('=', 70)
+    ! write(u,'(A)') repeat('=', 70)
 
     close(u)
 
@@ -686,35 +686,36 @@ END SUBROUTINE dipole_pressure_images
 ! pressure field, observer coordinates, angular/vertical grids and surface
 ! element area to the HDF5 output.
 ! -------------------------------------------------------------------------
-SUBROUTINE run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
+SUBROUTINE run_sphere(self)
     CLASS(ImageMethod_t), INTENT(INOUT) :: self
-    REAL(WP)    , INTENT(IN), OPTIONAL :: r_sphere
-    INTEGER(I32), INTENT(IN), OPTIONAL :: n_theta_sphere
-    INTEGER(I32), INTENT(IN), OPTIONAL :: nz_sphere
-    REAL(WP)    , INTENT(IN), OPTIONAL :: center_sphere(3)
 
     ! Local variables
     COMPLEX(WP), ALLOCATABLE :: p(:,:)
-    COMPLEX(WP), ALLOCATABLE :: p_reshaped(:,:,:)   ! (NFreqs, n_theta, nz)
+    COMPLEX(WP), ALLOCATABLE :: p_reshaped(:,:,:)
     REAL(WP)   , ALLOCATABLE :: observers_(:,:)
-    REAL(WP)   , ALLOCATABLE :: obs_reshaped(:,:,:) ! (n_theta, nz, 3)
-    REAL(WP)   , ALLOCATABLE :: theta_deg_arr(:)    ! Azimuth angles in degrees
-    REAL(WP)   , ALLOCATABLE :: z_centers(:)        ! Vertical coordinates of layers
+    REAL(WP)   , ALLOCATABLE :: obs_reshaped(:,:,:)
+    REAL(WP)   , ALLOCATABLE :: theta_deg_arr(:)
+    REAL(WP)   , ALLOCATABLE :: z_centers(:)
     REAL(WP)   , ALLOCATABLE :: z_edges(:), theta_edges(:)
     REAL(WP)                 :: r_, center_(3), max_dist, current_dist
     REAL(WP)                 :: dz, dtheta, zc, r_xy, theta_c
     REAL(WP)                 :: dA
     INTEGER(I32)             :: n_theta_, nz_, i, j, idx, Nobs
 
-    ! Defaults
-    r_ = 30.0_WP;          if (PRESENT(r_sphere))          r_ = r_sphere
-    n_theta_ = 72_I32;     if (PRESENT(n_theta_sphere))    n_theta_ = n_theta_sphere
-    nz_ = 20_I32;          if (PRESENT(nz_sphere))         nz_ = nz_sphere
-    if (PRESENT(center_sphere)) then
-        center_ = center_sphere
-    else
-        center_ = [self % turbine_data % BariPos(1), self % turbine_data % BariPos(2), -self % turbine_data % Depth / 2.0_WP]
-    end if
+    ! Defaults (resolved once, persisted back into run_inputs)
+    associate(pp => self % run_inputs % params_sphere)
+        if (pp % r_sphere == DEFAULT_R)        pp % r_sphere = 30.0_WP
+        if (pp % n_theta_sphere == DEFAULT_I)  pp % n_theta_sphere = 72_I32
+        if (pp % nz_sphere == DEFAULT_I)       pp % nz_sphere = 20_I32
+        if (any(pp % center_sphere == DEFAULT_R)) &
+            pp % center_sphere = [self % turbine_data % BariPos(1), self % turbine_data % BariPos(2), &
+                                    -self % turbine_data % Depth / 2.0_WP]
+
+        r_       = pp % r_sphere
+        n_theta_ = pp % n_theta_sphere
+        nz_      = pp % nz_sphere
+        center_  = pp % center_sphere
+    end associate
 
     ! Basic enclosure check
     max_dist = 0.0_WP
@@ -728,15 +729,15 @@ SUBROUTINE run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
         write(*,'(A,F8.2,A)') '   requested radius r=', r_, ' m is smaller than max dist.'
         write(*,'(A,F8.2,A)') '   radius increased to ', max_dist * 1.05_WP, ' m'
         r_ = max_dist * 1.05_WP
+        self % run_inputs % params_sphere % r_sphere = r_   ! persist the radius actually used
     end if
 
+    ! --- resto del cuerpo sin cambios ---
     Nobs = n_theta_ * nz_
     ALLOCATE(observers_(Nobs, 3))
     ALLOCATE(theta_deg_arr(n_theta_))
     ALLOCATE(z_centers(nz_), z_edges(nz_+1), theta_edges(n_theta_+1))
 
-    ! Compute edges and centers for vertical and azimuthal discretization
-    ! Vertical layers: centers between edges
     dz = (2.0_WP * r_) / REAL(nz_, WP)
     do i = 1, nz_ + 1
         z_edges(i) = (center_(3) - r_) + REAL(i - 1, WP) * dz
@@ -745,7 +746,6 @@ SUBROUTINE run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
         z_centers(i) = 0.5_WP * (z_edges(i) + z_edges(i+1))
     end do
 
-    ! Azimuthal: centers between edges
     dtheta = (2.0_WP * PI) / REAL(n_theta_, WP)
     do j = 1, n_theta_ + 1
         theta_edges(j) = REAL(j - 1, WP) * dtheta
@@ -754,7 +754,6 @@ SUBROUTINE run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
         theta_deg_arr(j) = 0.5_WP * (theta_edges(j) + theta_edges(j+1)) * 180.0_WP / PI
     end do
 
-    ! Build observers array
     idx = 1
     do i = 1, nz_
         zc = z_centers(i)
@@ -780,7 +779,6 @@ SUBROUTINE run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
 
     if (self % debug) write(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
-    ! Reshape pressure and observers to 3D (n_theta, nz, 3) and (NFreqs, n_theta, nz)
     ALLOCATE(p_reshaped(SIZE(p,1), n_theta_, nz_))
     ALLOCATE(obs_reshaped(n_theta_, nz_, 3))
 
@@ -793,10 +791,8 @@ SUBROUTINE run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
         end do
     end do
 
-    ! Compute surface element (approximate)
     dA = (4.0_WP * PI * r_**2) / REAL(n_theta_ * nz_, WP)
 
-    ! Save results
     CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
     CALL save_variable(self % save_path, "P_sphere", p_reshaped)
     CALL save_variable(self % save_path, "Obs_sphere", obs_reshaped)

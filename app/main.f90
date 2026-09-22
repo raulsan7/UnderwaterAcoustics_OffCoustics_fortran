@@ -87,8 +87,9 @@ CHARACTER(len=8) :: tag
 
 
     ! 7. Run acoustic propagation
-    DEALLOCATE(active_turbine)      ! Memory cleanup
-    CALL active_solver % run_all()
+        DEALLOCATE(active_turbine)      ! Memory cleanup
+    CALL active_solver % run()
+    CALL active_solver % update_parameters()
 
 
     ! Finalize simulation

@@ -52,6 +52,8 @@ TYPE, ABSTRACT :: AcousticSolver_t
 
     ! --- Public type-bound procedures --- !
     PROCEDURE :: check_observers_distances      ! Helper for run subroutines
+    PROCEDURE :: update_parameters              ! Appends run_* parameters actually used to the .dat
+    PROCEDURE :: run                            ! Config-driven entry point (do_all / individual do_*)
     PROCEDURE :: run_spectrums                  ! Subroutines to compute acoustic pressure
     PROCEDURE :: run_polar
     PROCEDURE :: run_cylinder
@@ -177,6 +179,115 @@ SUBROUTINE check_observers_distances(self, observers, min_distance)
 END SUBROUTINE check_observers_distances
 
 
+! -------------------------------------------------------------------------
+! Subroutine: update_parameters
+! Appends to the .dat summary already written by save_parameters() one
+! block per post-processing step that actually ran (per do_run), with the
+! resolved parameters run()/run_all() used for it, then closes the file
+! with its final separator. Must be called after run()/run_all(), since
+! every step only resolves its own DEFAULT_R/DEFAULT_I sentinels when it
+! actually executes.
+! -------------------------------------------------------------------------
+SUBROUTINE update_parameters(self)
+    CLASS(AcousticSolver_t), INTENT(IN) :: self
+
+    CHARACTER(len=:), ALLOCATABLE :: dat_path
+    INTEGER(I32) :: u
+
+    dat_path = swap_extension(trim(self % save_path), ".dat")
+
+    open(NEWUNIT=u, FILE=dat_path, STATUS='old', POSITION='append', ACTION='write')
+
+    write(u,'(A)') repeat('-', 70)
+    write(u,'(A)') 'POST-PROCESSING STEPS EXECUTED'
+    write(u,'(A)') repeat('-', 70)
+
+    associate(d => self % run_inputs % do_run, p => self % run_inputs)
+
+        if (d % do_spectrums) then
+            write(u,'(A)') ''
+            write(u,'(A)')        'Spectrums:'
+            write(u,'(A,F8.2,A)') '   z_spectrums  : ', p % params_spectrums % z_spectrums, ' m'
+        end if
+
+        if (d % do_polar) then
+            write(u,'(A)') ''
+            write(u,'(A)')         'Polar:'
+            write(u,'(A,F8.2,A)')  '   r_polar      : ', p % params_polar % r_polar, ' m'
+            write(u,'(A,F8.2,A)')  '   z_polar      : ', p % params_polar % z_polar, ' m'
+            write(u,'(A,I0)')      '   n_polar      : ', p % params_polar % n_polar
+            write(u,'(A,2F10.3)')  '   center_polar : ', p % params_polar % center_polar
+        end if
+
+        if (d % do_cylinder) then
+            write(u,'(A)') ''
+            write(u,'(A)')        'Cylinder:'
+            write(u,'(A,F8.2,A)') '   r_cyl      : ', p % params_cylinder % r_cyl, ' m'
+            write(u,'(A,I0)')     '   n_cyl      : ', p % params_cylinder % n_cyl
+            write(u,'(A,I0)')     '   nz_cyl     : ', p % params_cylinder % nz_cyl
+            write(u,'(A,2F10.3)') '   center_cyl : ', p % params_cylinder % center_cyl
+        end if
+
+        if (d % do_decay) then
+            write(u,'(A)') ''
+            write(u,'(A)')        'Decay:'
+            write(u,'(A,2F10.3)') '   distance_decay : ', p % params_decay % distance_decay
+            write(u,'(A,I0)')     '   n_decay        : ', p % params_decay % n_decay
+            write(u,'(A,F8.2,A)') '   z_decay        : ', p % params_decay % z_decay, ' m'
+            write(u,'(A,L1)')     '   logspace_decay : ', p % params_decay % logspace_decay
+        end if
+
+        if (d % do_line) then
+            write(u,'(A)') ''
+            write(u,'(A)')        'Line:'
+            write(u,'(A,3F10.3)') '   p1_line       : ', p % params_line % p1_line
+            write(u,'(A,3F10.3)') '   p2_line       : ', p % params_line % p2_line
+            write(u,'(A,I0)')     '   n_line        : ', p % params_line % n_line
+            write(u,'(A,L1)')     '   logspace_line : ', p % params_line % logspace_line
+        end if
+
+        if (d % do_sliceXY) then
+            write(u,'(A)') ''
+            write(u,'(A)')        'SliceXY:'
+            write(u,'(A,F8.2,A)') '   z_xy       : ', p % params_sliceXY % z_xy, ' m'
+            write(u,'(A,I0)')     '   nx_xy      : ', p % params_sliceXY % nx_xy
+            write(u,'(A,I0)')     '   ny_xy      : ', p % params_sliceXY % ny_xy
+            write(u,'(A,2F10.3)') '   xlim_xy    : ', p % params_sliceXY % xlim_xy
+            write(u,'(A,2F10.3)') '   ylim_xy    : ', p % params_sliceXY % ylim_xy
+            write(u,'(A,2F10.3)') '   center_xy  : ', p % params_sliceXY % center_xy
+        end if
+
+        if (d % do_sliceXZ) then
+            write(u,'(A)') ''
+            write(u,'(A)')        'SliceXZ:'
+            write(u,'(A,F8.2,A)') '   y_xz       : ', p % params_sliceXZ % y_xz, ' m'
+            write(u,'(A,I0)')     '   nx_xz      : ', p % params_sliceXZ % nx_xz
+            write(u,'(A,I0)')     '   nz_xz      : ', p % params_sliceXZ % nz_xz
+            write(u,'(A,2F10.3)') '   xlim_xz    : ', p % params_sliceXZ % xlim_xz
+            write(u,'(A,2F10.3)') '   zlim_xz    : ', p % params_sliceXZ % zlim_xz
+        end if
+
+        if (d % do_sphere) then
+            write(u,'(A)') ''
+            write(u,'(A)')        'Sphere:'
+            write(u,'(A,F8.2,A)') '   r_sphere       : ', p % params_sphere % r_sphere, ' m'
+            write(u,'(A,I0)')     '   n_theta_sphere : ', p % params_sphere % n_theta_sphere
+            write(u,'(A,I0)')     '   nz_sphere      : ', p % params_sphere % nz_sphere
+            write(u,'(A,3F10.3)') '   center_sphere  : ', p % params_sphere % center_sphere
+        end if
+
+    end associate
+
+    write(u,*)
+    write(u,'(A)') repeat('=', 70)
+
+    close(u)
+
+    print*, '   ---> Parameters updated at ', dat_path
+
+END SUBROUTINE update_parameters
+
+
 ! ---------- RUN FUNCTIONS ---------- !
 ! -------------------------------------------------------------------------
 ! Subroutine: run_spectrums
@@ -184,11 +295,9 @@ END SUBROUTINE check_observers_distances
 ! (default: 3 points along +x at mid-depth). Saves the pressure, observer
 ! coordinates and frequency vector to the solver's HDF5 file.
 ! -------------------------------------------------------------------------
-SUBROUTINE run_spectrums(self, observers, z_spectrums)
+SUBROUTINE run_spectrums(self, observers)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-
     REAL(WP), INTENT(IN), OPTIONAL :: observers(:,:)
-    REAL(WP), INTENT(IN), OPTIONAL :: z_spectrums
 
     ! Local variables
     COMPLEX(WP), ALLOCATABLE :: p(:,:)
@@ -196,11 +305,14 @@ SUBROUTINE run_spectrums(self, observers, z_spectrums)
     REAL(WP)                 :: z_spectrums_
     INTEGER(I32) :: bs
 
-    WRITE(*,'(A)') '>> [Spectrums] computing pressure at observer points...'
+    write(*,'(A)') '>> [Spectrums] computing pressure at observer points...'
 
-    ! Defaults
-    z_spectrums_ = - self % turbine_data % Depth/2.0_WP; if (PRESENT(z_spectrums)) z_spectrums_ = z_spectrums
-    
+    ! Defaults (resolved once, persisted back into run_inputs)
+    associate(pp => self % run_inputs % params_spectrums)
+        if (pp % z_spectrums == DEFAULT_R) pp % z_spectrums = - self % turbine_data % Depth/2.0_WP
+        z_spectrums_ = pp % z_spectrums
+    end associate
+
     if (PRESENT(observers)) then
         observers_ = observers
     else
@@ -216,14 +328,14 @@ SUBROUTINE run_spectrums(self, observers, z_spectrums)
     CALL self % check_observers_distances(observers_)
     CALL self % compute_pressure(observers_, bs, p)
 
-    if (self % debug) WRITE(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
+    if (self % debug) write(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
     ! Save data
     CALL save_variable(self % save_path, "P_spectrums", p)
     CALL save_variable(self % save_path, "Obs_spectrums", observers_)
     CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
 
-    WRITE(*,'(A)') '   Saved to: ' // trim(self % save_path)
+    write(*,'(A)') '   Saved to: ' // trim(self % save_path)
 
 END SUBROUTINE run_spectrums
 
@@ -235,13 +347,8 @@ END SUBROUTINE run_spectrums
 ! polar geometry (radius, depth, azimuth angles, observer coordinates) to
 ! the solver's HDF5 file.
 ! -------------------------------------------------------------------------
-SUBROUTINE run_polar(self, r_polar, z_polar, n_polar, center_polar)
+SUBROUTINE run_polar(self)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: r_polar
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: z_polar
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: n_polar
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: center_polar(2)
 
     ! Local variables
     COMPLEX(WP), ALLOCATABLE :: p(:,:)
@@ -249,25 +356,27 @@ SUBROUTINE run_polar(self, r_polar, z_polar, n_polar, center_polar)
     REAL(WP)                 :: r, z, center(2), theta_deg, theta_rad, d_theta, Depth
     INTEGER(I32)             :: n_theta, bs, i
 
-    
     Depth = self % env % depth_base
     bs    = self % block_size
 
-    ! Defaults
-    r = 500.0_WP      ; if (PRESENT(r_polar)) r       = r_polar
-    z = - Depth/2.0_WP; if (PRESENT(z_polar)) z       = z_polar
-    n_theta = 72_I32  ; if (PRESENT(n_polar)) n_theta = n_polar
+    ! Defaults (resolved once, persisted back into run_inputs)
+    associate(pp => self % run_inputs % params_polar)
+        if (pp % r_polar == DEFAULT_R) pp % r_polar = 500.0_WP
+        if (pp % z_polar == DEFAULT_R) pp % z_polar = - Depth/2.0_WP
+        if (pp % n_polar == DEFAULT_I) pp % n_polar = 72_I32
+        if (all(pp % center_polar == DEFAULT_R)) &   ! not a logical .and.
+            pp % center_polar = [self % turbine_data % BariPos(1), self % turbine_data % BariPos(2)]
 
-    if (PRESENT(center_polar)) then
-        center = center_polar
-    else
-        center = [self % turbine_data % BariPos(1), self % turbine_data % BariPos(2)]
-    end if
+        r       = pp % r_polar
+        z       = pp % z_polar
+        n_theta = pp % n_polar
+        center  = pp % center_polar
+    end associate
 
     ! Build observers array
     ALLOCATE(observers(n_theta, 3), theta_deg_polar(n_theta))
     d_theta = 360.0_WP / REAL(n_theta, WP)
-        
+
     do i = 1, n_theta
         theta_deg = REAL(i - 1, WP) * d_theta
         theta_rad = theta_deg * PI / 180.0_WP
@@ -279,13 +388,13 @@ SUBROUTINE run_polar(self, r_polar, z_polar, n_polar, center_polar)
 
     CALL self % check_observers_distances(observers)
 
-    WRITE(*,'(A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,I0)') &
+    write(*,'(A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,I0)') &
         '>> [Polar]    r=', r, ' m | center=(', center(1), ',', center(2), &
         ') m | z=', z, ' m | observers=', n_theta
 
     ! Compute_pressure
     CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) WRITE(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
+    if (self % debug) write(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
     ! Save data
     CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
@@ -296,7 +405,7 @@ SUBROUTINE run_polar(self, r_polar, z_polar, n_polar, center_polar)
     CALL save_variable(self % save_path, "Obs_polar", observers)
     CALL save_variable(self % save_path, "Center_polar", center)
 
-    WRITE(*,'(A)') '   Saved to: ' // trim(self % save_path)
+    write(*,'(A)') '   Saved to: ' // trim(self % save_path)
 
 END SUBROUTINE run_polar
 
@@ -308,13 +417,8 @@ END SUBROUTINE run_polar
 ! barycenter. Saves the reshaped pressure/observer grids and the cylinder
 ! geometry metadata to the solver's HDF5 file.
 ! -------------------------------------------------------------------------
-SUBROUTINE run_cylinder(self, r_cyl, n_cyl, nz_cyl, center_cyl)
+SUBROUTINE run_cylinder(self)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-
-    REAL(WP)    , INTENT(IN), OPTIONAL :: r_cyl
-    INTEGER(I32), INTENT(IN), OPTIONAL :: n_cyl
-    INTEGER(I32), INTENT(IN), OPTIONAL :: nz_cyl
-    REAL(WP)    , INTENT(IN), OPTIONAL :: center_cyl(2)
 
     ! Local variables
     COMPLEX(WP), ALLOCATABLE :: p(:,:)
@@ -322,44 +426,43 @@ SUBROUTINE run_cylinder(self, r_cyl, n_cyl, nz_cyl, center_cyl)
     REAL(WP)                 :: r, center(2), theta_rad, d_theta, z_val, dz, Depth
     INTEGER(I32)             :: n_theta, nz, bs, i, j, idx, Nobs
 
-    ! Additional for saving
-    REAL(WP), ALLOCATABLE    :: theta_deg_arr(:)      ! Azimuth angles in degrees
-    REAL(WP), ALLOCATABLE    :: z_cylinder(:)         ! Vertical coordinates
-    REAL(WP), ALLOCATABLE    :: obs_reshaped(:,:,:)   ! Reshaped observers (n_theta, nz, 3)
-    COMPLEX(WP), ALLOCATABLE :: p_reshaped(:,:,:)     ! Reshaped pressure (Nfreqs, n_theta, nz)
-    REAL(WP)                 :: dA                    ! Differential area element
-
+    REAL(WP), ALLOCATABLE    :: theta_deg_arr(:)
+    REAL(WP), ALLOCATABLE    :: z_cylinder(:)
+    REAL(WP), ALLOCATABLE    :: obs_reshaped(:,:,:)
+    COMPLEX(WP), ALLOCATABLE :: p_reshaped(:,:,:)
+    REAL(WP)                 :: dA
 
     Depth = self % env % depth_base
     bs    = self % block_size
 
-    ! Defaults
-    r = 500.0_WP    ; if (PRESENT(r_cyl))  r       = r_cyl
-    n_theta = 72_I32; if (PRESENT(n_cyl))  n_theta = n_cyl
-    nz = 20_I32     ; if (PRESENT(nz_cyl)) nz      = nz_cyl
+    ! Defaults (resolved once, persisted back into run_inputs)
+    associate(pp => self % run_inputs % params_cylinder)
+        if (pp % r_cyl == DEFAULT_R)  pp % r_cyl  = 500.0_WP
+        if (pp % n_cyl == DEFAULT_I)  pp % n_cyl  = 72_I32
+        if (pp % nz_cyl == DEFAULT_I) pp % nz_cyl = 20_I32
+        if (any(pp % center_cyl == DEFAULT_R)) &
+            pp % center_cyl = [self % turbine_data % BariPos(1), self % turbine_data % BariPos(2)]
 
-    if (PRESENT(center_cyl)) then
-        center = center_cyl
-    else
-        center = [self % turbine_data % BariPos(1), self % turbine_data % BariPos(2)]
-    end if    
-    
+        r       = pp % r_cyl
+        n_theta = pp % n_cyl
+        nz      = pp % nz_cyl
+        center  = pp % center_cyl
+    end associate
+
+    ! --- resto del cuerpo sin cambios ---
     Nobs = n_theta * nz
     ALLOCATE(observers(Nobs, 3))
 
     d_theta = 360.0_WP / REAL(n_theta, WP)
     dz = (0.0_WP - (-Depth)) / max(REAL(nz - 1, WP), 1.0_WP)
 
-    ! Allocate arrays for storing angles and vertical coordinates
     ALLOCATE(theta_deg_arr(n_theta))
     ALLOCATE(z_cylinder(nz))
 
-    ! Fill vertical coordinate array
     do j = 1, nz
         z_cylinder(j) = - Depth + REAL(j - 1, WP) * dz
     end do
 
-    ! Build observers array and angle array (meshgrid equivalent)
     idx = 1
     do i = 1, n_theta
         theta_deg_arr(i) = REAL(i - 1, WP) * d_theta
@@ -375,14 +478,13 @@ SUBROUTINE run_cylinder(self, r_cyl, n_cyl, nz_cyl, center_cyl)
 
     CALL self % check_observers_distances(observers)
 
-    WRITE(*,'(A,F8.2,A,F8.2,A,F8.2,A,I0,A,I0,A,I0)') &
+    write(*,'(A,F8.2,A,F8.2,A,F8.2,A,I0,A,I0,A,I0)') &
         '>> [Cylinder]   r=', r, ' m | center=(', center(1), ',', center(2), &
         ') m | grid=', n_theta, ' x ', nz, ' = ', Nobs
 
     CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) WRITE(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
+    if (self % debug) write(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
-    ! Reshape pressure and observers to 3D for storage
     ALLOCATE(p_reshaped(SIZE(p,1), n_theta, nz))
     ALLOCATE(obs_reshaped(n_theta, nz, 3))
 
@@ -395,10 +497,8 @@ SUBROUTINE run_cylinder(self, r_cyl, n_cyl, nz_cyl, center_cyl)
         end do
     end do
 
-    ! Compute differential area element (as in Python)
     dA = r * dz * (2.0_WP * PI / REAL(n_theta, WP))
 
-    ! Save results
     CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
     CALL save_variable(self % save_path, "P_cylinder", p_reshaped)
     CALL save_variable(self % save_path, "R_cylinder", r)
@@ -408,7 +508,7 @@ SUBROUTINE run_cylinder(self, r_cyl, n_cyl, nz_cyl, center_cyl)
     CALL save_variable(self % save_path, "Center_cylinder", center)
     CALL save_variable(self % save_path, "dA_cylinder", dA)
 
-    WRITE(*,'(A)') '   Saved to: ' // trim(self % save_path)
+    write(*,'(A)') '   Saved to: ' // trim(self % save_path)
 
 END SUBROUTINE run_cylinder
 
@@ -420,42 +520,42 @@ END SUBROUTINE run_cylinder
 ! distances. Saves the pressure and the observer/distance geometry to the
 ! solver's HDF5 file.
 ! -------------------------------------------------------------------------
-SUBROUTINE run_decay(self, distance_decay, n_decay, z_decay, logspace_decay)
+SUBROUTINE run_decay(self)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: distance_decay(2)
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: n_decay
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: z_decay
-    LOGICAL     , INTENT(IN), OPTIONAL  :: logspace_decay
 
     ! Local variables
     COMPLEX(WP), ALLOCATABLE :: p(:,:)
     REAL(WP)   , ALLOCATABLE :: observers(:,:)
-    REAL(WP)   , ALLOCATABLE :: distances(:)        ! Actual distances along the line
+    REAL(WP)   , ALLOCATABLE :: distances(:)
     REAL(WP)                 :: distance(2), z, wind_unit(2), d_val, WindDir_rad
     REAL(WP)                 :: d_log1, d_log2, d_step, linear_step, Depth
     INTEGER(I32)             :: n_points, bs, i
     LOGICAL                  :: logspace
-    INTEGER                  :: logspace_int        ! Integer representation for saving
-
+    INTEGER                  :: logspace_int
 
     Depth = self % env % depth_base
     bs    = self % block_size
 
-    ! Defaults
-    z = -Depth/2.0_WP             ; if (PRESENT(z_decay))        z        = z_decay
-    distance = [10.0_WP, 500.0_WP]; if (PRESENT(distance_decay)) distance = distance_decay
-    n_points = 200_I32            ; if (PRESENT(n_decay))        n_points = n_decay
-    logspace = .true.             ; if (PRESENT(logspace_decay)) logspace = logspace_decay
-    
-    ! Wind direction
+    ! Defaults (resolved once, persisted back into run_inputs)
+    associate(pp => self % run_inputs % params_decay)
+        if (pp % z_decay == DEFAULT_R)             pp % z_decay        = -Depth/2.0_WP
+        if (any(pp % distance_decay == DEFAULT_R)) pp % distance_decay = [10.0_WP, 500.0_WP]
+        if (pp % n_decay == DEFAULT_I)             pp % n_decay        = 200_I32
+        ! logspace_decay no usa sentinel: es un LOGICAL directo del .nml
+
+        z        = pp % z_decay
+        distance = pp % distance_decay
+        n_points = pp % n_decay
+        logspace = pp % logspace_decay
+    end associate
+
+    ! --- resto del cuerpo sin cambios ---
     WindDir_rad = self % turbine_data % WindDir * PI / 180.0_WP
     wind_unit = [cos(WindDir_rad), sin(WindDir_rad)]
 
     ALLOCATE(observers(n_points, 3))
     ALLOCATE(distances(n_points))
 
-    ! Distances along the line
     if (logspace) then
         d_log1 = log10(distance(1))
         d_log2 = log10(distance(2))
@@ -478,17 +578,15 @@ SUBROUTINE run_decay(self, distance_decay, n_decay, z_decay, logspace_decay)
 
     CALL self % check_observers_distances(observers)
 
-    WRITE(*,'(A,I0,A,F8.2,A,F8.2,A)') &
+    write(*,'(A,I0,A,F8.2,A,F8.2,A)') &
         '>> [Decay]      points=', n_points, ' | direction=', &
         self % turbine_data % WindDir, ' deg | z=', z, ' m'
 
     CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) WRITE(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
+    if (self % debug) write(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
-    ! Convert logical to integer for saving
     logspace_int = merge(1, 0, logspace)
 
-    ! Save results
     CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
     CALL save_variable(self % save_path, "P_decay", p)
     CALL save_variable(self % save_path, "Z_decay", z)
@@ -497,7 +595,7 @@ SUBROUTINE run_decay(self, distance_decay, n_decay, z_decay, logspace_decay)
     CALL save_variable(self % save_path, "Obs_decay", observers)
     CALL save_variable(self % save_path, "Logspace_decay", logspace_int)
 
-    WRITE(*,'(A)') '   Saved to: ' // trim(self % save_path)
+    write(*,'(A)') '   Saved to: ' // trim(self % save_path)
 
 END SUBROUTINE run_decay
 
@@ -508,51 +606,50 @@ END SUBROUTINE run_decay
 ! p1_line and p2_line, with linear or log-spaced distances. Saves the
 ! pressure and the observer/distance geometry to the solver's HDF5 file.
 ! -------------------------------------------------------------------------
-SUBROUTINE run_line(self, p1_line, p2_line, n_line, logspace_line)
+SUBROUTINE run_line(self)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: p1_line(3)
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: p2_line(3)
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: n_line
-    LOGICAL     , INTENT(IN), OPTIONAL  :: logspace_line
 
     ! Local variables
     COMPLEX(WP), ALLOCATABLE :: p(:,:)
     REAL(WP)   , ALLOCATABLE :: observers(:,:)
-    REAL(WP)   , ALLOCATABLE :: distances(:)     ! Distances from p1 along the line
+    REAL(WP)   , ALLOCATABLE :: distances(:)
     REAL(WP)                 :: p1(3), p2(3), dir_vec(3), dist_total, d_val
     REAL(WP)                 :: d_log1, d_log2, d_step, linear_step, Depth
     INTEGER(I32)             :: n_points, i, bs
     LOGICAL                  :: logspace
-    INTEGER                  :: logspace_int     ! Integer representation for saving
-
+    INTEGER                  :: logspace_int
 
     Depth = self % env % depth_base
     bs    = self % block_size
 
-    ! Defaults
-    p1 = [100.0_WP, 0.0_WP, 0.0_WP] ; if (PRESENT(p1_line))       p1       = p1_line
-    p2 = [100.0_WP, 0.0_WP, - Depth]; if (PRESENT(p2_line))       p2       = p2_line
-    logspace = .false.              ; if (PRESENT(logspace_line)) logspace = logspace_line
+    ! Defaults (resolved once, persisted back into run_inputs)
+    associate(pp => self % run_inputs % params_line)
+        if (any(pp % p1_line == DEFAULT_R)) pp % p1_line = [100.0_WP, 0.0_WP, 0.0_WP]
+        if (any(pp % p2_line == DEFAULT_R)) pp % p2_line = [100.0_WP, 0.0_WP, - Depth]
+        ! logspace_line no usa sentinel: es un LOGICAL directo del .nml
+
+        p1       = pp % p1_line
+        p2       = pp % p2_line
+        logspace = pp % logspace_line
+    end associate
 
     dist_total = norm2(p2 - p1)
     if (dist_total == 0.0_WP) error stop "AcousticSolver.run_line(): points p1 and p2 are coincident."
 
-    if (PRESENT(n_line)) then
-        n_points = n_line
-    else
+    ! n_line depende de dist_total, se resuelve aparte
+    if (self % run_inputs % params_line % n_line == DEFAULT_I) then
         if (dist_total > 200.0_WP) then
-            n_points = int(dist_total / 5.0_WP, I32)
+            self % run_inputs % params_line % n_line = int(dist_total / 5.0_WP, I32)
         else
-            n_points = int(dist_total, I32)
+            self % run_inputs % params_line % n_line = int(dist_total, I32)
         end if
     end if
+    n_points = self % run_inputs % params_line % n_line
 
     ALLOCATE(observers(n_points, 3))
     ALLOCATE(distances(n_points))
     dir_vec = (p2 - p1) / dist_total
 
-    ! Distances along the line
     if (logspace) then
         d_log1 = log10(dist_total * 1e-6_WP)
         d_log2 = log10(dist_total)
@@ -573,17 +670,15 @@ SUBROUTINE run_line(self, p1_line, p2_line, n_line, logspace_line)
 
     CALL self % check_observers_distances(observers)
 
-    WRITE(*,'(A,I0,A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,F8.2,A)') &
+    write(*,'(A,I0,A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,F8.2,A)') &
         '>> [Line]       points=', n_points, ' | p1=(', p1(1), ',', p1(2), ',', p1(3), &
         ') m | p2=(', p2(1), ',', p2(2), ',', p2(3), ') m'
 
     CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) WRITE(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
+    if (self % debug) write(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
-    ! Convert logical to integer for saving
     logspace_int = merge(1, 0, logspace)
 
-    ! Save results
     CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
     CALL save_variable(self % save_path, "P_line", p)
     CALL save_variable(self % save_path, "P1_line", p1)
@@ -593,7 +688,7 @@ SUBROUTINE run_line(self, p1_line, p2_line, n_line, logspace_line)
     CALL save_variable(self % save_path, "Distances_line", distances)
     CALL save_variable(self % save_path, "Logspace_line", logspace_int)
 
-    WRITE(*,'(A)') '   Saved to: ' // trim(self % save_path)
+    write(*,'(A)') '   Saved to: ' // trim(self % save_path)
 
 END SUBROUTINE run_line
 
@@ -604,63 +699,62 @@ END SUBROUTINE run_line
 ! the given x/y limits. Saves the reshaped pressure/observer grids and the
 ! slice geometry metadata to the solver's HDF5 file.
 ! -------------------------------------------------------------------------
-SUBROUTINE run_sliceXY(self, z_xy, nx_xy, ny_xy, xlim_xy, ylim_xy, center_xy)
+SUBROUTINE run_sliceXY(self)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: z_xy
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: nx_xy
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: ny_xy
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: xlim_xy(2)
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: ylim_xy(2)
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: center_xy(2)
 
     ! Local variables
     COMPLEX(WP), ALLOCATABLE :: p(:,:)
-    COMPLEX(WP), ALLOCATABLE :: p_reshaped(:,:,:)   ! (Nfreqs, nx, ny)
+    COMPLEX(WP), ALLOCATABLE :: p_reshaped(:,:,:)
     REAL(WP)   , ALLOCATABLE :: observers(:,:)
-    REAL(WP)   , ALLOCATABLE :: obs_reshaped(:,:,:) ! (nx, ny, 3)
-    REAL(WP)   , ALLOCATABLE :: xs(:), ys(:)        ! Coordinate arrays
+    REAL(WP)   , ALLOCATABLE :: obs_reshaped(:,:,:)
+    REAL(WP)   , ALLOCATABLE :: xs(:), ys(:)
     REAL(WP)                 :: z, xlim(2), ylim(2), center(2), Depth
     REAL(WP)                 :: mid_x, mid_y, dx, dy, x_val, y_val
     INTEGER(I32)             :: nx, ny, i, j, idx, bs
     REAL(WP), PARAMETER      :: tol = 1e-5_WP
 
-
     Depth = self % env % depth_base
     bs   = self % block_size
 
-    ! Defaults
-    z = - Depth/2.0_WP; if (PRESENT(z_xy)) z = z_xy
-    if (z > 0.0_WP) then
-        write(*,*) "AcousticSolver.run_sliceXY(): z must be <= 0. Switching to -z"
-        z = -z
-    end if
+    ! Defaults (resolved once, persisted back into run_inputs)
+    associate(pp => self % run_inputs % params_sliceXY)
+        if (pp % z_xy == DEFAULT_R) pp % z_xy = - Depth/2.0_WP
+        if (pp % z_xy > 0.0_WP) then
+            write(*,*) "AcousticSolver.run_sliceXY(): z must be <= 0. Switching to -z"
+            pp % z_xy = -pp % z_xy
+        end if
 
-    nx   = 26_I32               ; if (PRESENT(nx_xy))   nx         = nx_xy
-    ny   = 26_I32               ; if (PRESENT(ny_xy))   ny         = ny_xy
-    xlim = [-500.0_WP, 500.0_WP]; if (PRESENT(xlim_xy)) xlim       = xlim_xy
-    ylim = [-500.0_WP, 500.0_WP]; if (PRESENT(ylim_xy)) ylim       = ylim_xy
+        if (pp % nx_xy == DEFAULT_I)        pp % nx_xy   = 26_I32
+        if (pp % ny_xy == DEFAULT_I)        pp % ny_xy   = 26_I32
+        if (any(pp % xlim_xy == DEFAULT_R)) pp % xlim_xy = [-500.0_WP, 500.0_WP]
+        if (any(pp % ylim_xy == DEFAULT_R)) pp % ylim_xy = [-500.0_WP, 500.0_WP]
+
+        z    = pp % z_xy
+        nx   = pp % nx_xy
+        ny   = pp % ny_xy
+        xlim = pp % xlim_xy
+        ylim = pp % ylim_xy
+    end associate
 
     mid_x = 0.5_WP * (xlim(1) + xlim(2))
     mid_y = 0.5_WP * (ylim(1) + ylim(2))
 
-    if (PRESENT(center_xy)) then
-        if (ABS(center_xy(1) - mid_x) > tol .OR. ABS(center_xy(2) - mid_y) > tol) then
+    associate(pp => self % run_inputs % params_sliceXY)
+        if (any(pp % center_xy == DEFAULT_R)) then
+            pp % center_xy = [mid_x, mid_y]
+        else if (ABS(pp % center_xy(1) - mid_x) > tol .OR. ABS(pp % center_xy(2) - mid_y) > tol) then
             write(*,*) "AcousticSolver.run_sliceXY(): provided center does not match midpoint. Switching to proper center."
-            center = [mid_x, mid_y]
-        else
-            center = center_xy
+            pp % center_xy = [mid_x, mid_y]
         end if
-    else
-        center = [mid_x, mid_y]
-    end if
+        center = pp % center_xy
+    end associate
 
+    ! --- resto del cuerpo sin cambios ---
     ALLOCATE(observers(nx * ny, 3))
     ALLOCATE(xs(nx), ys(ny))
     dx = (xlim(2) - xlim(1)) / max(REAL(nx - 1, WP), 1.0_WP)
     dy = (ylim(2) - ylim(1)) / max(REAL(ny - 1, WP), 1.0_WP)
 
-    ! Fill coordinate arrays
     do j = 1, nx
         xs(j) = xlim(1) + REAL(j - 1, WP) * dx
     end do
@@ -668,7 +762,6 @@ SUBROUTINE run_sliceXY(self, z_xy, nx_xy, ny_xy, xlim_xy, ylim_xy, center_xy)
         ys(i) = ylim(1) + REAL(i - 1, WP) * dy
     end do
 
-    ! Build observers (meshgrid equivalent)
     idx = 1
     do i = 1, ny
         y_val = ys(i)
@@ -683,14 +776,13 @@ SUBROUTINE run_sliceXY(self, z_xy, nx_xy, ny_xy, xlim_xy, ylim_xy, center_xy)
 
     CALL self % check_observers_distances(observers, 0.1_WP)
 
-    WRITE(*,'(A,I0,A,I0,A,F8.2,A,F8.2,A,F8.2,A)') &
+    write(*,'(A,I0,A,I0,A,F8.2,A,F8.2,A,F8.2,A)') &
         '>> [SliceXY]    nx=', nx, ' | ny=', ny, ' | z=', z, &
         ' m | center=(', center(1), ',', center(2), ') m'
 
     CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) WRITE(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
+    if (self % debug) write(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
-    ! Reshape pressure and observers to 3D (nx, ny, 3) and (Nfreqs, nx, ny)
     ALLOCATE(p_reshaped(SIZE(p,1), nx, ny))
     ALLOCATE(obs_reshaped(nx, ny, 3))
 
@@ -703,7 +795,6 @@ SUBROUTINE run_sliceXY(self, z_xy, nx_xy, ny_xy, xlim_xy, ylim_xy, center_xy)
         end do
     end do
 
-    ! Save results
     CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
     CALL save_variable(self % save_path, "P_slicexy", p_reshaped)
     CALL save_variable(self % save_path, "Obs_slicexy", obs_reshaped)
@@ -714,7 +805,7 @@ SUBROUTINE run_sliceXY(self, z_xy, nx_xy, ny_xy, xlim_xy, ylim_xy, center_xy)
     CALL save_variable(self % save_path, "Nx_slicexy", nx)
     CALL save_variable(self % save_path, "Ny_slicexy", ny)
 
-    WRITE(*,'(A)') '   Saved to: ' // trim(self % save_path)
+    write(*,'(A)') '   Saved to: ' // trim(self % save_path)
 
 END SUBROUTINE run_sliceXY
 
@@ -725,40 +816,42 @@ END SUBROUTINE run_sliceXY
 ! x/z limits. Saves the reshaped pressure/observer grids and the slice
 ! geometry metadata to the solver's HDF5 file.
 ! -------------------------------------------------------------------------
-SUBROUTINE run_sliceXZ(self, y_xz, nx_xz, nz_xz, xlim_xz, zlim_xz)
+SUBROUTINE run_sliceXZ(self)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: y_xz
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: nx_xz
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: nz_xz
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: xlim_xz(2)
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: zlim_xz(2)
 
     ! Local variables
     COMPLEX(WP), ALLOCATABLE :: p(:,:)
-    COMPLEX(WP), ALLOCATABLE :: p_reshaped(:,:,:)   ! (Nfreqs, nx, nz)
+    COMPLEX(WP), ALLOCATABLE :: p_reshaped(:,:,:)
     REAL(WP)   , ALLOCATABLE :: observers(:,:)
-    REAL(WP)   , ALLOCATABLE :: obs_reshaped(:,:,:) ! (nx, nz, 3)
-    REAL(WP)   , ALLOCATABLE :: xs(:), zs(:)        ! Coordinate arrays
+    REAL(WP)   , ALLOCATABLE :: obs_reshaped(:,:,:)
+    REAL(WP)   , ALLOCATABLE :: xs(:), zs(:)
     REAL(WP)                 :: y, xlim(2), zlim(2), dx, dz, x_val, z_val, Depth
     INTEGER(I32)             :: nx, nz, i, j, idx, bs
 
     Depth = self % env % depth_base
     bs    = self % block_size
 
-    ! Defaults
-    y    = self % turbine_data % AxisPos(2); if (PRESENT(y_xz))    y    = y_xz
-    nx   = 26_I32                       ; if (PRESENT(nx_xz))   nx   = nx_xz
-    nz   = 26_I32                       ; if (PRESENT(nz_xz))   nz   = nz_xz
-    xlim = [-500.0_WP, 500.0_WP]        ; if (PRESENT(xlim_xz)) xlim = xlim_xz
-    zlim = [0.0_WP, - Depth]            ; if (PRESENT(zlim_xz)) zlim = zlim_xz
+    ! Defaults (resolved once, persisted back into run_inputs)
+    associate(pp => self % run_inputs % params_sliceXZ)
+        if (pp % y_xz == DEFAULT_R)         pp % y_xz    = self % turbine_data % AxisPos(2)
+        if (pp % nx_xz == DEFAULT_I)        pp % nx_xz   = 26_I32
+        if (pp % nz_xz == DEFAULT_I)        pp % nz_xz   = 26_I32
+        if (any(pp % xlim_xz == DEFAULT_R)) pp % xlim_xz = [-500.0_WP, 500.0_WP]
+        if (any(pp % zlim_xz == DEFAULT_R)) pp % zlim_xz = [0.0_WP, - Depth]
 
+        y    = pp % y_xz
+        nx   = pp % nx_xz
+        nz   = pp % nz_xz
+        xlim = pp % xlim_xz
+        zlim = pp % zlim_xz
+    end associate
+
+    ! --- resto del cuerpo sin cambios ---
     ALLOCATE(observers(nx * nz, 3))
     ALLOCATE(xs(nx), zs(nz))
     dx = (xlim(2) - xlim(1)) / max(REAL(nx - 1, WP), 1.0_WP)
     dz = (zlim(2) - zlim(1)) / max(REAL(nz - 1, WP), 1.0_WP)
 
-    ! Fill coordinate arrays
     do j = 1, nx
         xs(j) = xlim(1) + REAL(j - 1, WP) * dx
     end do
@@ -766,7 +859,6 @@ SUBROUTINE run_sliceXZ(self, y_xz, nx_xz, nz_xz, xlim_xz, zlim_xz)
         zs(i) = zlim(1) + REAL(i - 1, WP) * dz
     end do
 
-    ! Build observers
     idx = 1
     do i = 1, nz
         z_val = zs(i)
@@ -781,14 +873,13 @@ SUBROUTINE run_sliceXZ(self, y_xz, nx_xz, nz_xz, xlim_xz, zlim_xz)
 
     CALL self % check_observers_distances(observers, 0.1_WP)
 
-    WRITE(*,'(A,I0,A,I0,A,F8.2,A,F8.2,A,F8.2,A)') &
+    write(*,'(A,I0,A,I0,A,F8.2,A,F8.2,A,F8.2,A)') &
         '>> [SliceXZ]    nx=', nx, ' | nz=', nz, ' | y=', y, &
         ' m | z from ', zlim(1), ' to ', zlim(2), ' m'
 
     CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) WRITE(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
+    if (self % debug) write(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
-    ! Reshape pressure and observers to 3D (nx, nz, 3) and (Nfreqs, nx, nz)
     ALLOCATE(p_reshaped(SIZE(p,1), nx, nz))
     ALLOCATE(obs_reshaped(nx, nz, 3))
 
@@ -801,7 +892,6 @@ SUBROUTINE run_sliceXZ(self, y_xz, nx_xz, nz_xz, xlim_xz, zlim_xz)
         end do
     end do
 
-    ! Save results
     CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
     CALL save_variable(self % save_path, "P_slicexz", p_reshaped)
     CALL save_variable(self % save_path, "Obs_slicexz", obs_reshaped)
@@ -811,7 +901,7 @@ SUBROUTINE run_sliceXZ(self, y_xz, nx_xz, nz_xz, xlim_xz, zlim_xz)
     CALL save_variable(self % save_path, "Nx_slicexz", nx)
     CALL save_variable(self % save_path, "Nz_slicexz", nz)
 
-    WRITE(*,'(A)') '   Saved to: ' // trim(self % save_path)
+    write(*,'(A)') '   Saved to: ' // trim(self % save_path)
 
 END SUBROUTINE run_sliceXZ
 
@@ -822,26 +912,10 @@ END SUBROUTINE run_sliceXZ
 ! not support a spherical free-field observer geometry. Only consumes its
 ! arguments and prints a "skipped" notice.
 ! -------------------------------------------------------------------------
-SUBROUTINE dummy_run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
+SUBROUTINE dummy_run_sphere(self)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
 
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: r_sphere
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: n_theta_sphere
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: nz_sphere
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: center_sphere(3)
-
-    ! local variables not to have interpreter warnings
-    REAL(WP) :: r, center(3)
-    INTEGER(I32) ::n_theta, nz
-
-    
-    r = 30.0_WP     ; if (PRESENT(r_sphere))       r       = r_sphere
-    n_theta = 72_I32; if (PRESENT(n_theta_sphere)) n_theta = n_theta_sphere
-    nz = 20_I32     ; if (PRESENT(nz_sphere))      nz      = nz_sphere
-    center = 0.0_WP ; if (PRESENT(center_sphere))  center  = center_sphere
-
-    ! Does nothing only skips
-    WRITE(*,'(A)') '>> [Sphere]     skipped, not available for: ' // trim(self % solver_name)
+    write(*,'(A)') '>> [Sphere]     skipped, not available for: ' // trim(self % solver_name)
 
 END SUBROUTINE dummy_run_sphere
 
@@ -853,89 +927,79 @@ END SUBROUTINE dummy_run_sphere
 ! forwarding each routine's optional arguments and saving every result to
 ! the solver's HDF5 output file.
 ! -------------------------------------------------------------------------
-SUBROUTINE run_all(self, &
-    observers_spectrum, z_spectrums, &
-    r_polar, z_polar, n_polar, center_polar, &
-    r_cyl, n_cyl, nz_cyl, center_cyl, &
-    distance_decay, n_decay, z_decay, logspace_decay, &
-    p1_line, p2_line, n_line, logspace_line, &
-    z_xy, nx_xy, ny_xy, xlim_xy, ylim_xy, center_xy, &
-    y_xz, nx_xz, nz_xz, xlim_xz, zlim_xz, &
-    r_sphere, n_theta_sphere, nz_sphere, center_sphere)
-        
+SUBROUTINE run_all(self)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
 
-    ! --- spectrums ---
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: observers_spectrum(:,:)
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: z_spectrums
-    ! --- polar ---
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: r_polar, z_polar, center_polar(2)
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: n_polar
-    ! --- cylinder ---
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: r_cyl, center_cyl(2)
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: n_cyl, nz_cyl
-    ! --- decay ---
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: distance_decay(2), z_decay
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: n_decay
-    LOGICAL     , INTENT(IN), OPTIONAL  :: logspace_decay
-    ! --- line ---
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: p1_line(3), p2_line(3)
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: n_line
-    LOGICAL     , INTENT(IN), OPTIONAL  :: logspace_line
-    ! --- sliceXY ---
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: z_xy, xlim_xy(2), ylim_xy(2), center_xy(2)
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: nx_xy, ny_xy
-    ! --- sliceXZ ---
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: y_xz, xlim_xz(2), zlim_xz(2)
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: nx_xz, nz_xz
-    ! --- sphere ---
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: r_sphere, center_sphere(3)
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: n_theta_sphere, nz_sphere
+    write(*,'(A)') ''
+    write(*,'(A)') repeat('=', 70)
+    write(*,'(A)') ' RUNNING ALL ACOUSTIC POST-PROCESSING (8 steps)'
+    write(*,'(A)') repeat('=', 70)
 
+    write(*,'(A)') ''
+    write(*,'(A)') '[1/8] Spectrums at observer points'
+    CALL self % run_spectrums()
 
-    WRITE(*,'(A)') ''
-    WRITE(*,'(A)') repeat('=', 70)
-    WRITE(*,'(A)') ' RUNNING ALL ACOUSTIC POST-PROCESSING (8 steps)'
-    WRITE(*,'(A)') repeat('=', 70)
+    write(*,'(A)') ''
+    write(*,'(A)') '[2/8] Polar contour'
+    CALL self % run_polar()
 
-    WRITE(*,'(A)') ''
-    WRITE(*,'(A)') '[1/8] Spectrums at observer points'
-    CALL self % run_spectrums(observers_spectrum, z_spectrums)
+    write(*,'(A)') ''
+    write(*,'(A)') '[3/8] Distance decay along wind'
+    CALL self % run_decay()
 
-    WRITE(*,'(A)') ''
-    WRITE(*,'(A)') '[2/8] Polar contour'
-    CALL self % run_polar(r_polar, z_polar, n_polar, center_polar)
+    write(*,'(A)') ''
+    write(*,'(A)') '[4/8] Line between two points'
+    CALL self % run_line()
 
-    WRITE(*,'(A)') ''
-    WRITE(*,'(A)') '[3/8] Distance decay along wind'
-    CALL self % run_decay(distance_decay, n_decay, z_decay, logspace_decay)
+    write(*,'(A)') ''
+    write(*,'(A)') '[5/8] Spherical radiation (free-field)'
+    CALL self % run_sphere()
 
-    WRITE(*,'(A)') ''
-    WRITE(*,'(A)') '[4/8] Line between two points'
-    CALL self % run_line(p1_line, p2_line, n_line, logspace_line)
+    write(*,'(A)') ''
+    write(*,'(A)') '[6/8] Horizontal slice XY'
+    CALL self % run_sliceXY()
 
-    WRITE(*,'(A)') ''
-    WRITE(*,'(A)') '[5/8] Spherical radiation (free-field)'
-    CALL self % run_sphere(r_sphere, n_theta_sphere, nz_sphere, center_sphere)
+    write(*,'(A)') ''
+    write(*,'(A)') '[7/8] Vertical slice XZ'
+    CALL self % run_sliceXZ()
 
-    WRITE(*,'(A)') ''
-    WRITE(*,'(A)') '[6/8] Horizontal slice XY'
-    CALL self % run_sliceXY(z_xy, nx_xy, ny_xy, xlim_xy, ylim_xy, center_xy)
+    write(*,'(A)') ''
+    write(*,'(A)') '[8/8] Cylinder surface'
+    CALL self % run_cylinder()
 
-    WRITE(*,'(A)') ''
-    WRITE(*,'(A)') '[7/8] Vertical slice XZ'
-    CALL self % run_sliceXZ(y_xz, nx_xz, nz_xz, xlim_xz, zlim_xz)
-
-    WRITE(*,'(A)') ''
-    WRITE(*,'(A)') '[8/8] Cylinder surface'
-    CALL self % run_cylinder(r_cyl, n_cyl, nz_cyl, center_cyl)
-
-    WRITE(*,'(A)') ''
-    WRITE(*,'(A)') repeat('=', 70)
-    WRITE(*,'(A)') ' ALL ACOUSTIC COMPUTATIONS FINISHED'
-    WRITE(*,'(A)') repeat('=', 70)
+    write(*,'(A)') ''
+    write(*,'(A)') repeat('=', 70)
+    write(*,'(A)') ' ALL ACOUSTIC COMPUTATIONS FINISHED'
+    write(*,'(A)') repeat('=', 70)
 
 END SUBROUTINE run_all
+
+
+! -------------------------------------------------------------------------
+! Subroutine: run
+! Config-driven entry point for the post-processing pipeline. Calls
+! run_all() when do_run % do_all is enabled; otherwise runs only the
+! individual steps whose own do_<name> flag is enabled.
+! -------------------------------------------------------------------------
+SUBROUTINE run(self)
+    CLASS(AcousticSolver_t), INTENT(INOUT) :: self
+
+    associate(d => self % run_inputs % do_run)
+        if (d % do_all) then
+            CALL self % run_all()
+        else
+            if (d % do_spectrums) CALL self % run_spectrums()
+            if (d % do_polar)     CALL self % run_polar()
+            if (d % do_cylinder)  CALL self % run_cylinder()
+            if (d % do_decay)     CALL self % run_decay()
+            if (d % do_line)      CALL self % run_line()
+            if (d % do_sliceXY)   CALL self % run_sliceXY()
+            if (d % do_sliceXZ)   CALL self % run_sliceXZ()
+            if (d % do_sphere)    CALL self % run_sphere()
+        end if
+    end associate
+
+END SUBROUTINE run
 
 
 END MODULE AcousticSolver
