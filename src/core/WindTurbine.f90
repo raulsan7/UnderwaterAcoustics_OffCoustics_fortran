@@ -2,11 +2,12 @@ MODULE WindTurbine
 
 USE Kinds
 USE Types
+USE IOUtils
 
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: WindTurbine_t, drivetrain10MW_excitation_spectrum, init
+PUBLIC :: WindTurbine_t, drivetrain10MW_excitation_spectrum, init, save_turbine_params
 
 
 
@@ -22,7 +23,7 @@ TYPE, ABSTRACT :: WindTurbine_t
     ! --- Input parameters --- !
     CHARACTER(len=200) :: rootname                      ! [-] Name without extensions of the OpenFAST output files
     CHARACTER(len=200) :: OP_output_dir                 ! [-] Directory with OpenFast output files
-    LOGICAL            :: Binary                        ! [-] Wheter OpenFast files are binary (.outb) or not (.out)
+    LOGICAL            :: Binary                        ! [-] Whether OpenFast files are binary (.outb) or not (.out)
     REAL(WP)           :: WindSpeed                     ! [m/s] Wind Speed in norm
     REAL(WP)           :: WindDir                       ! [deg] Wind direction 0 deg points to +x axis (anticlockwise from +x)
     REAL(WP)           :: Depth                         ! [m] Water depth
@@ -34,11 +35,11 @@ TYPE, ABSTRACT :: WindTurbine_t
     ! --- Dynamic Phisical arrays --- !
     REAL(WP), ALLOCATABLE :: Time(:)                    ! [s] Simulation time vector
     REAL(WP), ALLOCATABLE :: acc(:,:,:,:)               ! [m/s^2] Acceleration array (nt, Nm, Nn)
-    REAL(WP), ALLOCATABLE :: x_all(:,:,:)               ! [m] Nodes coordinates (Nmembers, Nnodes,3)
-    REAL(WP), ALLOCATABLE :: x(:,:)                     ! [m] Nodes cordinates list (Nnodes_total, 3)
+    REAL(WP), ALLOCATABLE :: xyz_all(:,:,:)             ! [m] Nodes coordinates (Nmembers, Nnodes,3)
+    REAL(WP), ALLOCATABLE :: xyz(:,:)                   ! [m] Nodes coordinates list (Nnodes_total, 3)
     REAL(WP), ALLOCATABLE :: Freqs(:)                   ! [Hz] Frequency array
 
-    COMPLEX(WP), ALLOCATABLE :: F(:,:,:)                ! [N] Force array (NFreqs, Nnodes_total, 3)
+    COMPLEX(WP), ALLOCATABLE :: Force(:,:,:)            ! [N] Force array (NFreqs, Nnodes_total, 3)
 
     CHARACTER(len=:), ALLOCATABLE :: OP_output_path     ! [-] Openfast output file path
     CHARACTER(len=:), ALLOCATABLE :: OP_SubDyn_path     ! [-] Openfast SubDyn file path
@@ -46,14 +47,14 @@ TYPE, ABSTRACT :: WindTurbine_t
     CHARACTER(len=:), ALLOCATABLE :: case_type          ! [-] Tag to distinguish turbine
 
     ! --- Derived variables --- !
-    LOGICAL :: is_monopile                              ! [-] Wheter turbine is monopile or floating
+    LOGICAL :: is_monopile                              ! [-] Whether turbine is monopile or floating
 
     CONTAINS
     ! --- Shared procedures --- !
     PROCEDURE :: init                           ! Constructor
     PROCEDURE :: read_input                     ! Reads OpenFast outputs
     PROCEDURE :: translate_align_with_WindDir   ! Place nodes correctly
-    PROCEDURE :: turbine_to_source
+    PROCEDURE :: turbine_to_source              ! Translate turbine to source abstraction
 
 
     ! --- Deferred procedures --- !
@@ -61,6 +62,7 @@ TYPE, ABSTRACT :: WindTurbine_t
     PROCEDURE(compute_mass_i)                 , DEFERRED :: compute_mass
     PROCEDURE(filter_frequencies_i)           , DEFERRED :: filter_frequencies
     PROCEDURE(save_specific_params_i)         , DEFERRED :: save_specific_params
+    PROCEDURE(write_specific_params_txt_i)    , DEFERRED :: write_specific_params_txt
     PROCEDURE(get_impedance_corrected_force_i), DEFERRED :: get_impedance_corrected_force
 
 END TYPE WindTurbine_t
@@ -100,13 +102,21 @@ END INTERFACE
 
 ! Save specific turbine parameters
 ABSTRACT INTERFACE
-
-    SUBROUTINE save_specific_params_i(self, save_path, ichar)
+    SUBROUTINE save_specific_params_i(self, save_path, istr)
         IMPORT:: WindTurbine_t
         CLASS(WindTurbine_t), INTENT(IN) :: self
         CHARACTER(len=*)    , INTENT(IN) :: save_path
-        CHARACTER(len=*)    , INTENT(IN), OPTIONAL :: ichar
+        CHARACTER(len=*)    , INTENT(IN), OPTIONAL :: istr
     END SUBROUTINE save_specific_params_i
+END INTERFACE
+
+! Write specific turbine parameters as .dat
+ABSTRACT INTERFACE
+    SUBROUTINE write_specific_params_txt_i(self, unit)
+        IMPORT:: WindTurbine_t, I32
+        CLASS(WindTurbine_t), INTENT(IN) :: self
+        INTEGER(I32)        , INTENT(IN) :: unit
+    END SUBROUTINE write_specific_params_txt_i
 END INTERFACE
 
 ! Impedance correction
@@ -150,13 +160,15 @@ SUBROUTINE init(self, config)
     ext = ".out"; if (self % Binary) ext = ".outb"
     
     ! Set paths
-    if (config % OP_output_path == 'None') then
+    if (index(config % OP_output_path, 'one') > 0 .or. &    ! "None" or "Default"
+        index(config % OP_output_path, 'efault') > 0) then
         self % OP_output_path = trim(self % OP_output_dir) // trim(self % rootname) // trim(ext)
     else
         self % OP_output_path = trim(config % OP_output_path)
     endif
     
-    if (config % OP_SubDyn_path == 'None') then
+    if (index(config % OP_SubDyn_path, 'one') > 0 .or. &    ! "None" or "Default"
+        index(config % OP_SubDyn_path, 'efault') > 0) then
         self % OP_SubDyn_path = trim(self % OP_output_dir) // trim(self % rootname) // ".SD.sum.yaml"
     else
         self % OP_SubDyn_path = trim(config % OP_SubDyn_path)
@@ -167,7 +179,6 @@ SUBROUTINE init(self, config)
     if (.not. exists) error stop "WindTurbine % init: output file not found " // trim(self % OP_output_path)
     inquire(file=trim(self % OP_SubDyn_path), exist=exists)
     if (.not. exists) error stop "WindTurbine % init: SubDyn file not found " // trim(self % OP_SubDyn_path)
-
 
     write(*,*) ">> Base turbine initialized for rootname: ", trim(self % rootname)
 
@@ -184,7 +195,7 @@ SUBROUTINE read_input(self, config, verbose)
     USE IOUtils, ONLY: get_SDsum_variables, read_input_SD
 
     CLASS(WindTurbine_t)      , INTENT(INOUT) :: self
-    TYPE(Config_WindTurbine_t), INTENT(IN)    :: config
+    TYPE(Config_WindTurbine_t), INTENT(INOUT) :: config
     LOGICAL                   , INTENT(IN)    :: verbose
 
     ! Local variables
@@ -198,10 +209,11 @@ SUBROUTINE read_input(self, config, verbose)
         write(*,*) "Filepath:  ", TRIM(self % OP_output_path)
         write(*,*) "---------------------------------------------------------"
     end if
+    
     ! Load initial positions from SubDyn summary file
     if (self % Nmembers > 0 .and. self % Nnodes >0) then
         CALL get_SDsum_variables(SD_path=self%OP_SubDyn_path, Nmembers=self%Nmembers, &
-                                 Nnodes=self%Nnodes, verbose=.false., Nodes=self%x_all)
+                                 Nnodes=self%Nnodes, verbose=.false., Nodes=self%xyz_all)
         CALL read_input_SD(filename=self%OP_output_path, what='acceleration', skip=config%skip,Nmembers=self%Nmembers, &
                            Nnodes=self%Nnodes, From=config%From, Upto=config%Upto, verbose=.false., Time_out=self%time, &
                            Array_out=self%acc, unit_out=unit, status=status)
@@ -211,12 +223,14 @@ SUBROUTINE read_input(self, config, verbose)
 
     ! Compute baricenter if not provided (Most probable is that if BariPos = 0 then is not provided)
     if (all(self % BariPos == (/ 0.0_WP, 0.0_WP /))) then
-        self % BariPos(1) = sum(self%x_all(:,:,1)) / real(self%Nmembers * self%Nnodes, WP)
-        self % BariPos(2) = sum(self%x_all(:,:,2)) / real(self%Nmembers * self%Nnodes, WP)
+        self % BariPos(1) = sum(self%xyz_all(:,:,1)) / real(self%Nmembers * self%Nnodes, WP)
+        self % BariPos(2) = sum(self%xyz_all(:,:,2)) / real(self%Nmembers * self%Nnodes, WP)
     end if
-
+    
     ! Align with wind direction and translate to axis position
     CALL self % translate_align_with_WindDir()
+    config % BariPos = self % BariPos
+    config % AxisPos = self % AxisPos
 
 
     if (verbose) then
@@ -273,16 +287,16 @@ SUBROUTINE translate_align_with_WindDir(self)
        !$omp end parallel do
     end if
 
-    if (ALLOCATED(self % x_all)) then
-       nm = size(self % x_all, 1)
-       nn = size(self % x_all, 2)
+    if (ALLOCATED(self % xyz_all)) then
+       nm = size(self % xyz_all, 1)
+       nn = size(self % xyz_all, 2)
        !$omp parallel do collapse(2)
        do i = 1, nm
           do j = 1, nn
-             x_old = self % x_all(i,j,1)
-             y_old = self % x_all(i,j,2)
-             self % x_all(i,j,1) = c * x_old - s * y_old + axis_xy(1)
-             self % x_all(i,j,2) = s * x_old + c * y_old + axis_xy(2)
+             x_old = self % xyz_all(i,j,1)
+             y_old = self % xyz_all(i,j,2)
+             self % xyz_all(i,j,1) = c * x_old - s * y_old + axis_xy(1)
+             self % xyz_all(i,j,2) = s * x_old + c * y_old + axis_xy(2)
           end do
        end do
        !$omp end parallel do
@@ -291,30 +305,44 @@ END SUBROUTINE
 
 
 SUBROUTINE turbine_to_source(self, config, sources)
-    CLASS(WindTurbine_t)  , INTENT(IN)  :: self
-    TYPE(Config_t)        , INTENT(IN)  :: config
-    TYPE(AcousticSource_t), INTENT(OUT) :: sources
+    CLASS(WindTurbine_t)  , INTENT(IN)               :: self
+    TYPE(Config_t)        , INTENT(IN)               :: config
+    TYPE(AcousticSource_t), INTENT(OUT), ALLOCATABLE :: sources
 
+    if (.not. ALLOCATED(sources)) ALLOCATE(AcousticSource_t :: sources)
 
-    if (.not. ALLOCATED(self % F) .or. .not. ALLOCATED(self % x)) then
+    if (.not. ALLOCATED(self % Force) .or. .not. ALLOCATED(self % xyz)) then
         error stop "turbine_to_source(): turbine forces not computed"
     end if
 
     ! Copy coordinates and active frequencies
-    sources % xyz  = self % x
+    sources % xyz   = self % xyz
     sources % Freqs = self % Freqs
 
     ! Apply force correction
     if (config % solver % method == "ImageMethod") then
         sources % force = self % get_impedance_corrected_force(config % env % speed_sound_base)
     else
-        sources % force = self % F
+        sources % force = self % Force
     end if
 
     write(*,*) ">> [AcousticSource] Physical turbine forces translated into mathematical point dipoles"
 
 END SUBROUTINE turbine_to_source
 
+
+SUBROUTINE save_turbine_params(params, save_path)
+    TYPE(Config_WindTurbine_t), INTENT(IN) :: params
+    CHARACTER(len=200)        , INTENT(IN) :: save_path
+
+    CALL save_variable(save_path, "case_type", params % case_type)
+    CALL save_variable(save_path, "WindSpeed", params % WindSpeed)
+    CALL save_variable(save_path, "WindDir"  , params % WindDir  )
+    CALL save_variable(save_path, "Depth"    , params % Depth    )
+    CALL save_variable(save_path, "AxisPos"  , params % AxisPos  )
+    CALL save_variable(save_path, "BariPos"  , params % BariPos  )
+
+END SUBROUTINE save_turbine_params
 
 
 

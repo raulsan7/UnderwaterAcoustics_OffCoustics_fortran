@@ -28,7 +28,19 @@ SUBROUTINE read_input_files(files_path, config)
     CALL read_turbine_config     (turbine_config_path     , config)
     CALL read_solver_config      (solver_config_path      , config)
     CALL read_environment_config (environment_config_path , config)
-    CALL read_ImagesMethod_config(ImagesMethod_config_path, config)
+
+    SELECT CASE(trim(config % solver % method))
+    CASE('ImageMethod')
+        ALLOCATE(Config_ImageMethod_t :: config % method)
+        CALL read_ImageMethod_config(ImagesMethod_config_path, config)
+    
+    CASE('AnalyticalNormalModes')
+        error stop "Analytical normal modes: Not implemented yet"
+
+    CASE DEFAULT
+        error stop "read_input_files(): Unknown method "
+    END SELECT
+
 
 END SUBROUTINE read_input_files
 
@@ -42,6 +54,7 @@ SUBROUTINE read_turbine_config(path, config)
     CHARACTER(len=200) :: iomsg
 
     ! Input variables
+    CHARACTER(len=200) :: case_type
     CHARACTER(len=200) :: rootname
     CHARACTER(len=200) :: OP_output_dir
     CHARACTER(len=200) :: OP_output_filename
@@ -68,6 +81,7 @@ SUBROUTINE read_turbine_config(path, config)
     ! ==============================
     namelist                &
     /turbine_config/        &
+        case_type,          &
         rootname,           &
         OP_output_dir,      &
         OP_output_filename, &
@@ -90,6 +104,7 @@ SUBROUTINE read_turbine_config(path, config)
     ! ==============================
     ! Defaults
     ! ==============================
+    case_type          = 'DTU10MWMonopile'
     rootname           = 'DTU_DeltaWind_mn_ws11.4'
     OP_output_dir      = '../OP_output/'
     OP_output_filename = 'None'
@@ -131,10 +146,11 @@ SUBROUTINE read_turbine_config(path, config)
     ! ==============================
     ! Pack values into Config_t 
     ! ==============================
-    config % turbine % rootname        = rootname
-    config % turbine % OP_output_dir   = OP_output_dir
-    config % turbine % OP_output_path  = OP_output_filename
-    config % turbine % OP_SubDyn_path  = OP_SubDyn_filename
+    config % turbine % case_type       = trim(case_type)
+    config % turbine % rootname        = trim(rootname)
+    config % turbine % OP_output_dir   = trim(OP_output_dir)
+    config % turbine % OP_output_path  = trim(OP_output_filename)
+    config % turbine % OP_SubDyn_path  = trim(OP_SubDyn_filename)
     config % turbine % Binary          = Binary
     config % turbine % WindSpeed       = WindSpeed
     config % turbine % WindDir         = WindDir
@@ -146,7 +162,7 @@ SUBROUTINE read_turbine_config(path, config)
     config % turbine % From            = From
     config % turbine % Upto            = Upto
     config % turbine % skip            = skip
-    config % turbine % skipf            = skipf
+    config % turbine % skipf           = skipf
     config % turbine % filter_freqs    = filter_freqs
     config % turbine % freqs_over      = freqs_over
 
@@ -183,7 +199,7 @@ SUBROUTINE read_solver_config(path, config)
     ! ==============================
     ! Defaults
     ! ==============================
-    method     = "ImagesMethod"
+    method     = "ImageMethod"
     save_path  = "None"
     block_size = 128_I32
     in_cluster = .true.
@@ -283,7 +299,7 @@ SUBROUTINE read_environment_config(path, config)
 END SUBROUTINE read_environment_config
 
 
-SUBROUTINE read_ImagesMethod_config(path, config)
+SUBROUTINE read_ImageMethod_config(path, config)
     CHARACTER(len=*), INTENT(IN)    :: path
     TYPE(Config_t)  , INTENT(INOUT) :: config
 
@@ -293,8 +309,6 @@ SUBROUTINE read_ImagesMethod_config(path, config)
 
     ! Input variables
     INTEGER(I32) :: N_images
-    REAL(WP)     :: speed_sound
-    REAL(WP)     :: density
     INTEGER(I32) :: UpperBC
     INTEGER(I32) :: LowerBC
     REAL(WP)     :: UpperHBC
@@ -306,8 +320,6 @@ SUBROUTINE read_ImagesMethod_config(path, config)
     namelist                    &
     /ImagesMethod_config/       &
         N_images,               &
-        speed_sound,            &
-        density,                &
         UpperBC,                &
         LowerBC,                &
         UpperHBC,                &
@@ -318,8 +330,6 @@ SUBROUTINE read_ImagesMethod_config(path, config)
 
     ! Defaults
     N_images            = 30_I32
-    speed_sound         = 1500.0_WP
-    density             = 1025.0_WP
     UpperBC             = -1_I32
     LowerBC             = 1_I32
     UpperHBC            = 0.0_WP
@@ -344,18 +354,20 @@ SUBROUTINE read_ImagesMethod_config(path, config)
 
     close(unit_num)
 
-    config % images_method % N_images            = N_images
-    config % images_method % speed_sound         = speed_sound
-    config % images_method % density             = density
-    config % images_method % UpperBC             = UpperBC
-    config % images_method % LowerBC             = LowerBC
-    config % images_method % UpperHBC            = UpperHBC
-    config % images_method % LowerHBC            = LowerHBC
-    config % images_method % attenuation_surface = attenuation_surface
-    config % images_method % attenuation_bottom  = attenuation_bottom
-    config % images_method % epsilon             = epsilon
+    SELECT TYPE(m => config % method)
+    TYPE IS(Config_ImageMethod_t)
+        m % N_images            = N_images
+        m % UpperBC             = UpperBC
+        m % LowerBC             = LowerBC
+        m % UpperHBC            = UpperHBC
+        m % LowerHBC            = LowerHBC
+        m % attenuation_surface = attenuation_surface
+        m % attenuation_bottom  = attenuation_bottom
+        m % epsilon             = epsilon
+    END SELECT
 
-END SUBROUTINE read_ImagesMethod_config
+
+END SUBROUTINE read_ImageMethod_config
 
 
 END MODULE Args_parser

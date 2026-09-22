@@ -13,11 +13,12 @@ PUBLIC
 TYPE :: Config_WindTurbine_t
 
     ! --- Input parameters --- !
+    CHARACTER(len=200) :: case_type             ! [-] Tag to distinguish turbine
     CHARACTER(len=200) :: rootname              ! [-] Name without extensions of the OpenFAST output files
     CHARACTER(len=200) :: OP_output_dir         ! [-] Directory with OpenFast output files
     CHARACTER(len=200) :: OP_output_path        ! [-] Openfast output file path
     CHARACTER(len=200) :: OP_SubDyn_path        ! [-] Openfast SubDyn file path
-    LOGICAL            :: Binary                ! [-] Wheter OpenFast files are binary (.outb) or not (.out)
+    LOGICAL            :: Binary                ! [-] Whether OpenFast files are binary (.outb) or not (.out)
     REAL(WP)           :: WindSpeed             ! [m/s] Wind Speed in norm    
     REAL(WP)           :: WindDir               ! [deg] Wind direction 0 deg points to +x axis (anticlockwise from +x)
     REAL(WP)           :: Depth                 ! [m] Water depth
@@ -28,10 +29,10 @@ TYPE :: Config_WindTurbine_t
     REAL(WP)           :: From                  ! [-] Fraction to start reading input
     REAL(WP)           :: Upto                  ! [-] Fraction to stop  reading input
     INTEGER(I32)       :: skip                  ! [-] skips time snapshots as time(::skip)
-    INTEGER(I32)       :: skipf                  ! [-] skips time snapshots as freq(::skipf)
-    LOGICAL            :: filter_freqs          ! [-] Wheter to delete non usefull frequencies
+    INTEGER(I32)       :: skipf                 ! [-] skips time snapshots as freq(::skipf)
+    LOGICAL            :: filter_freqs          ! [-] Whether to delete non usefull frequencies
     REAL(WP)           :: freqs_over            ! [-] Frequencies smaller than freqs_over wont be filtered
-    LOGICAL            :: is_monopile           ! [-] Wheter turbine is monopile or floating
+    LOGICAL            :: is_monopile
 
 END TYPE Config_WindTurbine_t
 
@@ -57,7 +58,7 @@ TYPE :: Config_Solver_t
 
     ! --- Input parameters --- !
     LOGICAL            :: debug                 ! [-] More info for debugin
-    LOGICAL            :: in_cluster            ! [-] Wheter we are working on a cluster
+    LOGICAL            :: in_cluster            ! [-] Whether we are working on a cluster
     CHARACTER(len=200) :: save_path             ! [-] Where to save results
     CHARACTER(len=50)  :: method                ! [-] Acoustic method to use
     INTEGER(I32)       :: block_size            ! [-] Block size for each CPU in parallel computations
@@ -66,11 +67,42 @@ END TYPE Config_Solver_t
 
 
 ! ========================================
-! METHOD OF IMAGES (For input)
+! CONFIGURATION (For input)
 ! ========================================
-TYPE :: Config_ImagesMethod_t
+TYPE :: Config_t
 
-    ! --- Input parameters --- !
+    TYPE(Config_WindTurbine_t)          :: turbine
+    TYPE(Config_Environment_t)          :: env
+    TYPE(Config_Solver_t)               :: solver
+    CLASS(Config_Method_t), ALLOCATABLE :: method
+
+END TYPE Config_t
+
+
+! ========================================
+! ACOUSTIC SORCE ABSTRACTION
+! ========================================
+TYPE:: AcousticSource_t
+
+    REAL(WP)   , ALLOCATABLE :: xyz(:,:)            ! [m] Acoustic source coordinates (Nsources, 3)
+    COMPLEX(WP), ALLOCATABLE :: Force(:,:,:)        ! [N] Complex source forces (Nfreqs, Nsources, 3)
+    REAL(WP)   , ALLOCATABLE :: Freqs(:)            ! [Hz] Frequency verctor (Nfreqs)
+
+END TYPE AcousticSource_t
+
+
+! ========================================
+! DUMMY FOR METHOD LABELING
+! ========================================
+TYPE, ABSTRACT :: Config_Method_t
+END TYPE Config_Method_t
+
+
+! ========================================
+! METHOD OF IMAGES
+! ========================================
+TYPE, EXTENDS(Config_Method_t) :: Config_ImageMethod_t
+
     INTEGER(I32) :: N_images
     REAL(WP)     :: speed_sound
     REAL(WP)     :: density
@@ -82,32 +114,7 @@ TYPE :: Config_ImagesMethod_t
     REAL(WP)     :: attenuation_bottom
     REAL(WP)     :: epsilon
 
-END TYPE Config_ImagesMethod_t
-
-
-! ========================================
-! CONFIGURATION (For input)
-! ========================================
-TYPE :: Config_t
-
-    TYPE(Config_WindTurbine_t) :: turbine
-    TYPE(Config_Environment_t) :: env
-    TYPE(Config_Solver_t)      :: solver
-    TYPE(Config_ImagesMethod_t) :: images_method
-
-END TYPE Config_t
-
-
-! ========================================
-! ACOUSTIC SORCE ABSTRACTION
-! ========================================
-TYPE:: AcousticSource_t
-
-    REAL(WP)   , ALLOCATABLE :: xyz(:,:)            ! [m] Acoustic source coordinates (Nsources, 3)
-    COMPLEX(WP), ALLOCATABLE :: force(:,:,:)        ! [N] Complex dource forces (Nfreqs, Nsources, 3)
-    REAL(WP)   , ALLOCATABLE :: Freqs(:)            ! [Hz] Frequency verctor (Nfreqs)
-
-END TYPE AcousticSource_t
+END TYPE Config_ImageMethod_t
 
 
 ! ========================================
@@ -115,8 +122,8 @@ END TYPE AcousticSource_t
 ! ========================================
 TYPE :: ImageSystem_t
 
-    REAL(WP)    , ALLOCATABLE :: nodes_pos(:,:)     ! [m] Nodes coordinates (Nnodes, 3)
-    COMPLEX(WP) , ALLOCATABLE :: force(:,:,:)       ! [N] Force array (Nfreqs, Nnodes, 3)
+    REAL(WP)    , ALLOCATABLE :: xyz(:,:)     ! [m] Nodes coordinates (Nnodes, 3)
+    COMPLEX(WP) , ALLOCATABLE :: Force(:,:,:)       ! [N] Force array (Nfreqs, Nnodes, 3)
     INTEGER(I32), ALLOCATABLE :: BC_all(:)          ! [-] Boundary conditions array
 
 END TYPE ImageSystem_t

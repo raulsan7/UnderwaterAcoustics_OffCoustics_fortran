@@ -7,7 +7,8 @@ USE, INTRINSIC :: IEEE_ARITHMETIC, ONLY: IEEE_VALUE, IEEE_QUIET_NAN
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: get_SDsum_variables, read_input_SD, read_curve, save_to_hdf5
+PUBLIC :: get_SDsum_variables, read_input_SD, read_curve, save_variable, save_to_hdf5, to_upper, swap_extension, &
+          ensure_parent_dir
 
 INTERFACE save_to_hdf5
     MODULE PROCEDURE save_hdf5_real_scalar
@@ -959,9 +960,100 @@ FUNCTION extract_number_nodes(text_line) RESULT(number_of_nodes)
 END FUNCTION extract_number_nodes
 
 
+PURE FUNCTION to_upper(str) RESULT(res)
+    CHARACTER(len=*), INTENT(IN) :: str
+    CHARACTER(len=LEN(str))      :: res
+    INTEGER :: i, c
+    res = str
+    do i = 1, len(str)
+        c = iachar(str(i:i))
+        if (c >= 97 .and. c <= 122) res(i:i) = achar(c - 32)
+    end do
+END FUNCTION to_upper
+
+
+! -----------------------------------------------------------------------
+! Function: swap_extension
+! Replaces the extension of "path" (everything after the last '.') with
+! "new_ext". If "path" has no extension, "new_ext" is simply appended.
+! -----------------------------------------------------------------------
+PURE FUNCTION swap_extension(path, new_ext) RESULT(new_path)
+    CHARACTER(len=*), INTENT(IN)  :: path
+    CHARACTER(len=*), INTENT(IN)  :: new_ext
+    CHARACTER(len=:), ALLOCATABLE :: new_path
+
+    INTEGER :: dot_pos
+
+    dot_pos = index(trim(path), '.', back=.true.)
+
+    if (dot_pos > 0) then
+        new_path = trim(path(1:dot_pos-1)) // trim(new_ext)
+    else
+        new_path = trim(path) // trim(new_ext)
+    end if
+
+END FUNCTION swap_extension
+
+
+! -----------------------------------------------------------------------
+! Subroutine: ensure_parent_dir
+! Given a file path, creates its parent directory (and any missing
+! intermediate directories) if it doesn't already exist. No-op if "path"
+! has no directory component (i.e. it's a bare filename).
+! -----------------------------------------------------------------------
+SUBROUTINE ensure_parent_dir(path)
+    CHARACTER(len=*), INTENT(IN) :: path
+
+    CHARACTER(len=:), ALLOCATABLE :: dir
+    INTEGER :: slash_pos
+
+    slash_pos = index(trim(path), '/', back=.true.)
+    if (slash_pos > 0) then
+        dir = trim(path(1:slash_pos-1))
+        CALL EXECUTE_COMMAND_LINE('mkdir -p "' // dir // '"')
+    end if
+
+END SUBROUTINE ensure_parent_dir
+
+
 ! -------------------- !
 ! HDF5 FUNCTIONS
 ! -------------------- !
+SUBROUTINE save_variable(save_path, var_name, var)
+
+    CHARACTER(len=*), INTENT(IN) :: save_path
+    CHARACTER(len=*), INTENT(IN) :: var_name
+    CLASS(*)        , INTENT(IN) :: var(..)
+    
+    SELECT RANK (v_rank => var)
+    RANK(0) 
+        SELECT TYPE (v => v_rank)
+        TYPE IS (REAL(WP)) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (INTEGER) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (LOGICAL) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        END SELECT
+    RANK(1) 
+        SELECT TYPE (v => v_rank)
+        TYPE IS (REAL(WP)) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (INTEGER) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
+        END SELECT
+    RANK(2) 
+        SELECT TYPE (v => v_rank)
+        TYPE IS (REAL(WP)) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (INTEGER) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
+        END SELECT
+    RANK(3) 
+        SELECT TYPE (v => v_rank)
+        TYPE IS (REAL(WP)) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (INTEGER) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
+        END SELECT
+    END SELECT
+
+END SUBROUTINE save_variable
 
 ! ---------- SCALARS ---------- !
 SUBROUTINE save_hdf5_real_scalar(filepath, var_name, data_scalar)

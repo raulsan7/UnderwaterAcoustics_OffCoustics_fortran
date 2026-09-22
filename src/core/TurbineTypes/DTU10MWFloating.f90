@@ -31,49 +31,46 @@ TYPE, EXTENDS(WindTurbine_t) :: DTU10MWFloating_t
 
     CONTAINS
     ! --- Shared procedures --- !
-    PROCEDURE :: init                          => init_DTU10MWFloating_t
+    PROCEDURE :: init                          => init_DTU10MWFloating
 
 
     ! --- Deferred(abstract) procedures --- !
-    PROCEDURE :: compute_force                 => compute_force_DTU10MWFloating_t
-    PROCEDURE :: compute_mass                  => compute_mass_DTU10MWFloating_t
-    PROCEDURE :: filter_frequencies            => filter_frequencies_DTU10MWFloating_t
-    PROCEDURE :: save_specific_params          => save_specific_params_DTU10MWFloating_t
-    PROCEDURE :: get_impedance_corrected_force => get_impedance_corrected_force_DTU10MWFloating_t
+    PROCEDURE :: compute_force                 => compute_force_DTU10MWFloating
+    PROCEDURE :: compute_mass                  => compute_mass_DTU10MWFloating
+    PROCEDURE :: filter_frequencies            => filter_frequencies_DTU10MWFloating
+    PROCEDURE :: save_specific_params          => save_specific_params_DTU10MWFloating
+    PROCEDURE :: write_specific_params_txt     => write_specific_params_txt_DTU10MWFloating
+    PROCEDURE :: get_impedance_corrected_force => get_impedance_corrected_force_DTU10MWFloating
 
 END TYPE DTU10MWFloating_t
 
 
 CONTAINS
 
-SUBROUTINE init_DTU10MWFloating_t(self, config)
+SUBROUTINE init_DTU10MWFloating(self, config)
     CLASS(DTU10MWFloating_t)  , INTENT(INOUT) :: self
     TYPE(Config_WindTurbine_t), INTENT(INOUT) :: config
 
     ! Local variables
     LOGICAL :: exists = .false.
 
-    CALL init(self, config)
-
-
-    ! Define path to rpm curve HARCODED
+    ! Define path to rpm curve HARDCODED
     self % path_rpm = "../wind_speed_curves_DTU_10MW/rpm_ws.csv"
 
     ! Verify that the rpm curve file exists
     inquire(file= self % path_rpm, exist=exists)
-    if (.not. exists) error stop "DTU10MWFloating_t % init: RPM curve file not found: " // self % path_rpm
+    if (.not. exists) error stop "DTU10MWFloating % init: RPM curve file not found: " // self % path_rpm
 
     ! Set the case type
-    self % case_type = "Floating"
-    self % is_monopile = .false.
-    config % is_monopile = self % is_monopile
+    self   % is_monopile = .false.
+    config % is_monopile = .false.
 
     CALL init(self, config)
 
-END SUBROUTINE init_DTU10MWFloating_t
+END SUBROUTINE init_DTU10MWFloating
 
 
-SUBROUTINE compute_force_DTU10MWFloating_t(self, config, verbose)
+SUBROUTINE compute_force_DTU10MWFloating(self, config, verbose)
     USE MathUtils, ONLY: compute_rfft
     
     CLASS(DTU10MWFloating_t)  , INTENT(INOUT) :: self
@@ -125,7 +122,7 @@ SUBROUTINE compute_force_DTU10MWFloating_t(self, config, verbose)
     self % Freqs = freqs
     nf = size(freqs)
 
-    ! Recover acceleration in chape (nf, Nm, Nn, 3)
+    ! Recover acceleration in shape (nf, Nm, Nn, 3)
     ALLOCATE(A(nf, Nm, Nn, 3))
     !$omp parallel do collapse(2) private(i)
     do j = 1, Nm
@@ -174,7 +171,7 @@ SUBROUTINE compute_force_DTU10MWFloating_t(self, config, verbose)
 
     ! Filter frequencies
     if (filter_freqs_) then
-        mask_freqs_to_use = self % filter_frequencies(config%freqs_over)
+        mask_freqs_to_use = self % filter_frequencies(config  %freqs_over)
         Nfreqs_new = count(mask_freqs_to_use)
 
         ALLOCATE(freqs_new(Nfreqs_new))
@@ -205,14 +202,14 @@ SUBROUTINE compute_force_DTU10MWFloating_t(self, config, verbose)
 
     ! Remove the first node of the second member of each column
     do i = 1, 3
-        m1 = self % col_members(i,2) + 1 ! COnverto to 1-based indexing
+        m1 = self % col_members(i,2) + 1 ! Converto to 1-based indexing
         keep(m1, 1) = .false.
     end do
 
     ! Remove dry nodes
     do j = 1, Nn
         do i = 1, Nm
-            if (self % x_all(i,j,3) > 0.0_WP) then
+            if (self % xyz_all(i,j,3) > 0.0_WP) then
                 keep(i, j) = .false.
             end if
         end do
@@ -242,24 +239,24 @@ SUBROUTINE compute_force_DTU10MWFloating_t(self, config, verbose)
         end do
     end do
 
-    ! Extract coordinates of submerged/non-duplicate nodes: self % x (Nnodes_wet, 3)
-    ALLOCATE(self % x(Nnodes_wet, 3))
+    ! Extract coordinates of submerged/non-duplicate nodes: self % xyz (Nnodes_wet, 3)
+    ALLOCATE(self % xyz(Nnodes_wet, 3))
     !$omp parallel do private(v, i, j)
     do v = 1, Nnodes_wet
         i = valid_member(v)
         j = valid_node(v)
-        self % x(v, :) = self % x_all(i, j, :)
+        self % xyz(v, :) = self % xyz_all(i, j, :)
     end do
     !$omp end parallel do
 
-    ! Extract corresponding forces: self % F (nf, Nnodes_wet, 3)
-    ALLOCATE(self % F(nf, Nnodes_wet, 3))
+    ! Extract corresponding forces: self % Force (nf, Nnodes_wet, 3)
+    ALLOCATE(self % Force(nf, Nnodes_wet, 3))
     !$omp parallel do collapse(2) private(v, i, j, k)
     do k = 1, 3
         do v = 1, Nnodes_wet
             i = valid_member(v)
             j = valid_node(v)
-            self % F(:, v, k) = F_temp(:, i, j, k)
+            self % Force(:, v, k) = F_temp(:, i, j, k)
         end do
     end do
     !$omp end parallel do
@@ -274,7 +271,7 @@ SUBROUTINE compute_force_DTU10MWFloating_t(self, config, verbose)
     ! 6. Summary verbose printout
     ! ==================================================================
     if (verbose_) then
-        F_memory_mb = real(storage_size(self % F) * size(self % F) / 8, WP) / 1024.0_WP / 1024.0_WP
+        F_memory_mb = real(storage_size(self % Force) * size(self % Force) / 8, WP) / 1024.0_WP / 1024.0_WP
         print '(A)', repeat('=', 70)
         print '(A)', 'FORCE COMPUTATION COMPLETED (FLOATING PLATFORM)'
         print '(A)', repeat('-', 68)
@@ -285,10 +282,10 @@ SUBROUTINE compute_force_DTU10MWFloating_t(self, config, verbose)
     end if
 
 
-END SUBROUTINE compute_force_DTU10MWFloating_t
+END SUBROUTINE compute_force_DTU10MWFloating
 
 
-SUBROUTINE compute_mass_DTU10MWFloating_t(self, mass, added_mass)
+SUBROUTINE compute_mass_DTU10MWFloating(self, mass, added_mass)
     USE MathUtils, ONLY: divide_span
 
     CLASS(DTU10MWFloating_t), INTENT(INOUT) :: self
@@ -331,8 +328,8 @@ SUBROUTINE compute_mass_DTU10MWFloating_t(self, mass, added_mass)
     ! ==================================================================
     ! Concatenate column node coordinates dropping the duplicate shared node
     ALLOCATE(col_pos(2 * Nn - 1, 3))
-    col_pos(1:Nn, :) = self % x_all(col_m0, :, :)
-    col_pos(Nn + 1 : 2 * Nn - 1, :) = self % x_all(col_m1, 2:Nn, :)
+    col_pos(1:Nn, :) = self % xyz_all(col_m0, :, :)
+    col_pos(Nn + 1 : 2 * Nn - 1, :) = self % xyz_all(col_m1, 2:Nn, :)
 
     ! Compute physical column height
     length = norm2(col_pos(2 * Nn - 1, :) - col_pos(1, :))
@@ -371,7 +368,7 @@ SUBROUTINE compute_mass_DTU10MWFloating_t(self, mass, added_mass)
     ALLOCATE(arc_length(Nn))
     arc_length(1) = 0.0_WP
     do i = 2, Nn
-        arc_length(i) = arc_length(i-1) + norm2(self % x_all(pon_m, i, :) - self % x_all(pon_m, i-1, :))
+        arc_length(i) = arc_length(i-1) + norm2(self % xyz_all(pon_m, i, :) - self % xyz_all(pon_m, i-1, :))
     end do
 
     ! Calculate spacing intervals
@@ -433,12 +430,12 @@ SUBROUTINE compute_mass_DTU10MWFloating_t(self, mass, added_mass)
 
     DEALLOCATE(mass_2D, added_mass_2D)
 
-END SUBROUTINE compute_mass_DTU10MWFloating_t
+END SUBROUTINE compute_mass_DTU10MWFloating
 
 
-FUNCTION filter_frequencies_DTU10MWFloating_t(self, freqs_over) RESULT(mask)
+FUNCTION filter_frequencies_DTU10MWFloating(self, freqs_over) RESULT(mask)
     USE IOUtils, ONLY: read_curve
-    USE MathUtils, ONLY: generate_timeseries_banded_sines, filter_non_usefull_freqs
+    USE MathUtils, ONLY: generate_timeseries_banded_sines, filter_non_useful_freqs
 
     CLASS(DTU10MWFloating_t), INTENT(INOUT) :: self
     REAL(WP), INTENT(IN), OPTIONAL        :: freqs_over
@@ -448,11 +445,11 @@ FUNCTION filter_frequencies_DTU10MWFloating_t(self, freqs_over) RESULT(mask)
     CHARACTER(len=20), ALLOCATABLE :: keys(:)
     REAL(WP)         , ALLOCATABLE :: freqs_amp(:,:)
     REAL(WP)         , ALLOCATABLE :: freqs_to_use(:)
-    REAL(WP)                       :: rpm, freqs_over_ = 10.0_WP
+    REAL(WP)                       :: rpm, freqs_over_
 
     REAL(WP), ALLOCATABLE :: tmp_signal(:)
 
-    if (PRESENT(freqs_over)) freqs_over_ = freqs_over
+    freqs_over_ = 10.0_WP; if (PRESENT(freqs_over)) freqs_over_ = freqs_over
 
     ! Read rpm at current wind speed
     rpm = read_curve(self % path_rpm, self % WindSpeed)
@@ -466,47 +463,66 @@ FUNCTION filter_frequencies_DTU10MWFloating_t(self, freqs_over) RESULT(mask)
                                          freqs_out=freqs_to_use)
 
     ! Build mask
-    mask = filter_non_usefull_freqs(self % Freqs, freqs_to_use, freqs_over_)
+    mask = filter_non_useful_freqs(self % Freqs, freqs_to_use, freqs_over_)
 
     DEALLOCATE(tmp_signal)
 
     DEALLOCATE(freqs_amp, keys, freqs_to_use)
 
-END FUNCTION filter_frequencies_DTU10MWFloating_t
+END FUNCTION filter_frequencies_DTU10MWFloating
 
 
-SUBROUTINE save_specific_params_DTU10MWFloating_t(self, save_path, ichar)
-    USE IOUtils, ONLY: save_to_hdf5
+SUBROUTINE save_specific_params_DTU10MWFloating(self, save_path, istr)
+    USE IOUtils, ONLY: save_variable
 
     CLASS(DTU10MWFloating_t), INTENT(IN) :: self
     CHARACTER(len=*)      , INTENT(IN) :: save_path
-    CHARACTER(len=*)      , INTENT(IN), OPTIONAL :: ichar
+    CHARACTER(len=*)      , INTENT(IN), OPTIONAL :: istr
     
-    if (PRESENT(ichar)) then
-        CALL save_to_hdf5(save_path, "col_D_"       // ichar, self % col_D)
-        CALL save_to_hdf5(save_path, "XsecA_"       // ichar, self % XsecA)
-        CALL save_to_hdf5(save_path, "XsecB_"       // ichar, self % XsecB)
-        CALL save_to_hdf5(save_path, "t_"           // ichar, self % t)
-        CALL save_to_hdf5(save_path, "rho_mat_"     // ichar, self % rho_mat)
-        CALL save_to_hdf5(save_path, "wet_area_"    // ichar, self % wet_area)
-        CALL save_to_hdf5(save_path, "col_members_" // ichar, self % col_members)
-        CALL save_to_hdf5(save_path, "pon_members_" // ichar, self % pon_members)
+    if (PRESENT(istr)) then
+        CALL save_variable(save_path, "col_D_"       // istr, self % col_D)
+        CALL save_variable(save_path, "XsecA_"       // istr, self % XsecA)
+        CALL save_variable(save_path, "XsecB_"       // istr, self % XsecB)
+        CALL save_variable(save_path, "t_"           // istr, self % t)
+        CALL save_variable(save_path, "rho_mat_"     // istr, self % rho_mat)
+        CALL save_variable(save_path, "wet_area_"    // istr, self % wet_area)
+        CALL save_variable(save_path, "col_members_" // istr, self % col_members)
+        CALL save_variable(save_path, "pon_members_" // istr, self % pon_members)
     else
-        CALL save_to_hdf5(save_path, "col_D_"      , self % col_D)
-        CALL save_to_hdf5(save_path, "XsecA_"      , self % XsecA)
-        CALL save_to_hdf5(save_path, "XsecB_"      , self % XsecB)
-        CALL save_to_hdf5(save_path, "t_"          , self % t)
-        CALL save_to_hdf5(save_path, "rho_mat_"    , self % rho_mat)
-        CALL save_to_hdf5(save_path, "wet_area_"   , self % wet_area)
-        CALL save_to_hdf5(save_path, "col_members_", self % col_members)
-        CALL save_to_hdf5(save_path, "pon_members_", self % pon_members)
+        CALL save_variable(save_path, "col_D"      , self % col_D)
+        CALL save_variable(save_path, "XsecA"      , self % XsecA)
+        CALL save_variable(save_path, "XsecB"      , self % XsecB)
+        CALL save_variable(save_path, "t"          , self % t)
+        CALL save_variable(save_path, "rho_mat"    , self % rho_mat)
+        CALL save_variable(save_path, "wet_area"   , self % wet_area)
+        CALL save_variable(save_path, "col_members", self % col_members)
+        CALL save_variable(save_path, "pon_members", self % pon_members)
     end if
 
-END SUBROUTINE save_specific_params_DTU10MWFloating_t
+END SUBROUTINE save_specific_params_DTU10MWFloating
 
 
-FUNCTION get_impedance_corrected_force_DTU10MWFloating_t(self, c) RESULT(corrected_F)
+SUBROUTINE write_specific_params_txt_DTU10MWFloating(self, unit)
+    CLASS(DTU10MWFloating_t), INTENT(IN) :: self
+    INTEGER(I32)            , INTENT(IN) :: unit
+
+    WRITE(unit,'(A,F8.3,A)')  'Column diameter  : ', self % col_D, ' m'
+    WRITE(unit,'(A,F8.3,A)')  'Pontoon width    : ', self % XsecA, ' m'
+    WRITE(unit,'(A,F8.3,A)')  'Pontoon height   : ', self % XsecB, ' m'
+    WRITE(unit,'(A,F8.3,A)')  'Wall thickness   : ', self % t, ' m'
+    WRITE(unit,'(A,F8.1,A)')  'Water density    : ', self % rho_wat, ' kg/m^3'
+    WRITE(unit,'(A,F8.1,A)')  'Material density : ', self % rho_mat, ' kg/m^3'
+    WRITE(unit,'(A,F10.2,A)') 'Wetted area      : ', self % wet_area, ' m^2'
+    WRITE(unit,'(A,3(I0,1X))') 'Column members (top)   : ', self % col_members(:,1)
+    WRITE(unit,'(A,3(I0,1X))') 'Column members (bottom): ', self % col_members(:,2)
+    WRITE(unit,'(A,3(I0,1X))') 'Pontoon members        : ', self % pon_members(:,1)
+
+END SUBROUTINE write_specific_params_txt_DTU10MWFloating
+
+
+FUNCTION get_impedance_corrected_force_DTU10MWFloating(self, c) RESULT(corrected_F)
     USE MathUtils, ONLY: alpha_hankel
+    
     CLASS(DTU10MWFloating_t), INTENT(IN) :: self
     REAL(WP) , INTENT(IN) :: c
     COMPLEX(WP) , ALLOCATABLE :: corrected_F(:,:,:)
@@ -521,7 +537,7 @@ FUNCTION get_impedance_corrected_force_DTU10MWFloating_t(self, c) RESULT(correct
 
     Nm = self % Nmembers
     Nn = self % Nnodes
-    Nnodes_wet = size(self % x, 1)
+    Nnodes_wet = size(self % xyz, 1)
     nf = size(self % Freqs)
 
     ! 1. Map original flat node indices to wetted nodes (-1 for dry/removed nodes)
@@ -602,7 +618,7 @@ FUNCTION get_impedance_corrected_force_DTU10MWFloating_t(self, c) RESULT(correct
     do m = 1, 3
         do j = 1, Nnodes_wet
             do i = 1, nf
-                corrected_F(i, j, m) = self % F(i, j, m) * abs(alpha_full(i, j))
+                corrected_F(i, j, m) = self % Force(i, j, m) * abs(alpha_full(i, j))
             end do
         end do
     end do
@@ -611,6 +627,6 @@ FUNCTION get_impedance_corrected_force_DTU10MWFloating_t(self, c) RESULT(correct
     ! Cleanup
     DEALLOCATE(original_to_wet, alpha_full, k)
 
-END FUNCTION get_impedance_corrected_force_DTU10MWFloating_t
+END FUNCTION get_impedance_corrected_force_DTU10MWFloating
 
 END MODULE DTU10MWFloating

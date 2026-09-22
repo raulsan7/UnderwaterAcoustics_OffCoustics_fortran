@@ -2,7 +2,9 @@ MODULE ImageMethod
 
 USE Kinds
 USE Types
-USE AcousticSolver, only: AcousticSolver_t
+USE IOUtils
+USE WindTurbine, ONLY: WindTurbine_t, save_turbine_params
+USE AcousticSolver, ONLY: AcousticSolver_t
 IMPLICIT NONE
 
 PRIVATE
@@ -22,26 +24,26 @@ TYPE, EXTENDS(AcousticSolver_t):: ImageMethod_t
     REAL(WP)     :: Lower_HBC        = -30.0_WP     ! [m] z-coordinate of the lower reflecting plane (e.g. seabed)
     REAL(WP)     :: up_R             = 1.0_WP       ! [-] Attenuation coefficient for upper boundary reflections
     REAL(WP)     :: lw_R             = 0.5_WP       ! [-] Attenuation coefficient for lower boundary reflections
+    REAL(WP)     :: eps              = 1e-6_WP
  
-    TYPE(ImageSystem_t) , ALLOCATABLE :: image_system(:)
+    TYPE(ImageSystem_t) :: image_system
 
     CONTAINS
     ! --- Public type-bound procedures --- !
-    GENERIC   :: init        => init_array, init_single
-    PROCEDURE :: init_array  => init_MethodImages
-    PROCEDURE :: init_single => init_MethodImages_single
     PROCEDURE :: set_N_images
-    PROCEDURE :: build_all_image_system
     PROCEDURE :: build_image_system
     PROCEDURE :: restore_default_images
     PROCEDURE :: method_of_images
     PROCEDURE :: dipole_pressure_images
     PROCEDURE :: run_sphere
-
+    
     ! --- Deferred(abstract) procedures --- !
-    PROCEDURE :: get_name           => get_name_MethodImages
-    PROCEDURE :: compute_pressure   => compute_pressure_MethodImages
-    PROCEDURE :: save_parameters    => save_parameters_MethodImages
+    PROCEDURE :: init               => init_ImageMethod
+    PROCEDURE :: get_name           => get_name_ImageMethod
+    PROCEDURE :: compute_pressure   => compute_pressure_ImageMethod
+    PROCEDURE :: save_parameters    => save_parameters_ImageMethod
+    PROCEDURE :: build_save_path    => build_save_path_ImageMethod
+    PROCEDURE :: write_txt_summary  => write_txt_summary_ImageMethod
 
 END TYPE ImageMethod_t
 
@@ -50,78 +52,68 @@ CONTAINS
 
 
 ! ---------- DEFERRED ---------- !
-SUBROUTINE init_MethodImages(self, sources, config, env, N_images, c_wat, rho_wat, &
-                             Upper_BC, Lower_BC, Upper_HBC, Lower_HBC, &
-                             attenuation_upper, attenuation_lower, eps, &
-                             p_ref, cluster, debug, name)
+SUBROUTINE init_ImageMethod(self, sources, config)
 
-    CLASS(MethodImages_t)     , INTENT(INOUT) :: self
-    TYPE(AcousticSource_t)    , INTENT(IN)    :: sources
-    TYPE(Config_Solver_t)     , INTENT(IN)    :: config
-    TYPE(Config_Environment_t), INTENT(IN)    :: env
+    CLASS(ImageMethod_t)  , INTENT(INOUT)              :: self
+    TYPE(AcousticSource_t), INTENT(INOUT), ALLOCATABLE :: sources
+    TYPE(Config_t)        , INTENT(IN)                 :: config
+    CHARACTER(len=:), ALLOCATABLE :: name
 
-    ! Delete this in future
-    INTEGER(I32), INTENT(IN), OPTIONAL        :: N_images
-    INTEGER(I32), INTENT(IN), OPTIONAL        :: Upper_BC, Lower_BC
-    REAL(WP)    , INTENT(IN), OPTIONAL        :: c_wat, rho_wat
-    REAL(WP)    , INTENT(IN), OPTIONAL        :: Upper_HBC, Lower_HBC
-    REAL(WP)    , INTENT(IN), OPTIONAL        :: attenuation_upper, attenuation_lower
-    REAL(WP)    , INTENT(IN), OPTIONAL        :: eps, p_ref
-    LOGICAL     , INTENT(IN), OPTIONAL        :: cluster, debug
-    CHARACTER(len=*), INTENT(IN)              :: name
+    ! Parent variables
+    self % sources      = sources
+    self % save_path    = config % solver % save_path
+    self % env          = config % env
+    self % block_size   = config % solver % block_size
+    self % debug        = config % solver % debug
+    self % in_cluster   = config % solver % in_cluster
+    self % turbine_data = config % turbine
 
-    ! Local variables
-    CHARACTER(len=512) :: name_
+    DEALLOCATE(sources)
 
-    ! Defaults
-    if (PRESENT(N_images))          self % N_images  = N_images
-    if (PRESENT(c_wat))             self % c         = c_wat
-    if (PRESENT(rho_wat))           self % rho       = rho_wat
-    if (PRESENT(Upper_BC))          self % Upper_BC  = Upper_BC
-    if (PRESENT(Lower_BC))          self % Lower_BC  = Lower_BC
-    if (PRESENT(Upper_HBC))         self % Upper_HBC = Upper_HBC
-    if (PRESENT(Lower_HBC))         self % Lower_HBC = Lower_HBC
-    if (PRESENT(attenuation_upper)) self % up_R      = attenuation_upper
-    if (PRESENT(attenuation_lower)) self % lw_R      = attenuation_lower
-    if (PRESENT(eps))               self % eps       = eps
-    if (PRESENT(p_ref))             self % p_ref     = p_ref
-    if (PRESENT(cluster))           self % cluster   = cluster
-    if (PRESENT(debug))             self % debug     = debug
-
-    if (.not. PRESENT(Lower_HBC)) self % Lower_HBC = - env % depth_base
+    ! Son specific variables
+    SELECT TYPE(m => config % method)
+    TYPE IS(Config_ImageMethod_t)
+        self % N_images         = m % N_images
+        self % default_N_images = m % N_images
+        self % Upper_BC         = m % UpperBC
+        self % Lower_BC         = m % LowerBC
+        self % Upper_HBC        = m % UpperHBC
+        self % Lower_HBC        = m % LowerHBC
+        self % up_R             = m % attenuation_surface
+        self % lw_R             = m % attenuation_bottom
+        self % eps              = m % epsilon
+    END SELECT
     
     ! Build save_path
-    self % save_path = trim(self % turbines(1) % save_path) // trim(name) // ".hdf5"
-    self % default_N_images = self % N_images
+    CALL self % build_save_path()
     
-    if (self % Upper_HBC <= self % Lower_HBC) error stop "MethodImages % init: Upper_HBC must be strictly greater than Lower_HBC"
+    if (self % Upper_HBC <= self % Lower_HBC) error stop "ImageMethod % init: Upper_HBC must be strictly greater than Lower_HBC"
     
     print*, ''
     print*, 'Selected method: ', self % get_name()
-    CALL self % build_all_image_system()
-    CALL self % save_parameters()
+    CALL self % build_image_system()
 
-END SUBROUTINE init_MethodImages
+END SUBROUTINE init_ImageMethod
 
 
-FUNCTION get_name_MethodImages(self) RESULT(name)
-    CLASS(MethodImages_t), INTENT(INOUT) :: self
+FUNCTION get_name_ImageMethod(self) RESULT(name)
+    CLASS(ImageMethod_t), INTENT(INOUT) :: self
     CHARACTER(len=:)     , ALLOCATABLE   :: name
     name = "Images Method"; self % solver_name = trim(name)
-END FUNCTION get_name_MethodImages
+END FUNCTION get_name_ImageMethod
 
 
-SUBROUTINE compute_pressure_MethodImages(self, observers, block_size, total_pressure)
-    CLASS(MethodImages_t)   , INTENT(INOUT)        :: self
+SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_pressure)
+    CLASS(ImageMethod_t)    , INTENT(INOUT)        :: self
     REAL(WP)                , INTENT(IN)           :: observers(:,:)        ! [m] Observers coords (Nobs,3)
     INTEGER(I32)            , INTENT(IN), OPTIONAL :: block_size            ! [-] Number of observers to process simultaneously
-    COMPLEX(WP), ALLOCATABLE, INTENT(OUT)          :: total_pressure(:,:)   ! [Hz] pressure array(Nfreqs, Nobs)
+    COMPLEX(WP), ALLOCATABLE, INTENT(OUT)          :: total_pressure(:,:)   ! [Hz] pressure array(NFreqs, Nobs)
 
     ! Local variables
-    INTEGER(I32) :: nobs, nf, nturb, nt, bs, n_chunks, ichunk
-    INTEGER(I32) :: istart, iend, nb, i
-    TYPE(ImageSystem_t) :: img
-    REAL(WP), ALLOCATABLE :: freqs(:)
+    INTEGER(I32)             :: nobs, nf, bs, n_chunks, ichunk
+    INTEGER(I32)             :: istart, iend, nb, i
+    TYPE(ImageSystem_t)      :: img
+    REAL(WP), ALLOCATABLE    :: Freqs(:)
     COMPLEX(WP), ALLOCATABLE :: p_block(:,:)
 
     ! Defaults
@@ -134,196 +126,281 @@ SUBROUTINE compute_pressure_MethodImages(self, observers, block_size, total_pres
         return
     end if
 
-    if (SIZE(observers, 2) /= 3) error stop "compute_pressure_MethodImages: observers must have shape (N,3)"
+    if (SIZE(observers, 2) /= 3) error stop "compute_pressure_ImageMethod: observers must have shape (N,3)"
 
     ! Number of frequencies (take from first turbine)
-    if (.not. ALLOCATED(self % turbines)) then
-        error stop "compute_pressure_MethodImages: no turbines defined"
+    if (.not. ALLOCATED(self % sources % xyz) .OR. .not. ALLOCATED(self % sources % Force) .OR. &
+        .not. ALLOCATED(self % sources % Freqs)) then
+        error stop "compute_pressure_ImageMethod: no sources defined"
     end if
 
-    nturb = SIZE(self % turbines)
-    freqs = self % turbines(1) % Freqs
-    nf = SIZE(freqs)
+    Freqs = self % sources % Freqs
+    nf = SIZE(Freqs)
 
     allocate(total_pressure(nf, nobs))
     total_pressure = (0.0_WP, 0.0_WP)
 
-    if (.not. self % cluster) bs = 1
+    if (.not. self % in_cluster) bs = 1
+    img = self % image_system
 
-    if (self % cluster) then
-        do nt = 1, nturb
-            img = self % image_system(nt)
+    if (self % in_cluster) then
+            
+        n_chunks = (nobs + bs - 1) / bs
 
-            ! Print turbine header if more than one turbine
-            if (nturb > 1) then
-                print '(A,I0,A,I0,A)', 'Turbine ', nt, '/', nturb, ':'
+        !$OMP PARALLEL DO DEFAULT(SHARED) &
+        !$OMP PRIVATE(ichunk, istart, iend, nb, p_block)&
+        !$OMP SHARED(img, Freqs, n_chunks, nobs, total_pressure, self)
+        do ichunk = 0, n_chunks - 1
+            istart = ichunk * bs + 1
+            iend   = min(istart + bs - 1, nobs)
+            nb     = iend - istart + 1
+
+            ! Call kernel for this chunk (p_block will be allocated by the routine)
+            call self % dipole_pressure_images(observers(istart:iend, :), Freqs, img % xyz, &
+                                                img % Force, img % BC_all, p_block)
+
+            ! Accumulate results into the global array (non-overlapping slices -> no race)
+            total_pressure(:, istart:iend) = total_pressure(:, istart:iend) + p_block(:, 1:nb)
+
+            if (ALLOCATED(p_block)) DEALLOCATE(p_block)
+        end do
+        !$OMP END PARALLEL DO
+
+    else !(.not. self % in_cluster)
+
+        ! Serial: loop observers (keep 2D slice for compatibility)
+        do i = 1, nobs
+            call self % dipole_pressure_images(observers(i:i, :), Freqs, img % xyz, &
+                                            img % Force, img % BC_all, p_block)
+            total_pressure(:, i) = total_pressure(:, i) + p_block(:, 1)
+
+            if (ALLOCATED(p_block)) DEALLOCATE(p_block)
+
+            ! Print progress every 100 observers
+            if (mod(i, 100) == 0) then
+                print '(A,I0,A,I0)', '  Progress: ', i, '/', nobs
                 flush(6)
             end if
-
-            n_chunks = (nobs + bs - 1) / bs
-
-            !$OMP PARALLEL DO DEFAULT(SHARED) &
-            !$OMP PRIVATE(ichunk, istart, iend, nb, p_block)&
-            !$OMP SHARED(img, freqs, n_chunks, nobs, total_pressure, self)
-            do ichunk = 0, n_chunks - 1
-                istart = ichunk * bs + 1
-                iend   = min(istart + bs - 1, nobs)
-                nb     = iend - istart + 1
-
-                ! Call kernel for this chunk (p_block will be allocated by the routine)
-                call self % dipole_pressure_images(observers(istart:iend, :), freqs, img % nodes_pos, &
-                                                   img % force, img % BC_all, p_block)
-
-                ! Accumulate results into the global array (non-overlapping slices -> no race)
-                total_pressure(:, istart:iend) = total_pressure(:, istart:iend) + p_block(:, 1:nb)
-
-                if (ALLOCATED(p_block)) DEALLOCATE(p_block)
-            end do
-            !$OMP END PARALLEL DO
         end do
-    else
-        do nt = 1, nturb
-            img = self % image_system(nt)
 
-            ! Print turbine header if more than one turbine
-            if (nturb > 1) then
-                print '(A,I0,A,I0,A)', 'Turbine ', nt, '/', nturb, ':'
-            end if
-
-            ! Serial: loop observers (keep 2D slice for compatibility)
-            do i = 1, nobs
-                call self % dipole_pressure_images(observers(i:i, :), freqs, img % nodes_pos, &
-                                                img % force, img % BC_all, p_block)
-                total_pressure(:, i) = total_pressure(:, i) + p_block(:, 1)
-
-                if (ALLOCATED(p_block)) DEALLOCATE(p_block)
-
-                ! Print progress every 100 observers
-                if (mod(i, 100) == 0) then
-                    print '(A,I0,A,I0)', '  Progress: ', i, '/', nobs
-                    flush(6)
-                end if
-            end do
-        end do
     end if
 
-END SUBROUTINE compute_pressure_MethodImages
+END SUBROUTINE compute_pressure_ImageMethod
 
 
-SUBROUTINE save_parameters_MethodImages(self)
-    CLASS(MethodImages_t), INTENT(IN) :: self
+SUBROUTINE save_parameters_ImageMethod(self, turbine)
+
+    CLASS(ImageMethod_t), INTENT(IN)                        :: self
+    CLASS(WindTurbine_t), INTENT(IN), OPTIONAL, ALLOCATABLE :: turbine
+
+    ! Solver / environment / generic turbine data -> HDF5 (unchanged)
+    CALL save_variable(self % save_path, "N_images" , self % N_images)
+    CALL save_variable(self % save_path, "c_wat"    , self % env % speed_sound_base)
+    CALL save_variable(self % save_path, "rho_wat"  , self % env % density_base)
+    CALL save_variable(self % save_path, "Upper_HBC", self % Upper_HBC)
+    CALL save_variable(self % save_path, "Lower_HBC", self % Lower_HBC)
+    CALL save_variable(self % save_path, "p_ref"    , self % env % reference_pressure)
+
+    CALL save_turbine_params(self % turbine_data, self % save_path)
+
+    if (PRESENT(turbine)) THEN
+        if (ALLOCATED(turbine)) THEN
+            CALL turbine % save_specific_params(self % save_path)
+        end if
+    end if
+
+    ! Human-readable .dat summary, delegated to the solver-specific implementation
+    CALL self % write_txt_summary(turbine)
+
+END SUBROUTINE save_parameters_ImageMethod
+
+
+SUBROUTINE build_save_path_ImageMethod(self)
+    CLASS(ImageMethod_t), INTENT(INOUT) :: self
+    
+    ! Local variables
+    CHARACTER(len=512) :: path_upper, filename, default_parent_path
+    CHARACTER(len=16)  :: method_suffix, ws_str, imag_str
+    CHARACTER(len=2)   :: turb_tag
+
+    path_upper = to_upper(trim(self % save_path))
+    path_upper = trim(path_upper)
+    default_parent_path = "./turbine_acoustic_data/"
+
+    method_suffix = "_IM"
+
+    if (path_upper == 'NONE' .or. path_upper == 'DEFAULT') then
+
+        if (self % turbine_data % is_monopile) then
+            turb_tag = 'mn'
+        else
+            turb_tag = 'fl'
+        end if
+
+        write(imag_str,'(I0)') self % N_images
+        write(ws_str, '(F6.1)') self % turbine_data % WindSpeed
+        ws_str = adjustl(ws_str)
+
+        filename = "plot_"             // trim(turb_tag) // &
+                   trim(method_suffix) // trim(imag_str) // &
+                   "_ws"               // trim(ws_str)
+
+        self % save_path = trim(default_parent_path) // trim(filename) // ".hdf5"
+
+    else
+        self % save_path = trim(self % save_path) // ".hdf5"
+
+    end if
+
+    ! Make sure the destination folder exists before anything tries to write into it
+    CALL ensure_parent_dir(trim(self % save_path))
+
+END SUBROUTINE build_save_path_ImageMethod
+
+
+SUBROUTINE write_txt_summary_ImageMethod(self, turbine)
+    CLASS(ImageMethod_t), INTENT(IN)                        :: self
+    CLASS(WindTurbine_t), INTENT(IN), OPTIONAL, ALLOCATABLE :: turbine
 
     ! Local variables
-    CHARACTER(len=512) :: save_path
+    CHARACTER(len=:), ALLOCATABLE :: dat_path
+    INTEGER(I32) :: u
 
-    save_path = trim(self % save_path)
+    dat_path = swap_extension(trim(self % save_path), ".dat")
 
-    ! Solver
-    CALL save_to_hdf5(save_path, "N_images" , self % N_images)
-    CALL save_to_hdf5(save_path, "c_wat"    , self % c)
-    CALL save_to_hdf5(save_path, "rho_wat"  , self % rho)
-    CALL save_to_hdf5(save_path, "Upper_HBC", self % Upper_HBC)
-    CALL save_to_hdf5(save_path, "Lower_HBC", self % Lower_HBC)
-    CALL save_to_hdf5(save_path, "p_ref"    , self % p_ref)
-    CALL save_to_hdf5(save_path, "Nturb"    , size(self % turbines))
-    
-    CALL save_turbine_params(self)
+    OPEN(NEWUNIT=u, FILE=dat_path, STATUS='replace', ACTION='write')
 
-END SUBROUTINE save_parameters_MethodImages
+    WRITE(u,'(A)') repeat('=', 70)
+    WRITE(u,'(A)') 'OFF_COUSTICS SIMULATION SUMMARY'
+    WRITE(u,'(A)') repeat('=', 70)
+    WRITE(u,'(A)') 'HDF5 file: ' // trim(self % save_path)
+    WRITE(u,*)
+
+    WRITE(u,'(A)') repeat('-', 70)
+    WRITE(u,'(A)') 'TURBINE'
+    WRITE(u,'(A)') repeat('-', 70)
+    WRITE(u,'(A,A)')      'Case type   : ', trim(self % turbine_data % case_type)
+    WRITE(u,'(A,L1)')     'Is monopile : ', self % turbine_data % is_monopile
+    WRITE(u,'(A,F8.2,A)') 'Wind speed  : ', self % turbine_data % WindSpeed, ' m/s'
+    WRITE(u,'(A,F8.2,A)') 'Wind dir    : ', self % turbine_data % WindDir, ' deg'
+    WRITE(u,'(A,F8.2,A)') 'Water depth : ', self % turbine_data % Depth, ' m'
+    WRITE(u,'(A,2F10.3)') 'Axis pos    : ', self % turbine_data % AxisPos
+    WRITE(u,'(A,2F10.3)') 'Bari pos    : ', self % turbine_data % BariPos
+    WRITE(u,'(A,I0)')     'N members   : ', self % turbine_data % Nmembers
+    WRITE(u,'(A,I0)')     'N nodes     : ', self % turbine_data % Nnodes
+    WRITE(u,*)
+
+    if (PRESENT(turbine)) then
+        if (ALLOCATED(turbine)) then
+            WRITE(u,'(A)') repeat('-', 70)
+            WRITE(u,'(A)') 'TURBINE - SPECIFIC PARAMETERS'
+            WRITE(u,'(A)') repeat('-', 70)
+            CALL turbine % write_specific_params_txt(u)
+            WRITE(u,*)
+        end if
+    end if
+
+    WRITE(u,'(A)') repeat('-', 70)
+    WRITE(u,'(A)') 'ENVIRONMENT'
+    WRITE(u,'(A)') repeat('-', 70)
+    WRITE(u,'(A,F8.2,A)')  'Speed of sound   : ', self % env % speed_sound_base, ' m/s'
+    WRITE(u,'(A,F8.2,A)')  'Density          : ', self % env % density_base, ' kg/m^3'
+    WRITE(u,'(A,ES10.2,A)') 'Reference press. : ', self % env % reference_pressure, ' Pa'
+    WRITE(u,'(A,F8.2,A)')  'Depth            : ', self % env % depth_base, ' m'
+    WRITE(u,*)
+
+    WRITE(u,'(A)') repeat('-', 70)
+    WRITE(u,'(A)') 'SOLVER: ' // trim(self % solver_name)
+    WRITE(u,'(A)') repeat('-', 70)
+    WRITE(u,'(A,I0)')     'N images     : ', self % N_images
+    WRITE(u,'(A,F8.2,A)') 'Upper HBC    : ', self % Upper_HBC, ' m'
+    WRITE(u,'(A,F8.2,A)') 'Lower HBC    : ', self % Lower_HBC, ' m'
+    WRITE(u,'(A,F8.4)')   'Upper atten. : ', self % up_R
+    WRITE(u,'(A,F8.4)')   'Lower atten. : ', self % lw_R
+    WRITE(u,'(A,I0)')     'Block size   : ', self % block_size
+    WRITE(u,'(A,L1)')     'In cluster   : ', self % in_cluster
+    WRITE(u,*)
+    WRITE(u,'(A)') repeat('=', 70)
+
+    CLOSE(u)
+
+    print*, '   ---> Text summary saved at ', dat_path
+
+END SUBROUTINE write_txt_summary_ImageMethod
 
 
 ! ---------- HELPERS ---------- !
-SUBROUTINE build_all_image_system(self)
+SUBROUTINE build_image_system(self)
+    CLASS(ImageMethod_t), INTENT(INOUT) :: self
 
-    CLASS(MethodImages_t), INTENT(INOUT) :: self
-    INTEGER(I32) :: i, num_turbines
-    COMPLEX(WP), ALLOCATABLE :: F_corr(:,:,:)
-
-    if (.not. ALLOCATED(self % turbines)) return
-    num_turbines = size(self % turbines)
-    
-    if (ALLOCATED(self % image_system)) deallocate(self % image_system)
-    allocate(self % image_system(num_turbines))
-
-    
-    do i = 1, num_turbines
-        F_corr = self % turbines(i) % get_impedance_corrected_force(self % c)
-        CALL self % build_image_system(self % turbines(i) % x, F_corr, self % image_system(i))
-    end do
-
-END SUBROUTINE build_all_image_system
-
-
-SUBROUTINE build_image_system(self, nodes_pos_real, force, img_sys)
-    CLASS(MethodImages_t), INTENT(IN) :: self
-    REAL(WP), INTENT(IN)              :: nodes_pos_real(:,:)   ! (Nnodes, 3)
-    COMPLEX(WP), INTENT(IN)           :: force(:,:,:)          ! (Nfreqs, Nnodes, 3) or (Nfreqs, 3, Nnodes)
-    TYPE(ImageSystem_t), INTENT(OUT)  :: img_sys
-
-    REAL(WP), ALLOCATABLE :: zi(:), z_all(:)
-    COMPLEX(WP), ALLOCATABLE :: force_prep(:,:,:), Force_out(:,:,:)
+    REAL(WP)    , ALLOCATABLE :: zi(:), z_all(:)
+    COMPLEX(WP) , ALLOCATABLE :: Force(:,:,:), Force_prep(:,:,:), Force_out(:,:,:)
     INTEGER(I32), ALLOCATABLE :: parent(:), BC_all(:)
-    INTEGER(I32) :: Nnodes, Nfreqs, total_nodes, j
+    INTEGER(I32)              :: Nnodes, NFreqs, total_nodes, j
 
-    Nnodes = size(nodes_pos_real, 1)
+    Nnodes = size(self % sources % xyz, 1)
+    Force  = self % sources % Force 
 
-    
-    ! Ensure shape standard: (Nfreqs, Nnodes, 3)
-    if (size(force, 3) == 3 .and. size(force, 2) == Nnodes) then
-        force_prep = force
+    ! Ensure shape standard: (NFreqs, Nnodes, 3)
+    if (size(Force, 3) == 3 .and. size(Force, 2) == Nnodes) then
+        Force_prep = Force
     else
-        Nfreqs = size(force, 1)
-        allocate(force_prep(Nfreqs, Nnodes, 3))
+        NFreqs = size(self % sources % Freqs)
+        allocate(Force_prep(NFreqs, Nnodes, 3))
         do j = 1, Nnodes
-            force_prep(:, j, 1) = force(:, 1, j)
-            force_prep(:, j, 2) = force(:, 2, j)
-            force_prep(:, j, 3) = force(:, 3, j)
+            Force_prep(:, j, 1) = Force(:, 1, j)
+            Force_prep(:, j, 2) = Force(:, 2, j)
+            Force_prep(:, j, 3) = Force(:, 3, j)
         end do
     end if
 
-    zi = nodes_pos_real(:, 3)
+    zi = self % sources % xyz(:, 3)
     
-    CALL self % method_of_images(zi, force_prep, z_all, Force_out, parent, BC_all)
+    CALL self % method_of_images(zi, Force_prep, z_all, Force_out, parent, BC_all)
 
     total_nodes = size(z_all)
-    allocate(img_sys % nodes_pos(total_nodes, 3))
-    allocate(img_sys % force(size(Force_out, 1), total_nodes, 3))
-    allocate(img_sys % BC_all(total_nodes))
+    ! Deallocate if rebuilding
+    if (ALLOCATED(self % image_system % xyz)) DEALLOCATE(self % image_system % xyz)
+    if (ALLOCATED(self % image_system % Force))     DEALLOCATE(self % image_system % Force)
+    if (ALLOCATED(self % image_system % BC_all))    DEALLOCATE(self % image_system % BC_all)
+    allocate(self % image_system % xyz(total_nodes, 3))
+    allocate(self % image_system % Force(size(Force_out, 1), total_nodes, 3))
+    allocate(self % image_system % BC_all(total_nodes))
 
     do j = 1, total_nodes
-        img_sys % nodes_pos(j, 1) = nodes_pos_real(parent(j), 1)
-        img_sys % nodes_pos(j, 2) = nodes_pos_real(parent(j), 2)
-        img_sys % nodes_pos(j, 3) = z_all(j)
+        self % image_system % xyz(j, 1) = self % sources % xyz(parent(j), 1)
+        self % image_system % xyz(j, 2) = self % sources % xyz(parent(j), 2)
+        self % image_system % xyz(j, 3) = z_all(j)
     end do
     
-    img_sys % force  = Force_out
-    img_sys % BC_all = BC_all
+    self % image_system % Force  = Force_out
+    self % image_system % BC_all = BC_all
 
 END SUBROUTINE build_image_system
 
 
 SUBROUTINE set_N_images(self, new_N_images)
-    CLASS(MethodImages_t), INTENT(INOUT) :: self
+    CLASS(ImageMethod_t), INTENT(INOUT) :: self
     INTEGER(I32), INTENT(IN)             :: new_N_images
 
     self % N_images = new_N_images
-    CALL self % build_all_image_system()
+    CALL self % build_image_system()
 END SUBROUTINE set_N_images
 
 
 SUBROUTINE restore_default_images(self)
-    CLASS(MethodImages_t), INTENT(INOUT) :: self
+    CLASS(ImageMethod_t), INTENT(INOUT) :: self
 
     if (self%N_images /= self%default_N_images) then
         self%N_images = self%default_N_images
-        CALL self%build_all_image_system()
+        CALL self % build_image_system()
     end if
 END SUBROUTINE restore_default_images
 
 
 ! ---------- METHOD ---------- !
 SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
-    CLASS(MethodImages_t), INTENT(IN)         :: self
+    CLASS(ImageMethod_t), INTENT(IN)         :: self
     REAL(WP), INTENT(IN)                      :: zi(:)
     COMPLEX(WP), INTENT(IN)                   :: Force(:,:,:)
     REAL(WP), ALLOCATABLE, INTENT(OUT)        :: z_all(:)
@@ -332,21 +409,21 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
     INTEGER(I32), ALLOCATABLE, INTENT(OUT)    :: BC_all(:)
 
     ! Local variables
-    INTEGER(I32) :: Nnodes, Nfreqs, total_nodes, idx, i_node, img_lvl
+    INTEGER(I32) :: Nnodes, NFreqs, total_nodes, idx, i_node, img_lvl
     REAL(WP) :: z_upper, z_lower
     COMPLEX(WP), ALLOCATABLE :: F_upper(:,:), F_lower(:,:)
     CHARACTER(len=5) :: last_plane_upper, last_plane_lower
     INTEGER(I32) :: BC_u, BC_l
     
-    Nnodes = size(zi); Nfreqs = size(Force, 1)
+    Nnodes = size(zi); NFreqs = size(Force, 1)
     total_nodes = Nnodes * (1 + 2 * self % N_images)
     
     ALLOCATE(z_all(total_nodes))
-    ALLOCATE(Force_out(Nfreqs, total_nodes, 3))
+    ALLOCATE(Force_out(NFreqs, total_nodes, 3))
     ALLOCATE(parent(total_nodes))
     ALLOCATE(BC_all(total_nodes))
-    ALLOCATE(F_upper(Nfreqs, 3))
-    ALLOCATE(F_lower(Nfreqs, 3))
+    ALLOCATE(F_upper(NFreqs, 3))
+    ALLOCATE(F_lower(NFreqs, 3))
 
     idx = 1
     do i_node = 1, Nnodes
@@ -408,21 +485,20 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
         end do
     end do
 
-
 END SUBROUTINE method_of_images
 
 
-SUBROUTINE dipole_pressure_images(self, obs_pos, freqs, nodes_pos, force, BC_all, p_out)
-    CLASS(MethodImages_t), INTENT(IN)       :: self
+SUBROUTINE dipole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_all, p_out)
+    CLASS(ImageMethod_t), INTENT(IN)       :: self
     REAL(WP), INTENT(IN)                    :: obs_pos(:,:)     ! (Nob, 3)  ; caller must pass a 2D slice (Nob,3)
-    REAL(WP), INTENT(IN)                    :: freqs(:)         ! (Nfreqs)
+    REAL(WP), INTENT(IN)                    :: Freqs(:)         ! (NFreqs)
     REAL(WP), INTENT(IN)                    :: nodes_pos(:,:)   ! (Ntotal,3)
-    COMPLEX(WP), INTENT(IN)                 :: force(:,:,:)     ! (Nfreqs, Ntotal, 3)
+    COMPLEX(WP), INTENT(IN)                 :: Force(:,:,:)     ! (NFreqs, Ntotal, 3)
     INTEGER(I32), INTENT(IN)                :: BC_all(:)        ! (Ntotal)
-    COMPLEX(WP), ALLOCATABLE, INTENT(OUT)   :: p_out(:,:)       ! (Nfreqs, Nob)
+    COMPLEX(WP), ALLOCATABLE, INTENT(OUT)   :: p_out(:,:)       ! (NFreqs, Nob)
 
     ! Local variables
-    INTEGER(I32) :: Nfreqs, Ntotal, Nob
+    INTEGER(I32) :: NFreqs, Ntotal, Nob
     INTEGER(I32) :: j, f, k
     REAL(WP), ALLOCATABLE :: dx(:), dy(:), dz(:), r(:), r_inv(:), k_wave(:), BC_real(:)
     REAL(WP) :: sx, sy, sz, epsv
@@ -430,16 +506,16 @@ SUBROUTINE dipole_pressure_images(self, obs_pos, freqs, nodes_pos, force, BC_all
     REAL(WP) :: fourpi
 
     ! Dimensions
-    Nfreqs = SIZE(freqs)
+    NFreqs = SIZE(Freqs)
     Ntotal = SIZE(nodes_pos, 1)
     Nob    = SIZE(obs_pos, 1)
 
     epsv = self % eps
     fourpi = 4.0_WP * PI
 
-    ALLOCATE(p_out(Nfreqs, Nob))
+    ALLOCATE(p_out(NFreqs, Nob))
     p_out = (0.0_WP, 0.0_WP)
-    k_wave = 2.0_WP * PI * freqs / self % c
+    k_wave = 2.0_WP * PI * Freqs / self % env % speed_sound_base
     BC_real = REAL(BC_all, WP)
 
     ! Temporary arrays to avoid recomputing distances for each frequency
@@ -462,10 +538,10 @@ SUBROUTINE dipole_pressure_images(self, obs_pos, freqs, nodes_pos, force, BC_all
         end do
 
         ! Loop over frequencies and accumulate contributions (inner loop vectorized over observers)
-        do f = 1, Nfreqs
-            fx = force(f, j, 1)
-            fy = force(f, j, 2)
-            fz = force(f, j, 3)
+        do f = 1, NFreqs
+            fx = Force(f, j, 1)
+            fy = Force(f, j, 2)
+            fz = Force(f, j, 3)
             !$OMP SIMD
             do k = 1, Nob
                 F_dot_r = (fx * dx(k) + fy * dy(k) + fz * dz(k)) * r_inv(k)
@@ -474,7 +550,6 @@ SUBROUTINE dipole_pressure_images(self, obs_pos, freqs, nodes_pos, force, BC_all
                 p_out(f, k) = p_out(f, k) + F_dot_r * term1 * green * BC_real(j)
             end do
         end do
-
     end do
 
     DEALLOCATE(dx, dy, dz, r, r_inv)
@@ -483,17 +558,16 @@ END SUBROUTINE dipole_pressure_images
 
 
 ! ---------- RUN SPHERE ---------- !
-SUBROUTINE run_sphere(self, r, n_theta, nz, center, block_size)
-    CLASS(MethodImages_t), INTENT(INOUT) :: self
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: r
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: n_theta
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: nz
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: center(3)
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: block_size
+SUBROUTINE run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
+    CLASS(ImageMethod_t), INTENT(INOUT) :: self
+    REAL(WP)    , INTENT(IN), OPTIONAL :: r_sphere
+    INTEGER(I32), INTENT(IN), OPTIONAL :: n_theta_sphere
+    INTEGER(I32), INTENT(IN), OPTIONAL :: nz_sphere
+    REAL(WP)    , INTENT(IN), OPTIONAL :: center_sphere(3)
 
     ! Local variables
     COMPLEX(WP), ALLOCATABLE :: p(:,:)
-    COMPLEX(WP), ALLOCATABLE :: p_reshaped(:,:,:)   ! (Nfreqs, n_theta, nz)
+    COMPLEX(WP), ALLOCATABLE :: p_reshaped(:,:,:)   ! (NFreqs, n_theta, nz)
     REAL(WP)   , ALLOCATABLE :: observers_(:,:)
     REAL(WP)   , ALLOCATABLE :: obs_reshaped(:,:,:) ! (n_theta, nz, 3)
     REAL(WP)   , ALLOCATABLE :: theta_deg_arr(:)    ! Azimuth angles in degrees
@@ -502,24 +576,22 @@ SUBROUTINE run_sphere(self, r, n_theta, nz, center, block_size)
     REAL(WP)                 :: r_, center_(3), max_dist, current_dist
     REAL(WP)                 :: dz, dtheta, zc, r_xy, theta_c
     REAL(WP)                 :: dA
-    INTEGER(I32)             :: n_theta_, nz_, block_size_, i, j, idx, Nobs
+    INTEGER(I32)             :: n_theta_, nz_, i, j, idx, Nobs
 
     ! Defaults
-    r_ = 30.0_WP;          if (PRESENT(r))          r_ = r
-    n_theta_ = 72_I32;     if (PRESENT(n_theta))    n_theta_ = n_theta
-    nz_ = 20_I32;          if (PRESENT(nz))         nz_ = nz
-    block_size_ = 128_I32; if (PRESENT(block_size)) block_size_ = block_size
-
-    if (PRESENT(center)) then
-        center_ = center
+    r_ = 30.0_WP;          if (PRESENT(r_sphere))          r_ = r_sphere
+    n_theta_ = 72_I32;     if (PRESENT(n_theta_sphere))    n_theta_ = n_theta_sphere
+    nz_ = 20_I32;          if (PRESENT(nz_sphere))         nz_ = nz_sphere
+    if (PRESENT(center_sphere)) then
+        center_ = center_sphere
     else
-        center_ = [self % turbines(1) % BariPos(1), self % turbines(1) % BariPos(2), -self % turbines(1) % Depth / 2.0_WP]
+        center_ = [self % turbine_data % BariPos(1), self % turbine_data % BariPos(2), -self % turbine_data % Depth / 2.0_WP]
     end if
 
     ! Basic enclosure check
     max_dist = 0.0_WP
-    do i = 1, SIZE(self % turbines(1) % x, 1)
-        current_dist = NORM2(self % turbines(1) % x(i,:) - center_)
+    do i = 1, SIZE(self % sources % xyz, 1)
+        current_dist = norm2(self % sources % xyz(i,:) - center_)
         if (current_dist > max_dist) max_dist = current_dist
     end do
     max_dist = max_dist * 1.1_WP
@@ -558,7 +630,7 @@ SUBROUTINE run_sphere(self, r, n_theta, nz, center, block_size)
     idx = 1
     do i = 1, nz_
         zc = z_centers(i)
-        r_xy = SQRT(MAX(0.0_WP, r_**2 - (zc - center_(3))**2))
+        r_xy = sqrt(max(0.0_WP, r_**2 - (zc - center_(3))**2))
         do j = 1, n_theta_
             theta_c = 0.5_WP * (theta_edges(j) + theta_edges(j+1))
             observers_(idx, 1) = center_(1) + r_xy * COS(theta_c)
@@ -578,12 +650,12 @@ SUBROUTINE run_sphere(self, r, n_theta, nz, center, block_size)
         '  Radius: ', r_, ' m | grid: ', n_theta_, ' azim x ', nz_, ' z (', Nobs, ' observers)'
 
     CALL self % set_N_images(0_I32)
-    CALL self % compute_pressure(observers_, block_size_, p)
+    CALL self % compute_pressure(observers_, self % block_size, p)
     CALL self % restore_default_images()
 
     if (self % debug) write(*, '(A, F0.2)') 'Sphere Pressure Norm: ', norm2(abs(p))
 
-    ! Reshape pressure and observers to 3D (n_theta, nz, 3) and (Nfreqs, n_theta, nz)
+    ! Reshape pressure and observers to 3D (n_theta, nz, 3) and (NFreqs, n_theta, nz)
     ALLOCATE(p_reshaped(SIZE(p,1), n_theta_, nz_))
     ALLOCATE(obs_reshaped(n_theta_, nz_, 3))
 
@@ -600,14 +672,14 @@ SUBROUTINE run_sphere(self, r, n_theta, nz, center, block_size)
     dA = (4.0_WP * PI * r_**2) / REAL(n_theta_ * nz_, WP)
 
     ! Save results
-    CALL self % save_acoustics("Freqs", self % turbines(1) % Freqs)
-    CALL self % save_acoustics("P_sphere", p_reshaped)
-    CALL self % save_acoustics("Obs_sphere", obs_reshaped)
-    CALL self % save_acoustics("Theta_sphere", theta_deg_arr)
-    CALL self % save_acoustics("Z_sphere", z_centers)
-    CALL self % save_acoustics("R_sphere", r_)
-    CALL self % save_acoustics("Center_sphere", center_)
-    CALL self % save_acoustics("dA_sphere", dA)
+    CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
+    CALL save_variable(self % save_path, "P_sphere", p_reshaped)
+    CALL save_variable(self % save_path, "Obs_sphere", obs_reshaped)
+    CALL save_variable(self % save_path, "Theta_sphere", theta_deg_arr)
+    CALL save_variable(self % save_path, "Z_sphere", z_centers)
+    CALL save_variable(self % save_path, "R_sphere", r_)
+    CALL save_variable(self % save_path, "Center_sphere", center_)
+    CALL save_variable(self % save_path, "dA_sphere", dA)
 
     print*, ''
     print*, '   ---> Sphere data saved at ', self % save_path

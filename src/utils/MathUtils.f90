@@ -444,9 +444,9 @@ SUBROUTINE generate_timeseries_banded_sines(peaks, keys, t , zeta, nfreq, seed, 
 END SUBROUTINE generate_timeseries_banded_sines
 
 
-FUNCTION filter_non_usefull_freqs(freqs, mantain_freqs, freqs_over, freqs_under) RESULT(mask)
+FUNCTION filter_non_useful_freqs(freqs, maintain_freqs, freqs_over, freqs_under) RESULT(mask)
     REAL(WP), INTENT(IN) :: freqs(:)
-    REAL(WP), INTENT(IN) :: mantain_freqs(:)
+    REAL(WP), INTENT(IN) :: maintain_freqs(:)
     REAL(WP), INTENT(IN), OPTIONAL :: freqs_over, freqs_under
     LOGICAL, ALLOCATABLE :: mask(:)
 
@@ -479,15 +479,15 @@ FUNCTION filter_non_usefull_freqs(freqs, mantain_freqs, freqs_over, freqs_under)
     ! Outside filter zone: keep all frequencies
     mask = .NOT. filter_zone
 
-    ! Inside filter zone: keep only if within df of any mantain_freqs
-    DO j = 1, SIZE(mantain_freqs)
-        WHERE (filter_zone .AND. ABS(freqs - mantain_freqs(j)) <= df)
+    ! Inside filter zone: keep only if within df of any maintain_freqs
+    DO j = 1, SIZE(maintain_freqs)
+        WHERE (filter_zone .AND. ABS(freqs - maintain_freqs(j)) <= df)
             mask = .TRUE.
         END WHERE
     END DO
 
     DEALLOCATE(filter_zone)
-END FUNCTION filter_non_usefull_freqs
+END FUNCTION filter_non_useful_freqs
 
 
 FUNCTION compare_real(a,b) BIND(c) RESULT(res)

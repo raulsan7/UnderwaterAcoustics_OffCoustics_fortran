@@ -15,6 +15,7 @@ PUBLIC :: DTU10MWMonopile_t
 ! Derived type definition
 ! ------------------------------
 TYPE, EXTENDS(WindTurbine_t) :: DTU10MWMonopile_t
+
     ! Physical and structural parameters specific to the DTU 10 MW Monopile
     REAL(WP) :: D        = 9.0_WP      ! [m] Base monopile outer diameter
     REAL(WP) :: rho_wat  = 1025.0_WP   ! [kg/m^3] Seawater density
@@ -31,6 +32,7 @@ TYPE, EXTENDS(WindTurbine_t) :: DTU10MWMonopile_t
     PROCEDURE :: compute_mass                  => compute_mass_DTU10MWMonopile
     PROCEDURE :: filter_frequencies            => filter_frequencies_DTU10MWMonopile
     PROCEDURE :: save_specific_params          => save_specific_params_DTU10MWMonopile
+    PROCEDURE :: write_specific_params_txt     => write_specific_params_txt_DTU10MWMonopile
     PROCEDURE :: get_impedance_corrected_force => get_impedance_corrected_force_DTU10MWMonopile
 
 END TYPE DTU10MWMonopile_t
@@ -48,7 +50,7 @@ SUBROUTINE init_DTU10MWMonopile(self, config)
     LOGICAL :: exists = .false.
 
 
-    ! Define path to rpm curve HARCODED
+    ! Define path to rpm curve HARDCODED
     self % path_rpm = "../wind_speed_curves_DTU_10MW/rpm_ws.csv"
 
     ! Verify that the rpm curve file exists
@@ -56,9 +58,8 @@ SUBROUTINE init_DTU10MWMonopile(self, config)
     if (.not. exists) error stop "DTU10MWMonopile % init: RPM curve file not found: " // self % path_rpm
 
     ! Set the case type
-    self % case_type = "Monopile"
-    self % is_monopile = .true.
-    config % is_monopile = self % is_monopile
+    self   % is_monopile = .true.
+    config % is_monopile = .true.
 
     CALL init(self, config)
 
@@ -77,11 +78,11 @@ SUBROUTINE compute_force_DTU10MWMonopile(self, config, verbose)
     REAL(WP)     :: dt, F_memory_mb
 
     LOGICAL     , ALLOCATABLE :: mask_duplicate(:), mask_freqs_to_use(:)
-    REAL(WP)    , ALLOCATABLE :: mass(:), added_mass(:), mass_effective(:)
+    REAL(WP)    , ALLOCATABLE :: mass(:), added_mass(:), mass_eff(:)
     REAL(WP)    , ALLOCATABLE :: x_flat(:,:), acc_flat(:,:,:)
     COMPLEX(WP) , ALLOCATABLE :: A(:,:,:)
     REAL(WP)    , ALLOCATABLE :: freqs(:), freqs_new(:)
-    COMPLEX(WP) , ALLOCATABLE :: F_new(:,:,:)
+    COMPLEX(WP) , ALLOCATABLE :: F_filtered(:,:,:)
     INTEGER(I32), ALLOCATABLE :: valid_j(:), valid_k(:)
 
 
@@ -90,14 +91,14 @@ SUBROUTINE compute_force_DTU10MWMonopile(self, config, verbose)
     nt = size(self % Time)
     dt = self % Time(2) - self % Time(1)
 
-    mask_duplicate = remove_duplicate_nodes(self % x_all, delete_last=.true.)
+    mask_duplicate = remove_duplicate_nodes(self % xyz_all, delete_last=.true.)
 
     ! Fuse masks: count all valid nodes at once
     Nnodes_wet = 0
     do j = 1, Nm
         do k = 1, Nn
             global_idx = (j - 1) * Nn + k
-            if (mask_duplicate(global_idx) .and. self % x_all(j, k, 3) <= 0.0_WP) then
+            if (mask_duplicate(global_idx) .and. self % xyz_all(j, k, 3) <= 0.0_WP) then
                 Nnodes_wet = Nnodes_wet + 1
             end if
         end do
@@ -112,16 +113,16 @@ SUBROUTINE compute_force_DTU10MWMonopile(self, config, verbose)
     do j = 1, Nm
         do k = 1, Nn
             global_idx = (j - 1) * Nn + k
-            if (mask_duplicate(global_idx) .and. self % x_all(j, k, 3) <= 0.0_WP) then
+            if (mask_duplicate(global_idx) .and. self % xyz_all(j, k, 3) <= 0.0_WP) then
                 valid_j(v) = j
                 valid_k(v) = k
-                x_flat(v, :) = self % x_all(j, k, :)
+                x_flat(v, :) = self % xyz_all(j, k, :)
                 v = v + 1
             end if
         end do
     end do
 
-    self % x = x_flat
+    self % xyz = x_flat
     
     ! Optimized flatten: temporal index i is the most intern to read RAM linearly
     !$omp parallel do private(v, j, k, i)
@@ -138,59 +139,59 @@ SUBROUTINE compute_force_DTU10MWMonopile(self, config, verbose)
     !$omp end parallel do
 
     CALL self % compute_mass(mass, added_mass)
-    ALLOCATE(mass_effective(Nnodes_wet))
-    mass_effective = mass + added_mass
+    ALLOCATE(mass_eff(Nnodes_wet))
+    mass_eff = mass + added_mass
     DEALLOCATE(mass, added_mass)
 
     CALL compute_rfft(acc_flat, nt, dt, skipf=config%skip, remove_zero=.true., &
                       array_out=A, freqs=freqs)
     self % Freqs = freqs
 
-    ALLOCATE(self % F(size(freqs), Nnodes_wet, 3))
+    ALLOCATE(self % Force(size(freqs), Nnodes_wet, 3))
 
     ! Vectorized force computation with OpenMP (implicit broadcast over frequencies)
     !$omp parallel do private(j)
     do j = 1, Nnodes_wet
-        self % F(:, j, 1) = - A(:, j, 1) * mass_effective(j)
-        self % F(:, j, 2) = - A(:, j, 2) * mass_effective(j)
-        self % F(:, j, 3) = - A(:, j, 3) * mass_effective(j)
+        self % Force(:, j, 1) = - A(:, j, 1) * mass_eff(j)
+        self % Force(:, j, 2) = - A(:, j, 2) * mass_eff(j)
+        self % Force(:, j, 3) = - A(:, j, 3) * mass_eff(j)
     end do
     !$omp end parallel do
 
     ! Manual filtering without 'RACK' to avoid memory reallocations
     if (config % filter_freqs) then
-        mask_freqs_to_use = self % filter_frequencies()
+        mask_freqs_to_use = self % filter_frequencies(config % freqs_over)
         Nfreqs_new = count(mask_freqs_to_use)
         
         ALLOCATE(freqs_new(Nfreqs_new))
-        ALLOCATE(F_new(Nfreqs_new, Nnodes_wet, 3))
+        ALLOCATE(F_filtered(Nfreqs_new, Nnodes_wet, 3))
 
         v = 1
-        do i = 1, size(self%Freqs)
+        do i = 1, size(self % Freqs)
             if (mask_freqs_to_use(i)) then
-                freqs_new(v) = self%Freqs(i)
-                F_new(v, :, :) = self%F(i, :, :)
+                freqs_new(v) = self % Freqs(i)
+                F_filtered(v, :, :) = self % Force(i, :, :)
                 v = v + 1
             end if
         end do
         
-        CALL move_alloc(freqs_new, self%Freqs)
-        CALL move_alloc(F_new, self%F)
+        CALL move_alloc(freqs_new, self % Freqs)
+        CALL move_alloc(F_filtered, self % Force)
     end if
 
     ! Cleanup
-    DEALLOCATE(self%acc, self%Time, A, freqs, mass_effective)
+    DEALLOCATE(self%acc, self%Time, A, freqs, mass_eff)
     DEALLOCATE(mask_duplicate, valid_j, valid_k)
     if (ALLOCATED(mask_freqs_to_use)) DEALLOCATE(mask_freqs_to_use)
 
     ! Verbose summary
     if (verbose) then
-        F_memory_mb = real(storage_size(self%F) * size(self%F) / 8) / 1024.0_WP / 1024.0_WP
+        F_memory_mb = real(storage_size(self % Force) * size(self % Force) / 8) / 1024.0_WP / 1024.0_WP
         print '(A)', repeat('=', 70)
         print '(A)', 'FORCE COMPUTATION COMPLETED'
         print '(A)', repeat('-', 68)
         print '(A,I6)',   'Nodes (wet): ', Nnodes_wet
-        print '(A,I6)',   'Frequencies: ', size(self%Freqs)
+        print '(A,I6)',   'Frequencies: ', size(self % Freqs)
         print '(A,F6.2,A)', 'Memory (F):  ', F_memory_mb, ' MB'
         print '(A)', repeat('=', 70)
     end if
@@ -212,11 +213,11 @@ SUBROUTINE compute_mass_DTU10MWMonopile(self, mass, added_mass)
     REAL(WP), ALLOCATABLE :: A_mass(:), A_added_mass(:)
 
     ! Retrieve parameters
-    D       = self%D
-    Depth   = self%Depth
-    rho_mat = self%rho_mat
-    rho_wat = self%rho_wat
-    Nnodes  = size(self%x, 1)
+    D       = self % D
+    Depth   = self % Depth
+    rho_mat = self % rho_mat
+    rho_wat = self % rho_wat
+    Nnodes  = size(self % xyz, 1)
 
     ! Generate vertical coordinate array linearly from -Depth to 0
     allocate(z_nodes(Nnodes))
@@ -263,7 +264,7 @@ END SUBROUTINE compute_mass_DTU10MWMonopile
 
 FUNCTION filter_frequencies_DTU10MWMonopile(self, freqs_over) RESULT(mask)
     USE IOUtils, ONLY: read_curve
-    USE MathUtils, ONLY: generate_timeseries_banded_sines, filter_non_usefull_freqs
+    USE MathUtils, ONLY: generate_timeseries_banded_sines, filter_non_useful_freqs
 
     CLASS(DTU10MWMonopile_t), INTENT(INOUT)        :: self
     REAL(WP)                , INTENT(IN), OPTIONAL :: freqs_over 
@@ -290,7 +291,7 @@ FUNCTION filter_frequencies_DTU10MWMonopile(self, freqs_over) RESULT(mask)
                                          freqs_out=freqs_to_use)
 
     ! Build mask
-    mask = filter_non_usefull_freqs(self % Freqs, freqs_to_use, freqs_over_)
+    mask = filter_non_useful_freqs(self % Freqs, freqs_to_use, freqs_over_)
 
     DEALLOCATE(tmp_signal)
 
@@ -299,24 +300,36 @@ FUNCTION filter_frequencies_DTU10MWMonopile(self, freqs_over) RESULT(mask)
 END FUNCTION filter_frequencies_DTU10MWMonopile
 
 
-SUBROUTINE save_specific_params_DTU10MWMonopile(self, save_path, ichar)
-    USE IOUtils, ONLY: save_to_hdf5
+SUBROUTINE save_specific_params_DTU10MWMonopile(self, save_path, istr)
+    USE IOUtils, ONLY: save_variable
 
     CLASS(DTU10MWMonopile_t), INTENT(IN) :: self
     CHARACTER(len=*)        , INTENT(IN) :: save_path
-    CHARACTER(len=*)        , INTENT(IN), OPTIONAL :: ichar
+    CHARACTER(len=*)        , INTENT(IN), OPTIONAL :: istr
     
-    if (PRESENT(ichar)) then
-        CALL save_to_hdf5(save_path, "D_"        // ichar, self % D)
-        CALL save_to_hdf5(save_path, "rho_mat_"  // ichar, self % rho_mat)
-        CALL save_to_hdf5(save_path, "wet_area_" // ichar, self % wet_area)
+    if (PRESENT(istr)) then
+        CALL save_variable(save_path, "D_"        // istr, self % D)
+        CALL save_variable(save_path, "rho_mat_"  // istr, self % rho_mat)
+        CALL save_variable(save_path, "wet_area_" // istr, self % wet_area)
     else
-        CALL save_to_hdf5(save_path, "D", self % D)
-        CALL save_to_hdf5(save_path, "rho_mat", self % rho_mat)
-        CALL save_to_hdf5(save_path, "wet_area", self % wet_area)
+        CALL save_variable(save_path, "D", self % D)
+        CALL save_variable(save_path, "rho_mat", self % rho_mat)
+        CALL save_variable(save_path, "wet_area", self % wet_area)
     end if
 
 END SUBROUTINE save_specific_params_DTU10MWMonopile
+
+
+SUBROUTINE write_specific_params_txt_DTU10MWMonopile(self, unit)
+    CLASS(DTU10MWMonopile_t), INTENT(IN) :: self
+    INTEGER(I32)            , INTENT(IN) :: unit
+
+    WRITE(unit,'(A,F8.3,A)')  'Outer diameter   : ', self % D, ' m'
+    WRITE(unit,'(A,F8.1,A)')  'Water density    : ', self % rho_wat, ' kg/m^3'
+    WRITE(unit,'(A,F8.1,A)')  'Material density : ', self % rho_mat, ' kg/m^3'
+    WRITE(unit,'(A,F10.2,A)') 'Wetted area      : ', self % wet_area, ' m^2'
+
+END SUBROUTINE write_specific_params_txt_DTU10MWMonopile
 
 
 FUNCTION get_impedance_corrected_force_DTU10MWMonopile(self, c) RESULT(corrected_F)
@@ -333,9 +346,9 @@ FUNCTION get_impedance_corrected_force_DTU10MWMonopile(self, c) RESULT(corrected
     INTEGER(I32)             :: dim1, dim2, dim3, m, j, i
 
     
-    dim1 = size(self % F, 1)
-    dim2 = size(self % F, 2)
-    dim3 = size(self % F, 3)
+    dim1 = size(self % Force, 1)
+    dim2 = size(self % Force, 2)
+    dim3 = size(self % Force, 3)
     
     ! Wave number vector
     ALLOCATE(k(dim1))
@@ -357,7 +370,7 @@ FUNCTION get_impedance_corrected_force_DTU10MWMonopile(self, c) RESULT(corrected
         do j = 1, dim2
             !$omp simd
             do i = 1, dim1
-                corrected_F(i, j, m) = self%F(i, j, m) * abs_alpha(i)
+                corrected_F(i, j, m) = self % Force(i, j, m) * abs_alpha(i)
             end do
         end do
     end do

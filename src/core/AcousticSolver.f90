@@ -2,11 +2,13 @@ MODULE AcousticSolver
 
 USE Kinds
 USE Types
+USE IOUtils
+USE WindTurbine, ONLY: WindTurbine_t
 
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: AcousticSolver_t
+PUBLIC :: AcousticSolver_t, save_variable
 
 
 ! ------------------
@@ -16,7 +18,10 @@ TYPE, ABSTRACT :: AcousticSolver_t
 
     TYPE(AcousticSource_t)     :: sources
     TYPE(Config_Environment_t) :: env
-    
+    TYPE(Config_WindTurbine_t) :: turbine_data
+    INTEGER(I32)               :: block_size
+    LOGICAL                    :: debug
+    LOGICAL                    :: in_cluster
     CHARACTER(len=50)          :: solver_name = 'None'           ! [-] Solver name
     CHARACTER(len=512)         :: save_path   = 'None'           ! [-] Path to save acoustics
 
@@ -24,7 +29,7 @@ TYPE, ABSTRACT :: AcousticSolver_t
     CONTAINS
 
     ! --- Public type-bound procedures --- !
-    PROCEDURE :: save_acoustics
+    ! PROCEDURE :: save_variable
     PROCEDURE :: check_observers_distances      ! Helper for run subroutines
     PROCEDURE :: run_spectrums                  ! Subroutines to compute acoustic pressure
     PROCEDURE :: run_polar
@@ -37,9 +42,12 @@ TYPE, ABSTRACT :: AcousticSolver_t
     PROCEDURE :: run_sphere => dummy_run_sphere
 
     ! --- Deferred(abstract) procedures --- !
+    PROCEDURE(init_i)            , DEFERRED :: init
     PROCEDURE(get_name_i)        , DEFERRED :: get_name
     PROCEDURE(compute_pressure_i), DEFERRED :: compute_pressure
-    PROCEDURE(save_parameters_i) , DEFERRED :: save_parameters
+    PROCEDURE(save_parameters_i)   , DEFERRED :: save_parameters
+    PROCEDURE(build_save_path_i)   , DEFERRED :: build_save_path
+    PROCEDURE(write_txt_summary_i) , DEFERRED :: write_txt_summary
 
 END TYPE AcousticSolver_t
 
@@ -47,6 +55,16 @@ END TYPE AcousticSolver_t
 ! --------------------------------------------------
 ! Abstract interfaces for deferred(abstract) methods
 ! --------------------------------------------------
+! Initialization
+ABSTRACT INTERFACE
+    SUBROUTINE init_i(self, sources, config)
+        IMPORT :: AcousticSolver_t, AcousticSource_t, Config_t
+        CLASS(AcousticSolver_t)  , INTENT(INOUT)           :: self
+        TYPE(AcousticSource_t), INTENT(INOUT), ALLOCATABLE :: sources
+        TYPE(Config_t)        , INTENT(IN)                 :: config
+    END SUBROUTINE init_i
+END INTERFACE
+
 ! Get solver name
 ABSTRACT INTERFACE
     FUNCTION get_name_i(self) RESULT(name)
@@ -58,10 +76,9 @@ END INTERFACE
 
 ! Compute pressure
 ABSTRACT INTERFACE
-    SUBROUTINE compute_pressure_i(self, sources, observers, block_size, total_pressure)
+    SUBROUTINE compute_pressure_i(self, observers, block_size, total_pressure)
         IMPORT AcousticSolver_t, AcousticSource_t, WP, I32
         CLASS(AcousticSolver_t) , INTENT(INOUT)        :: self
-        TYPE(AcousticSource_t) , INTENT(IN)           :: sources
         REAL(WP)                , INTENT(IN)           :: observers(:,:)        ! [m] Observers coords (Nobs,3)
         INTEGER(I32)            , INTENT(IN), OPTIONAL :: block_size            ! [Pa] Pressure field (Nfreqs, Nobs)
         COMPLEX(WP), ALLOCATABLE, INTENT(OUT)          :: total_pressure(:,:)   ! [-] Number of observers to process simultaneously
@@ -70,10 +87,28 @@ END INTERFACE
 
 ! Save parameters
 ABSTRACT INTERFACE
-    SUBROUTINE save_parameters_i(self)
-        IMPORT:: AcousticSolver_t
+    SUBROUTINE save_parameters_i(self, turbine)
+        IMPORT:: AcousticSolver_t, WindTurbine_t
         CLASS(AcousticSolver_t), INTENT(IN) :: self
-    END SUBROUTINE
+        CLASS(WindTurbine_t)   , INTENT(IN), OPTIONAL, ALLOCATABLE :: turbine
+    END SUBROUTINE save_parameters_i
+END INTERFACE
+
+! Build name for the output file
+ABSTRACT INTERFACE
+    SUBROUTINE build_save_path_i(self)
+        IMPORT:: AcousticSolver_t
+        CLASS(AcousticSolver_t), INTENT(INOUT) :: self
+    END SUBROUTINE build_save_path_i
+END INTERFACE
+
+! Write the elegant .dat summary
+ABSTRACT INTERFACE
+    SUBROUTINE write_txt_summary_i(self, turbine)
+        IMPORT:: AcousticSolver_t, WindTurbine_t
+        CLASS(AcousticSolver_t), INTENT(IN)                        :: self
+        CLASS(WindTurbine_t)   , INTENT(IN), OPTIONAL, ALLOCATABLE :: turbine
+    END SUBROUTINE write_txt_summary_i
 END INTERFACE
 
 
@@ -81,52 +116,8 @@ CONTAINS
 
 
 ! ---------- HELPERS ---------- !
-SUBROUTINE save_acoustics(Self, var_name, var)
-    USE IOUtils, ONLY: save_to_hdf5
-
+SUBROUTINE check_observers_distances(self, observers, min_distance)
     CLASS(AcousticSolver_t), INTENT(IN) :: self
-    CHARACTER(len=*)       , INTENT(IN) :: var_name
-    CLASS(*)               , INTENT(IN) :: var(..)
-
-    ! Local variables
-    CHARACTER(len=512) :: save_path
-
-    save_path = trim(self % save_path)
-    
-    SELECT RANK (v_rank => var)
-    RANK(0) 
-        SELECT TYPE (v => v_rank)
-        TYPE IS (REAL(WP)) ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (INTEGER) ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (LOGICAL) ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        END SELECT
-    RANK(1) 
-        SELECT TYPE (v => v_rank)
-        TYPE IS (REAL(WP)) ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (INTEGER) ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
-        END SELECT
-    RANK(2) 
-        SELECT TYPE (v => v_rank)
-        TYPE IS (REAL(WP)) ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (INTEGER) ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
-        END SELECT
-    RANK(3) 
-        SELECT TYPE (v => v_rank)
-        TYPE IS (REAL(WP)) ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (INTEGER) ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
-        END SELECT
-    END SELECT
-
-END SUBROUTINE save_acoustics
-
-
-SUBROUTINE check_observers_distances(self, sources, observers, min_distance)
-    CLASS(AcousticSolver_t), INTENT(IN) :: self
-    TYPE(AcousticSource_t) , INTENT(IN) :: sources
     REAL(WP)               , INTENT(IN) :: observers(:,:)          ! (Nobs, 3)
     REAL(WP)               , INTENT(IN), OPTIONAL :: min_distance  ! [m]
 
@@ -138,14 +129,14 @@ SUBROUTINE check_observers_distances(self, sources, observers, min_distance)
     ! Default min value
     min_dist = 1.0_WP; if (PRESENT(min_distance)) min_dist = min_distance
     
-    n_nodes = size(sources % xyz, 1)
+    n_nodes = size(self % sources % xyz, 1)
     n_obs   = size(observers, 1)
     
     do i = 1, n_obs
         do j = 1, n_nodes
-            dx = sources % xyz(j,1) - observers(i,1)
-            dy = sources % xyz(j,2) - observers(i,2)
-            dz = sources % xyz(j,3) - observers(i,3)
+            dx = self % sources % xyz(j,1) - observers(i,1)
+            dy = self % sources % xyz(j,2) - observers(i,2)
+            dz = self % sources % xyz(j,3) - observers(i,3)
             dist = sqrt(dx*dx + dy*dy + dz*dz)
 
             if (abs(dist - min_dist)<1e-6_WP) then
@@ -160,13 +151,11 @@ END SUBROUTINE check_observers_distances
 
 
 ! ---------- RUN FUNCTIONS ---------- !
-SUBROUTINE run_spectrums(self, sources, config, observers, z_spectrums)
+SUBROUTINE run_spectrums(self, observers, z_spectrums)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-    TYPE(AcousticSource_t) , INTENT(IN)    :: sources
-    TYPE(Config_t)         , INTENT(IN)    :: config
 
     REAL(WP), INTENT(IN), OPTIONAL :: observers(:,:)
-    REAL(Wp), INTENT(IN), OPTIONAL :: z_spectrums
+    REAL(WP), INTENT(IN), OPTIONAL :: z_spectrums
 
     ! Local variables
     COMPLEX(WP), ALLOCATABLE :: p(:,:)
@@ -177,7 +166,7 @@ SUBROUTINE run_spectrums(self, sources, config, observers, z_spectrums)
     print*, ''; print*, 'Computing spectrums at observer points...'
 
     ! Defaults
-    z_spectrums_ = - config % turbine % Depth/2.0_WP; if (PRESENT(z_spectrums)) z_spectrums_ = z_spectrums
+    z_spectrums_ = - self % turbine_data % Depth/2.0_WP; if (PRESENT(z_spectrums)) z_spectrums_ = z_spectrums
     
     if (PRESENT(observers)) then
         observers_ = observers
@@ -188,18 +177,18 @@ SUBROUTINE run_spectrums(self, sources, config, observers, z_spectrums)
         observers_(:,1) = [10.0_WP, 250.0_WP, 500.0_WP]
     end if
 
-    bs = config % solver % block_size
+    bs = self % block_size
 
     ! Compute pressure
-    CALL self % check_observers_distances(sources, observers_)
-    CALL self % compute_pressure(sources, observers_, bs, p)
+    CALL self % check_observers_distances(observers_)
+    CALL self % compute_pressure(observers_, bs, p)
 
-    if (config % solver % debug) write(*, '(A, F0.2)') 'Spectrum Pressure norm: ', norm2(abs(p))
+    if (self % debug) write(*, '(A, F0.2)') 'Spectrum Pressure norm: ', norm2(abs(p))
 
     ! Save data
-    CALL self % save_acoustics("P_spectrums", p)
-    CALL self % save_acoustics("Obs_spectrums", observers_)
-    CALL self % save_acoustics("Freqs", sources % Freqs)
+    CALL save_variable(self % save_path, "P_spectrums", p)
+    CALL save_variable(self % save_path, "Obs_spectrums", observers_)
+    CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
 
     print*, ''
     print*, '   ---> Spectrum data saved at ', self % save_path
@@ -207,10 +196,8 @@ SUBROUTINE run_spectrums(self, sources, config, observers, z_spectrums)
 END SUBROUTINE run_spectrums
 
 
-SUBROUTINE run_polar(self, sources, config, r_polar, z_polar, n_polar, center_polar)
+SUBROUTINE run_polar(self, r_polar, z_polar, n_polar, center_polar)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-    TYPE(AcousticSource_t) , INTENT(IN)    :: sources
-    TYPE(Config_t)         , INTENT(IN)    :: config
 
     REAL(WP)    , INTENT(IN), OPTIONAL  :: r_polar
     REAL(WP)    , INTENT(IN), OPTIONAL  :: z_polar
@@ -224,18 +211,18 @@ SUBROUTINE run_polar(self, sources, config, r_polar, z_polar, n_polar, center_po
     INTEGER(I32)             :: n_theta, bs, i
 
     
-    Depth = config % env % depth_base
-    bs    = config % solver % block_size
+    Depth = self % env % depth_base
+    bs    = self % block_size
 
     ! Defaults
     r = 500.0_WP      ; if (PRESENT(r_polar)) r       = r_polar
     z = - Depth/2.0_WP; if (PRESENT(z_polar)) z       = z_polar
-    n_theta = 72_I32  ; if (PRESENT(n_polar)) n_theta = n_theta
+    n_theta = 72_I32  ; if (PRESENT(n_polar)) n_theta = n_polar
 
     if (PRESENT(center_polar)) then
         center = center_polar
     else
-        center = [config % turbine % BariPos(1), config % turbine % BariPos(2)]
+        center = [self % turbine_data % BariPos(1), self % turbine_data % BariPos(2)]
     end if
 
     ! Build observers array
@@ -251,7 +238,7 @@ SUBROUTINE run_polar(self, sources, config, r_polar, z_polar, n_polar, center_po
         theta_deg_polar(i) = theta_deg
     end do
 
-    CALL self % check_observers_distances(sources, observers)
+    CALL self % check_observers_distances(observers)
 
     write(*, '(A)') ''
     write(*, '(A, F0.2, A, F0.2, A, F0.2, A, F0.2, A, I0, A)') &
@@ -259,17 +246,17 @@ SUBROUTINE run_polar(self, sources, config, r_polar, z_polar, n_polar, center_po
         ') m, z=', z, ' m), observers=', n_theta, '...'
         
     ! Compute_pressure
-    CALL self % compute_pressure(sources, observers, bs, p)
-    if (config % solver % debug) write(*, '(A, F0.2)') 'Polar Pressure Norm: ', norm2(abs(p))
+    CALL self % compute_pressure(observers, bs, p)
+    if (self % debug) write(*, '(A, F0.2)') 'Polar Pressure Norm: ', norm2(abs(p))
 
     ! Save data
-    CALL self % save_acoustics("Freqs", sources % Freqs)
-    CALL self % save_acoustics("P_polar", p)
-    CALL self % save_acoustics("R_polar", r)
-    CALL self % save_acoustics("Z_polar", z)
-    CALL self % save_acoustics("Theta_deg_polar", theta_deg_polar)
-    CALL self % save_acoustics("Obs_polar", observers)
-    CALL self % save_acoustics("Center_polar", center)
+    CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
+    CALL save_variable(self % save_path, "P_polar", p)
+    CALL save_variable(self % save_path, "R_polar", r)
+    CALL save_variable(self % save_path, "Z_polar", z)
+    CALL save_variable(self % save_path, "Theta_deg_polar", theta_deg_polar)
+    CALL save_variable(self % save_path, "Obs_polar", observers)
+    CALL save_variable(self % save_path, "Center_polar", center)
 
     print*, ''
     print*, '   ---> Polar data saved at ', self % save_path
@@ -277,10 +264,8 @@ SUBROUTINE run_polar(self, sources, config, r_polar, z_polar, n_polar, center_po
 END SUBROUTINE run_polar
 
 
-SUBROUTINE run_cylinder(self, sources, config, r_cyl, n_cyl, nz_cyl, center_cyl)
+SUBROUTINE run_cylinder(self, r_cyl, n_cyl, nz_cyl, center_cyl)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-    TYPE(AcousticSource_t) , INTENT(IN)    :: sources
-    TYPE(Config_t)         , INTENT(IN)    :: config
 
     REAL(WP)    , INTENT(IN), OPTIONAL :: r_cyl
     INTEGER(I32), INTENT(IN), OPTIONAL :: n_cyl
@@ -301,8 +286,8 @@ SUBROUTINE run_cylinder(self, sources, config, r_cyl, n_cyl, nz_cyl, center_cyl)
     REAL(WP)                 :: dA                    ! Differential area element
 
 
-    Depth = config % env % density_base
-    bs    = config % solver % block_size
+    Depth = self % env % depth_base
+    bs    = self % block_size
 
     ! Defaults
     r = 500.0_WP    ; if (PRESENT(r_cyl))  r       = r_cyl
@@ -312,7 +297,7 @@ SUBROUTINE run_cylinder(self, sources, config, r_cyl, n_cyl, nz_cyl, center_cyl)
     if (PRESENT(center_cyl)) then
         center = center_cyl
     else
-        center = [config % turbine % BariPos(1), config % turbine % BariPos(2)]
+        center = [self % turbine_data % BariPos(1), self % turbine_data % BariPos(2)]
     end if    
     
     Nobs = n_theta * nz
@@ -344,15 +329,15 @@ SUBROUTINE run_cylinder(self, sources, config, r_cyl, n_cyl, nz_cyl, center_cyl)
         end do
     end do
 
-    CALL self % check_observers_distances(sources, observers)
+    CALL self % check_observers_distances(observers)
 
     write(*, '(A)') ''
     write(*, '(A, F0.2, A, F0.2, A, F0.2, A, I0, A, I0, A, I0, A)') &
         'Computing cylindrical pressure (r=', r, ' m, center=(', center(1), ', ', center(2), &
         ') m, grid=', n_theta, ' x ', nz, ' = ', Nobs, ' obs)...'
 
-    CALL self % compute_pressure(sources, observers, bs, p)
-    if (config % solver % debug) write(*, '(A, F0.2)') 'Cylinder Pressure Norm: ', norm2(abs(p))
+    CALL self % compute_pressure(observers, bs, p)
+    if (self % debug) write(*, '(A, F0.2)') 'Cylinder Pressure Norm: ', norm2(abs(p))
 
     ! Reshape pressure and observers to 3D for storage
     ALLOCATE(p_reshaped(SIZE(p,1), n_theta, nz))
@@ -371,14 +356,14 @@ SUBROUTINE run_cylinder(self, sources, config, r_cyl, n_cyl, nz_cyl, center_cyl)
     dA = r * dz * (2.0_WP * PI / REAL(n_theta, WP))
 
     ! Save results
-    CALL self % save_acoustics("Freqs", sources % Freqs)
-    CALL self % save_acoustics("P_cylinder", p_reshaped)
-    CALL self % save_acoustics("R_cylinder", r)
-    CALL self % save_acoustics("Z_cylinder", z_cylinder)
-    CALL self % save_acoustics("Theta_deg_cylinder", theta_deg_arr)
-    CALL self % save_acoustics("Obs_cylinder", obs_reshaped)
-    CALL self % save_acoustics("Center_cylinder", center)
-    CALL self % save_acoustics("dA_cylinder", dA)
+    CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
+    CALL save_variable(self % save_path, "P_cylinder", p_reshaped)
+    CALL save_variable(self % save_path, "R_cylinder", r)
+    CALL save_variable(self % save_path, "Z_cylinder", z_cylinder)
+    CALL save_variable(self % save_path, "Theta_deg_cylinder", theta_deg_arr)
+    CALL save_variable(self % save_path, "Obs_cylinder", obs_reshaped)
+    CALL save_variable(self % save_path, "Center_cylinder", center)
+    CALL save_variable(self % save_path, "dA_cylinder", dA)
 
     print*, ''
     print*, '   ---> Cylinder data saved at ', self % save_path
@@ -386,10 +371,8 @@ SUBROUTINE run_cylinder(self, sources, config, r_cyl, n_cyl, nz_cyl, center_cyl)
 END SUBROUTINE run_cylinder
 
 
-SUBROUTINE run_decay(self, sources, config, distance_decay, n_decay, z_decay, logspace_decay)
+SUBROUTINE run_decay(self, distance_decay, n_decay, z_decay, logspace_decay)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-    TYPE(AcousticSource_t) , INTENT(IN)    :: sources
-    TYPE(Config_t)         , INTENT(IN)    :: config
 
     REAL(WP)    , INTENT(IN), OPTIONAL  :: distance_decay(2)
     INTEGER(I32), INTENT(IN), OPTIONAL  :: n_decay
@@ -407,8 +390,8 @@ SUBROUTINE run_decay(self, sources, config, distance_decay, n_decay, z_decay, lo
     INTEGER                  :: logspace_int        ! Integer representation for saving
 
 
-    Depth = config % env % depth_base
-    bs    = config % solver % block_size
+    Depth = self % env % depth_base
+    bs    = self % block_size
 
     ! Defaults
     z = -Depth/2.0_WP             ; if (PRESENT(z_decay))        z        = z_decay
@@ -417,7 +400,7 @@ SUBROUTINE run_decay(self, sources, config, distance_decay, n_decay, z_decay, lo
     logspace = .true.             ; if (PRESENT(logspace_decay)) logspace = logspace_decay
     
     ! Wind direction
-    WindDir_rad = config % turbine % WindDir * PI / 180.0_WP
+    WindDir_rad = self % turbine_data % WindDir * PI / 180.0_WP
     wind_unit = [cos(WindDir_rad), sin(WindDir_rad)]
 
     ALLOCATE(observers(n_points, 3))
@@ -431,7 +414,7 @@ SUBROUTINE run_decay(self, sources, config, distance_decay, n_decay, z_decay, lo
         do i = 1, n_points
             d_val = 10.0_WP ** (d_log1 + REAL(i - 1, WP) * d_step)
             distances(i)      = d_val
-            observers(i, 1:2) = config % turbine % AxisPos(1:2) + d_val * wind_unit
+            observers(i, 1:2) = self % turbine_data % AxisPos(1:2) + d_val * wind_unit
             observers(i, 3)   = z
         end do
     else
@@ -439,32 +422,32 @@ SUBROUTINE run_decay(self, sources, config, distance_decay, n_decay, z_decay, lo
         do i = 1, n_points
             d_val = distance(1) + REAL(i - 1, WP) * linear_step
             distances(i)      = d_val
-            observers(i, 1:2) = config % turbine % AxisPos(1:2) + d_val * wind_unit
+            observers(i, 1:2) = self % turbine_data % AxisPos(1:2) + d_val * wind_unit
             observers(i, 3)   = z
         end do
     end if
 
-    CALL self % check_observers_distances(sources, observers)
+    CALL self % check_observers_distances(observers)
 
     write(*, '(A)') ''
     write(*, '(A, I0, A, F0.2, A, F0.2, A)') &
         'Computing distance decay (points=', n_points, ', direction=', &
-        config % turbine % WindDir, ' deg, z=', z, ' m)...'
+        self % turbine_data % WindDir, ' deg, z=', z, ' m)...'
 
-    CALL self % compute_pressure(sources, observers, bs, p)
-    if (config % solver % debug) write(*, '(A, F0.2)') 'Decay Pressure Norm: ', norm2(abs(p))
+    CALL self % compute_pressure(observers, bs, p)
+    if (self % debug) write(*, '(A, F0.2)') 'Decay Pressure Norm: ', norm2(abs(p))
 
     ! Convert logical to integer for saving
     logspace_int = merge(1, 0, logspace)
 
     ! Save results
-    CALL self % save_acoustics("Freqs", sources % Freqs)
-    CALL self % save_acoustics("P_decay", p)
-    CALL self % save_acoustics("Z_decay", z)
-    CALL self % save_acoustics("Distance_decay", distance)
-    CALL self % save_acoustics("Distances_decay", distances)
-    CALL self % save_acoustics("Obs_decay", observers)
-    CALL self % save_acoustics("Logspace_decay", logspace_int)
+    CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
+    CALL save_variable(self % save_path, "P_decay", p)
+    CALL save_variable(self % save_path, "Z_decay", z)
+    CALL save_variable(self % save_path, "Distance_decay", distance)
+    CALL save_variable(self % save_path, "Distances_decay", distances)
+    CALL save_variable(self % save_path, "Obs_decay", observers)
+    CALL save_variable(self % save_path, "Logspace_decay", logspace_int)
 
     print*, ''
     print*, '   ---> Decay data saved at ', self % save_path
@@ -472,10 +455,8 @@ SUBROUTINE run_decay(self, sources, config, distance_decay, n_decay, z_decay, lo
 END SUBROUTINE run_decay
 
 
-SUBROUTINE run_line(self, sources, config, p1_line, p2_line, n_line, logspace_line)
+SUBROUTINE run_line(self, p1_line, p2_line, n_line, logspace_line)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-    TYPE(AcousticSource_t) , INTENT(IN)    :: sources
-    TYPE(Config_t)         , INTENT(IN)    :: config
 
     REAL(WP)    , INTENT(IN), OPTIONAL  :: p1_line(3)
     REAL(WP)    , INTENT(IN), OPTIONAL  :: p2_line(3)
@@ -493,8 +474,8 @@ SUBROUTINE run_line(self, sources, config, p1_line, p2_line, n_line, logspace_li
     INTEGER                  :: logspace_int     ! Integer representation for saving
 
 
-    Depth = config % env % depth_base
-    bs    = config % solver % block_size
+    Depth = self % env % depth_base
+    bs    = self % block_size
 
     ! Defaults
     p1 = [100.0_WP, 0.0_WP, 0.0_WP] ; if (PRESENT(p1_line))       p1       = p1_line
@@ -513,9 +494,6 @@ SUBROUTINE run_line(self, sources, config, p1_line, p2_line, n_line, logspace_li
             n_points = int(dist_total, I32)
         end if
     end if
-
-    bs = int(n_points / 10_I32, I32)
-    if (bs < 1_I32) bs = 1_I32
 
     ALLOCATE(observers(n_points, 3))
     ALLOCATE(distances(n_points))
@@ -540,28 +518,28 @@ SUBROUTINE run_line(self, sources, config, p1_line, p2_line, n_line, logspace_li
         end do
     end if
 
-    CALL self % check_observers_distances(sources, observers)
+    CALL self % check_observers_distances(observers)
 
     write(*, '(A)') ''
     write(*, '(A, I0, A, F0.2, A, F0.2, A, F0.2, A, F0.2, A, F0.2, A, F0.2, A)') &
         'Computing line (points=', n_points, '), p1=(', p1(1), ', ', p1(2), ', ', p1(3), &
         ') m, p2=(', p2(1), ', ', p2(2), ', ', p2(3), ') m)...'
 
-    CALL self % compute_pressure(sources, observers, bs, p)
-    if (config % solver % debug) write(*, '(A, F0.2)') 'Line Pressure Norm: ', norm2(abs(p))
+    CALL self % compute_pressure(observers, bs, p)
+    if (self % debug) write(*, '(A, F0.2)') 'Line Pressure Norm: ', norm2(abs(p))
 
     ! Convert logical to integer for saving
     logspace_int = merge(1, 0, logspace)
 
     ! Save results
-    CALL self % save_acoustics("Freqs", sources % Freqs)
-    CALL self % save_acoustics("P_line", p)
-    CALL self % save_acoustics("P1_line", p1)
-    CALL self % save_acoustics("P2_line", p2)
-    CALL self % save_acoustics("Obs_line", observers)
-    CALL self % save_acoustics("Distance_line", dist_total)
-    CALL self % save_acoustics("Distances_line", distances)
-    CALL self % save_acoustics("Logspace_line", logspace_int)
+    CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
+    CALL save_variable(self % save_path, "P_line", p)
+    CALL save_variable(self % save_path, "P1_line", p1)
+    CALL save_variable(self % save_path, "P2_line", p2)
+    CALL save_variable(self % save_path, "Obs_line", observers)
+    CALL save_variable(self % save_path, "Distance_line", dist_total)
+    CALL save_variable(self % save_path, "Distances_line", distances)
+    CALL save_variable(self % save_path, "Logspace_line", logspace_int)
 
     print*, ''
     print*, '   ---> Line data saved at ', self % save_path
@@ -569,10 +547,8 @@ SUBROUTINE run_line(self, sources, config, p1_line, p2_line, n_line, logspace_li
 END SUBROUTINE run_line
 
 
-SUBROUTINE run_sliceXY(self, sources, config, z_xy, nx_xy, ny_xy, xlim_xy, ylim_xy, center_xy)
+SUBROUTINE run_sliceXY(self, z_xy, nx_xy, ny_xy, xlim_xy, ylim_xy, center_xy)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-    TYPE(AcousticSource_t) , INTENT(IN)    :: sources
-    TYPE(Config_t)         , INTENT(IN)    :: config
 
     REAL(WP)    , INTENT(IN), OPTIONAL  :: z_xy
     INTEGER(I32), INTENT(IN), OPTIONAL  :: nx_xy
@@ -593,8 +569,8 @@ SUBROUTINE run_sliceXY(self, sources, config, z_xy, nx_xy, ny_xy, xlim_xy, ylim_
     REAL(WP), PARAMETER      :: tol = 1e-5_WP
 
 
-    Depth = config % env % depth_base
-    bs   = config % solver % block_size
+    Depth = self % env % depth_base
+    bs   = self % block_size
 
     ! Defaults
     z = - Depth/2.0_WP; if (PRESENT(z_xy)) z = z_xy
@@ -648,15 +624,15 @@ SUBROUTINE run_sliceXY(self, sources, config, z_xy, nx_xy, ny_xy, xlim_xy, ylim_
         end do
     end do
 
-    CALL self % check_observers_distances(sources, observers, 0.1_WP)
+    CALL self % check_observers_distances(observers, 0.1_WP)
 
     write(*, '(A)') ''
     write(*, '(A, I0, A, I0, A, F0.2, A, F0.2, A, F0.2, A)') &
         'Computing XY slice (nx=', nx, ', ny=', ny, ', z=', z, &
         ' m, center=(', center(1), ', ', center(2), ') m)...'
 
-    CALL self % compute_pressure(sources, observers, bs, p)
-    if (config % solver % debug) write(*, '(A, F0.2)') 'SliceXY Pressure Norm: ', norm2(abs(p))
+    CALL self % compute_pressure(observers, bs, p)
+    if (self % debug) write(*, '(A, F0.2)') 'SliceXY Pressure Norm: ', norm2(abs(p))
 
     ! Reshape pressure and observers to 3D (nx, ny, 3) and (Nfreqs, nx, ny)
     ALLOCATE(p_reshaped(SIZE(p,1), nx, ny))
@@ -672,15 +648,15 @@ SUBROUTINE run_sliceXY(self, sources, config, z_xy, nx_xy, ny_xy, xlim_xy, ylim_
     end do
 
     ! Save results
-    CALL self % save_acoustics("Freqs", sources % Freqs)
-    CALL self % save_acoustics("P_slicexy", p_reshaped)
-    CALL self % save_acoustics("Obs_slicexy", obs_reshaped)
-    CALL self % save_acoustics("X_slicexy", xs)
-    CALL self % save_acoustics("Y_slicexy", ys)
-    CALL self % save_acoustics("Z_slicexy", z)
-    CALL self % save_acoustics("Center_slicexy", center)
-    CALL self % save_acoustics("Nx_slicexy", nx)
-    CALL self % save_acoustics("Ny_slicexy", ny)
+    CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
+    CALL save_variable(self % save_path, "P_slicexy", p_reshaped)
+    CALL save_variable(self % save_path, "Obs_slicexy", obs_reshaped)
+    CALL save_variable(self % save_path, "X_slicexy", xs)
+    CALL save_variable(self % save_path, "Y_slicexy", ys)
+    CALL save_variable(self % save_path, "Z_slicexy", z)
+    CALL save_variable(self % save_path, "Center_slicexy", center)
+    CALL save_variable(self % save_path, "Nx_slicexy", nx)
+    CALL save_variable(self % save_path, "Ny_slicexy", ny)
 
     print*, ''
     print*, '   ---> SliceXY data saved at ', self % save_path
@@ -688,10 +664,8 @@ SUBROUTINE run_sliceXY(self, sources, config, z_xy, nx_xy, ny_xy, xlim_xy, ylim_
 END SUBROUTINE run_sliceXY
 
 
-SUBROUTINE run_sliceXZ(self, sources, config, y_xz, nx_xz, nz_xz, xlim_xz, zlim_xz)
+SUBROUTINE run_sliceXZ(self, y_xz, nx_xz, nz_xz, xlim_xz, zlim_xz)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-    TYPE(AcousticSource_t) , INTENT(IN)    :: sources
-    TYPE(Config_t)         , INTENT(IN)    :: config
 
     REAL(WP)    , INTENT(IN), OPTIONAL  :: y_xz
     INTEGER(I32), INTENT(IN), OPTIONAL  :: nx_xz
@@ -708,11 +682,11 @@ SUBROUTINE run_sliceXZ(self, sources, config, y_xz, nx_xz, nz_xz, xlim_xz, zlim_
     REAL(WP)                 :: y, xlim(2), zlim(2), dx, dz, x_val, z_val, Depth
     INTEGER(I32)             :: nx, nz, i, j, idx, bs
 
-    Depth = config % env % depth_base
-    bs    = config % solver % block_size
+    Depth = self % env % depth_base
+    bs    = self % block_size
 
     ! Defaults
-    y    = config % turbine % AxisPos(2); if (PRESENT(y_xz))    y    = y_xz
+    y    = self % turbine_data % AxisPos(2); if (PRESENT(y_xz))    y    = y_xz
     nx   = 26_I32                       ; if (PRESENT(nx_xz))   nx   = nx_xz
     nz   = 26_I32                       ; if (PRESENT(nz_xz))   nz   = nz_xz
     xlim = [-500.0_WP, 500.0_WP]        ; if (PRESENT(xlim_xz)) xlim = xlim_xz
@@ -744,15 +718,15 @@ SUBROUTINE run_sliceXZ(self, sources, config, y_xz, nx_xz, nz_xz, xlim_xz, zlim_
         end do
     end do
 
-    CALL self % check_observers_distances(sources, observers, 0.1_WP)
+    CALL self % check_observers_distances(observers, 0.1_WP)
 
     write(*, '(A)') ''
     write(*, '(A, I0, A, I0, A, F0.2, A, F0.2, A, F0.2, A)') &
         'Computing XZ slice (nx=', nx, ', nz=', nz, ', y=', y, &
         ' m, z from ', zlim(1), ' to ', zlim(2), ' m)...'
 
-    CALL self % compute_pressure(sources, observers, bs, p)
-    if (config % solver % debug) write(*, '(A, F0.2)') 'SliceXZ Pressure Norm: ', norm2(abs(p))
+    CALL self % compute_pressure(observers, bs, p)
+    if (self % debug) write(*, '(A, F0.2)') 'SliceXZ Pressure Norm: ', norm2(abs(p))
 
     ! Reshape pressure and observers to 3D (nx, nz, 3) and (Nfreqs, nx, nz)
     ALLOCATE(p_reshaped(SIZE(p,1), nx, nz))
@@ -768,14 +742,14 @@ SUBROUTINE run_sliceXZ(self, sources, config, y_xz, nx_xz, nz_xz, xlim_xz, zlim_
     end do
 
     ! Save results
-    CALL self % save_acoustics("Freqs", sources % Freqs)
-    CALL self % save_acoustics("P_slicexz", p_reshaped)
-    CALL self % save_acoustics("Obs_slicexz", obs_reshaped)
-    CALL self % save_acoustics("X_slicexz", xs)
-    CALL self % save_acoustics("Z_slicexz", zs)
-    CALL self % save_acoustics("Y_slicexz", y)
-    CALL self % save_acoustics("Nx_slicexz", nx)
-    CALL self % save_acoustics("Nz_slicexz", nz)
+    CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
+    CALL save_variable(self % save_path, "P_slicexz", p_reshaped)
+    CALL save_variable(self % save_path, "Obs_slicexz", obs_reshaped)
+    CALL save_variable(self % save_path, "X_slicexz", xs)
+    CALL save_variable(self % save_path, "Z_slicexz", zs)
+    CALL save_variable(self % save_path, "Y_slicexz", y)
+    CALL save_variable(self % save_path, "Nx_slicexz", nx)
+    CALL save_variable(self % save_path, "Nz_slicexz", nz)
 
     print*, ''
     print*, '   ---> SliceXZ data saved at ', self % save_path
@@ -783,10 +757,8 @@ SUBROUTINE run_sliceXZ(self, sources, config, y_xz, nx_xz, nz_xz, xlim_xz, zlim_
 END SUBROUTINE run_sliceXZ
 
 
-SUBROUTINE dummy_run_sphere(self, sources, config, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
+SUBROUTINE dummy_run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-    TYPE(AcousticSource_t) , INTENT(IN)    :: sources
-    TYPE(Config_t)         , INTENT(IN)    :: config
 
     REAL(WP)    , INTENT(IN), OPTIONAL  :: r_sphere
     INTEGER(I32), INTENT(IN), OPTIONAL  :: n_theta_sphere
@@ -809,46 +781,44 @@ SUBROUTINE dummy_run_sphere(self, sources, config, r_sphere, n_theta_sphere, nz_
 END SUBROUTINE dummy_run_sphere
 
 
-SUBROUTINE run_all(self, sources, config, &
-    spectrums_observers, spectrums_z_obs, &
-    polar_r, polar_z, polar_n_theta, polar_center, &
-    cylinder_r, cylinder_n_theta, cylinder_nz, cylinder_center, &
-    decay_distance, decay_n_points, decay_z, decay_logspace, &
-    line_p1, line_p2, line_n_points, line_logspace, &
-    sliceXY_z, sliceXY_nx, sliceXY_ny, sliceXY_xlim, sliceXY_ylim, sliceXY_center, &
-    sliceXZ_y, sliceXZ_nx, sliceXZ_nz, sliceXZ_xlim, sliceXZ_zlim, &
-    sphere_r, sphere_n_theta, sphere_nz, sphere_center)
+SUBROUTINE run_all(self, &
+    observers_spectrum, z_spectrums, &
+    r_polar, z_polar, n_polar, center_polar, &
+    r_cyl, n_cyl, nz_cyl, center_cyl, &
+    distance_decay, n_decay, z_decay, logspace_decay, &
+    p1_line, p2_line, n_line, logspace_line, &
+    z_xy, nx_xy, ny_xy, xlim_xy, ylim_xy, center_xy, &
+    y_xz, nx_xz, nz_xz, xlim_xz, zlim_xz, &
+    r_sphere, n_theta_sphere, nz_sphere, center_sphere)
         
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-    TYPE(AcousticSource_t) , INTENT(IN)    :: sources
-    TYPE(Config_t)         , INTENT(IN)    :: config
 
     ! --- spectrums ---
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: spectrums_observers(:,:)
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: spectrums_z_obs
+    REAL(WP)    , INTENT(IN), OPTIONAL  :: observers_spectrum(:,:)
+    REAL(WP)    , INTENT(IN), OPTIONAL  :: z_spectrums
     ! --- polar ---
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: polar_r, polar_z, polar_center(2)
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: polar_n_theta
+    REAL(WP)    , INTENT(IN), OPTIONAL  :: r_polar, z_polar, center_polar(2)
+    INTEGER(I32), INTENT(IN), OPTIONAL  :: n_polar
     ! --- cylinder ---
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: cylinder_r, cylinder_center(2)
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: cylinder_n_theta, cylinder_nz
+    REAL(WP)    , INTENT(IN), OPTIONAL  :: r_cyl, center_cyl(2)
+    INTEGER(I32), INTENT(IN), OPTIONAL  :: n_cyl, nz_cyl
     ! --- decay ---
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: decay_distance(2), decay_z
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: decay_n_points
-    LOGICAL     , INTENT(IN), OPTIONAL  :: decay_logspace
+    REAL(WP)    , INTENT(IN), OPTIONAL  :: distance_decay(2), z_decay
+    INTEGER(I32), INTENT(IN), OPTIONAL  :: n_decay
+    LOGICAL     , INTENT(IN), OPTIONAL  :: logspace_decay
     ! --- line ---
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: line_p1(3), line_p2(3)
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: line_n_points
-    LOGICAL     , INTENT(IN), OPTIONAL  :: line_logspace
+    REAL(WP)    , INTENT(IN), OPTIONAL  :: p1_line(3), p2_line(3)
+    INTEGER(I32), INTENT(IN), OPTIONAL  :: n_line
+    LOGICAL     , INTENT(IN), OPTIONAL  :: logspace_line
     ! --- sliceXY ---
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: sliceXY_z, sliceXY_xlim(2), sliceXY_ylim(2), sliceXY_center(2)
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: sliceXY_nx, sliceXY_ny
+    REAL(WP)    , INTENT(IN), OPTIONAL  :: z_xy, xlim_xy(2), ylim_xy(2), center_xy(2)
+    INTEGER(I32), INTENT(IN), OPTIONAL  :: nx_xy, ny_xy
     ! --- sliceXZ ---
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: sliceXZ_y, sliceXZ_xlim(2), sliceXZ_zlim(2)
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: sliceXZ_nx, sliceXZ_nz
+    REAL(WP)    , INTENT(IN), OPTIONAL  :: y_xz, xlim_xz(2), zlim_xz(2)
+    INTEGER(I32), INTENT(IN), OPTIONAL  :: nx_xz, nz_xz
     ! --- sphere ---
-    REAL(WP)    , INTENT(IN), OPTIONAL  :: sphere_r, sphere_center(3)
-    INTEGER(I32), INTENT(IN), OPTIONAL  :: sphere_n_theta, sphere_nz
+    REAL(WP)    , INTENT(IN), OPTIONAL  :: r_sphere, center_sphere(3)
+    INTEGER(I32), INTENT(IN), OPTIONAL  :: n_theta_sphere, nz_sphere
 
 
     print*, ''
@@ -859,35 +829,35 @@ SUBROUTINE run_all(self, sources, config, &
 
     print*, ''
     print*, '[Step 1/8] Spectrums at observer points ...'
-    CALL self % run_spectrums(sources, config, spectrums_observers, spectrums_z_obs)
+    CALL self % run_spectrums(observers_spectrum, z_spectrums)
 
     print*, ''
     print*, '[Step 2/8] Polar contour ...'
-    CALL self % run_polar(sources, config, polar_r, polar_z, polar_n_theta, polar_center)
+    CALL self % run_polar(r_polar, z_polar, n_polar, center_polar)
 
     print*, ''
     print*, '[Step 3/8] Distance decay along wind ...'
-    CALL self % run_decay(sources, config, decay_distance, decay_n_points, decay_z, decay_logspace)
+    CALL self % run_decay(distance_decay, n_decay, z_decay, logspace_decay)
 
     print*, ''
     print*, '[Step 4/8] Line between two points ...'
-    CALL self % run_line(sources, config, line_p1, line_p2, line_n_points, line_logspace)
+    CALL self % run_line(p1_line, p2_line, n_line, logspace_line)
 
     print*, ''
     print*, '[Step 5/8] Spherical radiation (free-field) ...'
-    CALL self % run_sphere(sources, config, sphere_r, sphere_n_theta, sphere_nz, sphere_center)
+    CALL self % run_sphere(r_sphere, n_theta_sphere, nz_sphere, center_sphere)
 
     print*, ''
     print*, '[Step 6/8] Horizontal slice XY ...'
-    CALL self % run_sliceXY(sources, config, sliceXY_z, sliceXY_nx, sliceXY_ny, sliceXY_xlim, sliceXY_ylim, sliceXY_center)
+    CALL self % run_sliceXY(z_xy, nx_xy, ny_xy, xlim_xy, ylim_xy, center_xy)
 
     print*, ''
     print*, '[Step 7/8] Vertical slice XZ ...'
-    CALL self % run_sliceXZ(sources, config, sliceXZ_y, sliceXZ_nx, sliceXZ_nz, sliceXZ_xlim, sliceXZ_zlim)
+    CALL self % run_sliceXZ(y_xz, nx_xz, nz_xz, xlim_xz, zlim_xz)
 
     print*, ''
     print*, '[Step 8/8] Cylinder surface ...'
-    CALL self % run_cylinder(sources, config, cylinder_r, cylinder_n_theta, cylinder_nz, cylinder_center)
+    CALL self % run_cylinder(r_cyl, n_cyl, nz_cyl, center_cyl)
 
     print*, ''
     print*, '=================================================='

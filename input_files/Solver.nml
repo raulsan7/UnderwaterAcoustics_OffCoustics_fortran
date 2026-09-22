@@ -3,10 +3,10 @@
 ! =====================================================================
 
 &solver_config
-    method = 'ImagesMethod'
+    method = 'ImageMethod'
     save_path = 'None'
     block_size = 128
-    in_cluster = .false.
+    in_cluster = .true.
     debug = .true.
 /
 
