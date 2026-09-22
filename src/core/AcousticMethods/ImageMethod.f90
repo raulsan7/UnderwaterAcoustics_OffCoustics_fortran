@@ -89,19 +89,17 @@ SUBROUTINE init_ImageMethod(self, sources, config)
 
     CLASS(ImageMethod_t)  , INTENT(INOUT)              :: self
     TYPE(AcousticSource_t), INTENT(INOUT), ALLOCATABLE :: sources
-    TYPE(Config_t)        , INTENT(IN)                 :: config
-    CHARACTER(len=:), ALLOCATABLE :: name
+    TYPE(Config_t)        , INTENT(INOUT), ALLOCATABLE :: config
 
     ! Parent variables
     self % sources      = sources
-    self % save_path    = config % solver % save_path
     self % env          = config % env
+    self % run_inputs   = config % run_inputs
+    self % save_path    = config % solver % save_path
     self % block_size   = config % solver % block_size
     self % debug        = config % solver % debug
     self % in_cluster   = config % solver % in_cluster
     self % turbine_data = config % turbine
-
-    DEALLOCATE(sources)
 
     ! Son specific variables
     SELECT TYPE(m => config % method)
@@ -125,6 +123,9 @@ SUBROUTINE init_ImageMethod(self, sources, config)
     print*, ''
     print*, 'Selected method: ', self % get_name()
     CALL self % build_image_system()
+
+    ! Cleanup memory
+    DEALLOCATE(sources, config)
 
 END SUBROUTINE init_ImageMethod
 
@@ -335,61 +336,61 @@ SUBROUTINE write_txt_summary_ImageMethod(self, turbine)
 
     dat_path = swap_extension(trim(self % save_path), ".dat")
 
-    OPEN(NEWUNIT=u, FILE=dat_path, STATUS='replace', ACTION='write')
+    open(NEWUNIT=u, FILE=dat_path, STATUS='replace', ACTION='write')
 
-    WRITE(u,'(A)') repeat('=', 70)
-    WRITE(u,'(A)') 'OFF_COUSTICS SIMULATION SUMMARY'
-    WRITE(u,'(A)') repeat('=', 70)
-    WRITE(u,'(A)') 'HDF5 file: ' // trim(self % save_path)
-    WRITE(u,*)
+    write(u,'(A)') repeat('=', 70)
+    write(u,'(A)') 'OFF_COUSTICS SIMULATION SUMMARY'
+    write(u,'(A)') repeat('=', 70)
+    write(u,'(A)') 'HDF5 file: ' // trim(self % save_path)
+    write(u,*)
 
-    WRITE(u,'(A)') repeat('-', 70)
-    WRITE(u,'(A)') 'TURBINE'
-    WRITE(u,'(A)') repeat('-', 70)
-    WRITE(u,'(A,A)')      'Case type   : ', trim(self % turbine_data % case_type)
-    WRITE(u,'(A,L1)')     'Is monopile : ', self % turbine_data % is_monopile
-    WRITE(u,'(A,F8.2,A)') 'Wind speed  : ', self % turbine_data % WindSpeed, ' m/s'
-    WRITE(u,'(A,F8.2,A)') 'Wind dir    : ', self % turbine_data % WindDir, ' deg'
-    WRITE(u,'(A,F8.2,A)') 'Water depth : ', self % turbine_data % Depth, ' m'
-    WRITE(u,'(A,2F10.3)') 'Axis pos    : ', self % turbine_data % AxisPos
-    WRITE(u,'(A,2F10.3)') 'Bari pos    : ', self % turbine_data % BariPos
-    WRITE(u,'(A,I0)')     'N members   : ', self % turbine_data % Nmembers
-    WRITE(u,'(A,I0)')     'N nodes     : ', self % turbine_data % Nnodes
-    WRITE(u,*)
+    write(u,'(A)') repeat('-', 70)
+    write(u,'(A)') 'TURBINE'
+    write(u,'(A)') repeat('-', 70)
+    write(u,'(A,A)')      'Case type   : ', trim(self % turbine_data % case_type)
+    write(u,'(A,L1)')     'Is monopile : ', self % turbine_data % is_monopile
+    write(u,'(A,F8.2,A)') 'Wind speed  : ', self % turbine_data % WindSpeed, ' m/s'
+    write(u,'(A,F8.2,A)') 'Wind dir    : ', self % turbine_data % WindDir, ' deg'
+    write(u,'(A,F8.2,A)') 'Water depth : ', self % turbine_data % Depth, ' m'
+    write(u,'(A,2F10.3)') 'Axis pos    : ', self % turbine_data % AxisPos
+    write(u,'(A,2F10.3)') 'Bari pos    : ', self % turbine_data % BariPos
+    write(u,'(A,I0)')     'N members   : ', self % turbine_data % Nmembers
+    write(u,'(A,I0)')     'N nodes     : ', self % turbine_data % Nnodes
+    write(u,*)
 
     if (PRESENT(turbine)) then
         if (ALLOCATED(turbine)) then
-            WRITE(u,'(A)') repeat('-', 70)
-            WRITE(u,'(A)') 'TURBINE - SPECIFIC PARAMETERS'
-            WRITE(u,'(A)') repeat('-', 70)
+            write(u,'(A)') repeat('-', 70)
+            write(u,'(A)') 'TURBINE - SPECIFIC PARAMETERS'
+            write(u,'(A)') repeat('-', 70)
             CALL turbine % write_specific_params_txt(u)
-            WRITE(u,*)
+            write(u,*)
         end if
     end if
 
-    WRITE(u,'(A)') repeat('-', 70)
-    WRITE(u,'(A)') 'ENVIRONMENT'
-    WRITE(u,'(A)') repeat('-', 70)
-    WRITE(u,'(A,F8.2,A)')  'Speed of sound   : ', self % env % speed_sound_base, ' m/s'
-    WRITE(u,'(A,F8.2,A)')  'Density          : ', self % env % density_base, ' kg/m^3'
-    WRITE(u,'(A,ES10.2,A)') 'Reference press. : ', self % env % reference_pressure, ' Pa'
-    WRITE(u,'(A,F8.2,A)')  'Depth            : ', self % env % depth_base, ' m'
-    WRITE(u,*)
+    write(u,'(A)') repeat('-', 70)
+    write(u,'(A)') 'ENVIRONMENT'
+    write(u,'(A)') repeat('-', 70)
+    write(u,'(A,F8.2,A)')  'Speed of sound   : ', self % env % speed_sound_base, ' m/s'
+    write(u,'(A,F8.2,A)')  'Density          : ', self % env % density_base, ' kg/m^3'
+    write(u,'(A,ES10.2,A)') 'Reference press. : ', self % env % reference_pressure, ' Pa'
+    write(u,'(A,F8.2,A)')  'Depth            : ', self % env % depth_base, ' m'
+    write(u,*)
 
-    WRITE(u,'(A)') repeat('-', 70)
-    WRITE(u,'(A)') 'SOLVER: ' // trim(self % solver_name)
-    WRITE(u,'(A)') repeat('-', 70)
-    WRITE(u,'(A,I0)')     'N images     : ', self % N_images
-    WRITE(u,'(A,F8.2,A)') 'Upper HBC    : ', self % Upper_HBC, ' m'
-    WRITE(u,'(A,F8.2,A)') 'Lower HBC    : ', self % Lower_HBC, ' m'
-    WRITE(u,'(A,F8.4)')   'Upper atten. : ', self % up_R
-    WRITE(u,'(A,F8.4)')   'Lower atten. : ', self % lw_R
-    WRITE(u,'(A,I0)')     'Block size   : ', self % block_size
-    WRITE(u,'(A,L1)')     'In cluster   : ', self % in_cluster
-    WRITE(u,*)
-    WRITE(u,'(A)') repeat('=', 70)
+    write(u,'(A)') repeat('-', 70)
+    write(u,'(A)') 'SOLVER: ' // trim(self % solver_name)
+    write(u,'(A)') repeat('-', 70)
+    write(u,'(A,I0)')     'N images     : ', self % N_images
+    write(u,'(A,F8.2,A)') 'Upper HBC    : ', self % Upper_HBC, ' m'
+    write(u,'(A,F8.2,A)') 'Lower HBC    : ', self % Lower_HBC, ' m'
+    write(u,'(A,F8.4)')   'Upper atten. : ', self % up_R
+    write(u,'(A,F8.4)')   'Lower atten. : ', self % lw_R
+    write(u,'(A,I0)')     'Block size   : ', self % block_size
+    write(u,'(A,L1)')     'In cluster   : ', self % in_cluster
+    write(u,*)
+    write(u,'(A)') repeat('=', 70)
 
-    CLOSE(u)
+    close(u)
 
     print*, '   ---> Text summary saved at ', dat_path
 
@@ -724,8 +725,8 @@ SUBROUTINE run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
     max_dist = max_dist * 1.1_WP
 
     if (r_ < max_dist) then
-        WRITE(*,'(A,F8.2,A)') '   requested radius r=', r_, ' m is smaller than max dist.'
-        WRITE(*,'(A,F8.2,A)') '   radius increased to ', max_dist * 1.05_WP, ' m'
+        write(*,'(A,F8.2,A)') '   requested radius r=', r_, ' m is smaller than max dist.'
+        write(*,'(A,F8.2,A)') '   radius increased to ', max_dist * 1.05_WP, ' m'
         r_ = max_dist * 1.05_WP
     end if
 
@@ -769,7 +770,7 @@ SUBROUTINE run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
 
     CALL self % check_observers_distances(observers_, 0.1_WP)
 
-    WRITE(*,'(A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,I0,A,I0,A,I0)') &
+    write(*,'(A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,I0,A,I0,A,I0)') &
         '>> [Sphere]     r=', r_, ' m | center=(', center_(1), ',', center_(2), ',', center_(3), &
         ') m | grid=', n_theta_, ' azim x ', nz_, ' z = ', Nobs
 
@@ -777,7 +778,7 @@ SUBROUTINE run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
     CALL self % compute_pressure(observers_, self % block_size, p)
     CALL self % restore_default_images()
 
-    if (self % debug) WRITE(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
+    if (self % debug) write(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
     ! Reshape pressure and observers to 3D (n_theta, nz, 3) and (NFreqs, n_theta, nz)
     ALLOCATE(p_reshaped(SIZE(p,1), n_theta_, nz_))
@@ -805,7 +806,7 @@ SUBROUTINE run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
     CALL save_variable(self % save_path, "Center_sphere", center_)
     CALL save_variable(self % save_path, "dA_sphere", dA)
 
-    WRITE(*,'(A)') '   Saved to: ' // trim(self % save_path)
+    write(*,'(A)') '   Saved to: ' // trim(self % save_path)
 
 END SUBROUTINE run_sphere
 

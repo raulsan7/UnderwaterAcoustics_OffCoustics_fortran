@@ -16,8 +16,7 @@ MODULE Kinds
 
 IMPLICIT NONE
 
-PRIVATE
-PUBLIC :: I32, I64, WP, PI, I1
+PUBLIC
 
 ! ----------------------------------------
 ! Integer precision kinds

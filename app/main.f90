@@ -12,6 +12,8 @@
 ! Affil.  : ETSIAE, Universidad Politecnica de Madrid
 ! Project : ERC project off-coustics
 ! Date    : 09/2026
+!-------------------------------------------------------------------------------
+! COMPILE AND RUN: fpm run --flag "-O3 -fopenmp"
 ! ===============================================================================
 PROGRAM main
 
@@ -28,7 +30,7 @@ USE DTU10MWFloating, ONLY: DTU10MWFloating_t
 
 IMPLICIT NONE
 
-TYPE(Config_t)                       :: config
+TYPE(Config_t)         , ALLOCATABLE :: config
 TYPE(AcousticSource_t) , ALLOCATABLE :: active_sources
 CLASS(WindTurbine_t)   , ALLOCATABLE :: active_turbine
 CLASS(AcousticSolver_t), ALLOCATABLE :: active_solver
@@ -53,18 +55,18 @@ CHARACTER(len=8) :: tag
         write(*,*) 'Unsupported turbine type: ' // trim(config % turbine % case_type)
         stop
     END SELECT
-    write(*,*) 'Instantiating ', trim(config % turbine % case_type), ' Turbine...'
+    write(*,*) '>> Instantiating ', trim(config % turbine % case_type), ' Turbine...'
 
 
     ! 3. Solve structual dynamics
-    write(*,*) "Processing turbine dynamics and structural forces..."
+    write(*,*) ">> Processing turbine dynamics and structural forces..."
     CALL active_turbine % init(config = config % turbine)
     CALL active_turbine % read_input(config = config % turbine, verbose = .true.)
     CALL active_turbine % compute_force(config = config % turbine, verbose=.true.)
 
 
     ! 4. Translate physical forces to mathematical acoustic sources
-    write(*,*) "Translating physical forces to mathematical acoustic sources..."
+    write(*,*) ">> Translating physical forces to mathematical acoustic sources..."
     CALL active_turbine % turbine_to_source(config, active_sources)
 
     
@@ -76,7 +78,7 @@ CHARACTER(len=8) :: tag
         ! ALLOCATE(AnalyticalNormalModes_t :: active_solver)
         error stop "Not implemented yet"
     END SELECT
-    write(*,*) "Launching acoustic propagation solver: ", trim(config % solver % method)
+    write(*,*) ">> Launching acoustic propagation solver: ", trim(config % solver % method)
     
 
     ! 6. Set acoustic solver

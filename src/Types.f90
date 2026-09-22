@@ -97,25 +97,6 @@ END TYPE Config_Solver_t
 
 
 ! ===============================================================================
-! TYPE: Config_t
-! ===============================================================================
-! Top-level configuration object built by Args_parser from the input
-! namelist files. It aggregates the turbine, environment and solver
-! configurations together with the polymorphic, method-specific
-! configuration (e.g. Config_ImageMethod_t) selected at run time.
-! ===============================================================================
-TYPE :: Config_t
-
-    TYPE(Config_WindTurbine_t)          :: turbine      ! [-] Wind turbine configuration
-    TYPE(Config_Environment_t)          :: env          ! [-] Environment/fluid configuration
-    TYPE(Config_Solver_t)               :: solver       ! [-] Acoustic solver configuration
-    TYPE(Config_Computation_t)          :: run_inputs   ! [-] Per-run_* post-processing step configuration
-    CLASS(Config_Method_t), ALLOCATABLE :: method       ! [-] Polymorphic, solver-method-specific configuration
-
-END TYPE Config_t
-
-
-! ===============================================================================
 ! TYPE: AcousticSource_t
 ! ===============================================================================
 ! Abstract representation of the acoustic excitation produced by a wind
@@ -187,27 +168,6 @@ END TYPE ImageSystem_t
 
 
 ! ===============================================================================
-! TYPE: Config_Computation_t
-! ===============================================================================
-! Aggregates the per-step configuration for every run_* post-processing
-! routine that run_all() can execute, read from ComputationSetupTurbine.nml.
-! ===============================================================================
-TYPE :: Config_Computation_t
-
-    TYPE(Config_DoSteps_t)   :: do_run              ! [-] Which steps to run
-    TYPE(Config_Spectrums_t) :: params_spectrums    ! [-] run_spectrums() configuration
-    TYPE(Config_Polar_t)     :: params_polar        ! [-] run_polar() configuration
-    TYPE(Config_Cylinder_t)  :: params_cylinder     ! [-] run_cylinder() configuration
-    TYPE(Config_Decay_t)     :: params_decay        ! [-] run_decay() configuration
-    TYPE(Config_Line_t)      :: params_line         ! [-] run_line() configuration
-    TYPE(Config_SliceXY_t)   :: params_sliceXY      ! [-] run_sliceXY() configuration
-    TYPE(Config_SliceXZ_t)   :: params_sliceXZ      ! [-] run_sliceXZ() configuration
-    TYPE(Config_Sphere_t)    :: params_sphere       ! [-] run_sphere() configuration
-
-END TYPE Config_Computation_t
-
-
-! ===============================================================================
 ! TYPE: Config_DoRun_t
 ! ===============================================================================
 ! Which post-processing steps run_all() executes. do_all is a master
@@ -216,15 +176,15 @@ END TYPE Config_Computation_t
 ! ===============================================================================
 TYPE :: Config_DoRun_t
 
-    LOGICAL :: do_all       = .true.    ! [-] Master switch: run every step regardless of the flags below
-    LOGICAL :: do_spectrums = .true.    ! [-] Spectrums at observer points (run_spectrums)
-    LOGICAL :: do_polar     = .true.    ! [-] Polar contour (run_polar)
-    LOGICAL :: do_cylinder  = .true.    ! [-] Cylinder surface (run_cylinder)
-    LOGICAL :: do_decay     = .true.    ! [-] Distance decay along wind direction (run_decay)
-    LOGICAL :: do_line      = .true.    ! [-] Line between two points (run_line)
-    LOGICAL :: do_sliceXY   = .true.    ! [-] Horizontal slice XY (run_sliceXY)
-    LOGICAL :: do_sliceXZ   = .true.    ! [-] Vertical slice XZ (run_sliceXZ)
-    LOGICAL :: do_sphere    = .true.    ! [-] Spherical radiation, free-field (run_sphere)
+    LOGICAL :: do_all           ! [-] Master switch: run every step regardless of the flags below
+    LOGICAL :: do_spectrums     ! [-] Spectrums at observer points (run_spectrums)
+    LOGICAL :: do_polar         ! [-] Polar contour (run_polar)
+    LOGICAL :: do_cylinder      ! [-] Cylinder surface (run_cylinder)
+    LOGICAL :: do_decay         ! [-] Distance decay along wind direction (run_decay)
+    LOGICAL :: do_line          ! [-] Line between two points (run_line)
+    LOGICAL :: do_sliceXY       ! [-] Horizontal slice XY (run_sliceXY)
+    LOGICAL :: do_sliceXZ       ! [-] Vertical slice XZ (run_sliceXZ)
+    LOGICAL :: do_sphere        ! [-] Spherical radiation, free-field (run_sphere)
 
 END TYPE Config_DoRun_t
 
@@ -251,10 +211,10 @@ END TYPE Config_Spectrums_t
 ! ===============================================================================
 TYPE :: Config_Polar_t
 
-    REAL(WP)     :: r_polar         = DEFAULT_R     ! [m] Circle radius
-    REAL(WP)     :: z_polar         = DEFAULT_R     ! [m] Circle depth
-    INTEGER(I32) :: n_polar         = DEFAULT_I     ! [-] Number of azimuthal observer points
-    REAL(WP)     :: center_polar(2) = DEFAULT_R     ! [m] Circle centre (x, y)
+    REAL(WP)     :: r_polar             ! [m] Circle radius
+    REAL(WP)     :: z_polar             ! [m] Circle depth
+    INTEGER(I32) :: n_polar             ! [-] Number of azimuthal observer points
+    REAL(WP)     :: center_polar(2)     ! [m] Circle centre (x, y)
 
 END TYPE Config_Polar_t
 
@@ -267,10 +227,10 @@ END TYPE Config_Polar_t
 ! ===============================================================================
 TYPE :: Config_Cylinder_t
 
-    REAL(WP)     :: r_cyl         = DEFAULT_R   ! [m] Cylinder radius
-    INTEGER(I32) :: n_cyl         = DEFAULT_I   ! [-] Number of azimuthal observer points
-    INTEGER(I32) :: nz_cyl        = DEFAULT_I   ! [-] Number of vertical observer levels
-    REAL(WP)     :: center_cyl(2) = DEFAULT_R   ! [m] Cylinder axis centre (x, y)
+    REAL(WP)     :: r_cyl               ! [m] Cylinder radius
+    INTEGER(I32) :: n_cyl               ! [-] Number of azimuthal observer points
+    INTEGER(I32) :: nz_cyl              ! [-] Number of vertical observer levels
+    REAL(WP)     :: center_cyl(2)       ! [m] Cylinder axis centre (x, y)
 
 END TYPE Config_Cylinder_t
 
@@ -283,10 +243,10 @@ END TYPE Config_Cylinder_t
 ! ===============================================================================
 TYPE :: Config_Decay_t
 
-    REAL(WP)     :: distance_decay(2) = DEFAULT_R   ! [m] Start and end distance from the turbine
-    INTEGER(I32) :: n_decay           = DEFAULT_I   ! [-] Number of observer points along the line
-    REAL(WP)     :: z_decay           = DEFAULT_R   ! [m] Line depth
-    LOGICAL      :: logspace_decay    = .true.      ! [-] Whether to space points logarithmically instead of linearly
+    REAL(WP)     :: distance_decay(2)   ! [m] Start and end distance from the turbine
+    INTEGER(I32) :: n_decay             ! [-] Number of observer points along the line
+    REAL(WP)     :: z_decay             ! [m] Line depth
+    LOGICAL      :: logspace_decay      ! [-] Whether to space points logarithmically instead of linearly
 
 END TYPE Config_Decay_t
 
@@ -299,10 +259,10 @@ END TYPE Config_Decay_t
 ! ===============================================================================
 TYPE :: Config_Line_t
 
-    REAL(WP)     :: p1_line(3)    = DEFAULT_R   ! [m] Line start point (x, y, z)
-    REAL(WP)     :: p2_line(3)    = DEFAULT_R   ! [m] Line end point (x, y, z)
-    INTEGER(I32) :: n_line        = DEFAULT_I   ! [-] Number of observer points along the line
-    LOGICAL      :: logspace_line = .false.     ! [-] Whether to space points logarithmically instead of linearly
+    REAL(WP)     :: p1_line(3)          ! [m] Line start point (x, y, z)
+    REAL(WP)     :: p2_line(3)          ! [m] Line end point (x, y, z)
+    INTEGER(I32) :: n_line              ! [-] Number of observer points along the line
+    LOGICAL      :: logspace_line       ! [-] Whether to space points logarithmically instead of linearly
 
 END TYPE Config_Line_t
 
@@ -315,12 +275,12 @@ END TYPE Config_Line_t
 ! ===============================================================================
 TYPE :: Config_SliceXY_t
 
-    REAL(WP)     :: z_xy         = DEFAULT_R    ! [m] Slice depth
-    INTEGER(I32) :: nx_xy        = DEFAULT_I    ! [-] Number of observer points along x
-    INTEGER(I32) :: ny_xy        = DEFAULT_I    ! [-] Number of observer points along y
-    REAL(WP)     :: xlim_xy(2)   = DEFAULT_R    ! [m] Slice extent along x (min, max)
-    REAL(WP)     :: ylim_xy(2)   = DEFAULT_R    ! [m] Slice extent along y (min, max)
-    REAL(WP)     :: center_xy(2) = DEFAULT_R    ! [m] Slice centre (x, y)
+    REAL(WP)     :: z_xy                ! [m] Slice depth
+    INTEGER(I32) :: nx_xy               ! [-] Number of observer points along x
+    INTEGER(I32) :: ny_xy               ! [-] Number of observer points along y
+    REAL(WP)     :: xlim_xy(2)          ! [m] Slice extent along x (min, max)
+    REAL(WP)     :: ylim_xy(2)          ! [m] Slice extent along y (min, max)
+    REAL(WP)     :: center_xy(2)        ! [m] Slice centre (x, y)
 
 END TYPE Config_SliceXY_t
 
@@ -333,11 +293,11 @@ END TYPE Config_SliceXY_t
 ! ===============================================================================
 TYPE :: Config_SliceXZ_t
 
-    REAL(WP)     :: y_xz       = DEFAULT_R      ! [m] Slice y-position
-    INTEGER(I32) :: nx_xz      = DEFAULT_I      ! [-] Number of observer points along x
-    INTEGER(I32) :: nz_xz      = DEFAULT_I      ! [-] Number of observer points along z
-    REAL(WP)     :: xlim_xz(2) = DEFAULT_R      ! [m] Slice extent along x (min, max)
-    REAL(WP)     :: zlim_xz(2) = DEFAULT_R      ! [m] Slice extent along z (min, max)
+    REAL(WP)     :: y_xz                ! [m] Slice y-position
+    INTEGER(I32) :: nx_xz               ! [-] Number of observer points along x
+    INTEGER(I32) :: nz_xz               ! [-] Number of observer points along z
+    REAL(WP)     :: xlim_xz(2)          ! [m] Slice extent along x (min, max)
+    REAL(WP)     :: zlim_xz(2)          ! [m] Slice extent along z (min, max)
 
 END TYPE Config_SliceXZ_t
 
@@ -351,12 +311,51 @@ END TYPE Config_SliceXZ_t
 ! ===============================================================================
 TYPE :: Config_Sphere_t
 
-    REAL(WP)     :: r_sphere         = DEFAULT_R    ! [m] Sphere radius
-    INTEGER(I32) :: n_theta_sphere   = DEFAULT_I    ! [-] Number of azimuthal observer points
-    INTEGER(I32) :: nz_sphere        = DEFAULT_I    ! [-] Number of vertical observer levels
-    REAL(WP)     :: center_sphere(3) = DEFAULT_R    ! [m] Sphere centre (x, y, z)
+    REAL(WP)     :: r_sphere            ! [m] Sphere radius
+    INTEGER(I32) :: n_theta_sphere      ! [-] Number of azimuthal observer points
+    INTEGER(I32) :: nz_sphere           ! [-] Number of vertical observer levels
+    REAL(WP)     :: center_sphere(3)    ! [m] Sphere centre (x, y, z)
 
 END TYPE Config_Sphere_t
 
+
+! ===============================================================================
+! TYPE: Config_Computation_t
+! ===============================================================================
+! Aggregates the per-step configuration for every run_* post-processing
+! routine that run_all() can execute, read from ComputationSetupTurbine.nml.
+! ===============================================================================
+TYPE :: Config_Computation_t
+
+    TYPE(Config_DoRun_t)     :: do_run              ! [-] Which steps to run
+    TYPE(Config_Spectrums_t) :: params_spectrums    ! [-] run_spectrums() configuration
+    TYPE(Config_Polar_t)     :: params_polar        ! [-] run_polar() configuration
+    TYPE(Config_Cylinder_t)  :: params_cylinder     ! [-] run_cylinder() configuration
+    TYPE(Config_Decay_t)     :: params_decay        ! [-] run_decay() configuration
+    TYPE(Config_Line_t)      :: params_line         ! [-] run_line() configuration
+    TYPE(Config_SliceXY_t)   :: params_sliceXY      ! [-] run_sliceXY() configuration
+    TYPE(Config_SliceXZ_t)   :: params_sliceXZ      ! [-] run_sliceXZ() configuration
+    TYPE(Config_Sphere_t)    :: params_sphere       ! [-] run_sphere() configuration
+
+END TYPE Config_Computation_t
+
+
+! ===============================================================================
+! TYPE: Config_t
+! ===============================================================================
+! Top-level configuration object built by Args_parser from the input
+! namelist files. It aggregates the turbine, environment and solver
+! configurations together with the polymorphic, method-specific
+! configuration (e.g. Config_ImageMethod_t) selected at run time.
+! ===============================================================================
+TYPE :: Config_t
+
+    TYPE(Config_WindTurbine_t)          :: turbine      ! [-] Wind turbine configuration
+    TYPE(Config_Environment_t)          :: env          ! [-] Environment/fluid configuration
+    TYPE(Config_Solver_t)               :: solver       ! [-] Acoustic solver configuration
+    TYPE(Config_Computation_t)          :: run_inputs   ! [-] Per-run_* post-processing step configuration
+    CLASS(Config_Method_t), ALLOCATABLE :: method       ! [-] Polymorphic, solver-method-specific configuration
+
+END TYPE Config_t
 
 END MODULE TYPEs

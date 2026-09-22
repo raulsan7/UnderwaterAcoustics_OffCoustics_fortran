@@ -37,14 +37,15 @@ PUBLIC :: AcousticSolver_t, save_variable
 ! ===============================================================================
 TYPE, ABSTRACT :: AcousticSolver_t
 
-    TYPE(AcousticSource_t)     :: sources                        ! [-] Acoustic point-dipole sources (turbine nodes)
-    TYPE(Config_Environment_t) :: env                            ! [-] Environment configuration (depth, sound speed, ...)
-    TYPE(Config_WindTurbine_t) :: turbine_data                   ! [-] Generic turbine configuration (axis/baricenter, wind, depth, ...)
-    INTEGER(I32)               :: block_size                     ! [-] Number of observers processed simultaneously
-    LOGICAL                    :: debug                          ! [-] Whether to print extra debug info (e.g. pressure norms)
-    LOGICAL                    :: in_cluster                     ! [-] Whether the solver runs on a cluster (affects I/O behavior)
-    CHARACTER(len=50)          :: solver_name = 'None'           ! [-] Solver name
-    CHARACTER(len=512)         :: save_path   = 'None'           ! [-] Path to save acoustics
+    TYPE(AcousticSource_t)     :: sources                       ! [-] Acoustic point-dipole sources (turbine nodes)
+    TYPE(Config_Environment_t) :: env                           ! [-] Environment configuration (depth, sound speed, ...)
+    TYPE(Config_WindTurbine_t) :: turbine_data                  ! [-] Generic turbine configuration (axis/baricenter, wind, depth, ...)
+    TYPE(Config_Computation_t) :: run_inputs                    ! [-] Per-run_* post-processing step configuration
+    INTEGER(I32)               :: block_size                    ! [-] Number of observers processed simultaneously
+    LOGICAL                    :: debug                         ! [-] Whether to print extra debug info (e.g. pressure norms)
+    LOGICAL                    :: in_cluster                    ! [-] Whether the solver runs on a cluster (affects I/O behavior)
+    CHARACTER(len=50)          :: solver_name = 'None'          ! [-] Solver name
+    CHARACTER(len=512)         :: save_path   = 'None'          ! [-] Path to save acoustics
 
 
     CONTAINS
@@ -79,9 +80,9 @@ END TYPE AcousticSolver_t
 ABSTRACT INTERFACE
     SUBROUTINE init_i(self, sources, config)
         IMPORT :: AcousticSolver_t, AcousticSource_t, Config_t
-        CLASS(AcousticSolver_t)  , INTENT(INOUT)           :: self
-        TYPE(AcousticSource_t), INTENT(INOUT), ALLOCATABLE :: sources
-        TYPE(Config_t)        , INTENT(IN)                 :: config
+        CLASS(AcousticSolver_t), INTENT(INOUT)              :: self
+        TYPE(AcousticSource_t) , INTENT(INOUT), ALLOCATABLE :: sources
+        TYPE(Config_t)         , INTENT(INOUT), ALLOCATABLE :: config
     END SUBROUTINE init_i
 END INTERFACE
 
