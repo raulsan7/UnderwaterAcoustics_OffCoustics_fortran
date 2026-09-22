@@ -1,8 +1,25 @@
+! ===============================================================================
+! MODULE: Args_parser
+! ===============================================================================
+! Reads the four .nml configuration files (Turbine.nml, Solver.nml,
+! Environment.nml, ImagesMethod.nml) that describe a simulation case and
+! packs their contents into the global Config_t structure defined in
+! Types.f90. read_input_files is the single entry point: it locates the
+! config files inside the given directory and dispatches to one reader
+! subroutine per namelist, plus one extra reader chosen according to the
+! selected acoustic solver method.
+! -------------------------------------------------------------------------------
+! Author  : Raul Sanz Ramirez
+! Contact : raul.sanz.ramirez@upm.es
+! Affil.  : ETSIAE, Universidad Politecnica de Madrid
+! Project : ERC project off-coustics
+! Date    : 2026-09-22
+! ===============================================================================
 MODULE Args_parser
 
     USE Kinds
     USE Types
-    
+
     IMPLICIT NONE
 
     PRIVATE
@@ -10,6 +27,13 @@ MODULE Args_parser
 
 CONTAINS
 
+! -------------------------------------------------------------------------
+! Subroutine: read_input_files
+! Top-level entry point of the input-parsing stage. Builds the paths of
+! the four .nml files from files_path, reads the turbine, solver and
+! environment namelists, then dispatches to the method-specific config
+! reader based on the selected acoustic solver (config % solver % method).
+! -------------------------------------------------------------------------
 SUBROUTINE read_input_files(files_path, config)
     CHARACTER(len=*), INTENT(IN)  :: files_path
     TYPE(Config_t)  , INTENT(OUT) :: config
@@ -29,6 +53,8 @@ SUBROUTINE read_input_files(files_path, config)
     CALL read_solver_config      (solver_config_path      , config)
     CALL read_environment_config (environment_config_path , config)
 
+    ! Dispatch to the method-specific config reader based on which
+    ! acoustic solver was selected in Solver.nml
     SELECT CASE(trim(config % solver % method))
     CASE('ImageMethod')
         ALLOCATE(Config_ImageMethod_t :: config % method)
@@ -45,6 +71,12 @@ SUBROUTINE read_input_files(files_path, config)
 END SUBROUTINE read_input_files
 
 
+! -------------------------------------------------------------------------
+! Subroutine: read_turbine_config
+! Reads the "turbine_config" namelist from Turbine.nml (rootname, OpenFAST
+! output paths, wind/depth conditions, node counts, time window, frequency
+! filtering, etc.) and packs the values into config % turbine.
+! -------------------------------------------------------------------------
 SUBROUTINE read_turbine_config(path, config)
     CHARACTER(len=*), INTENT(IN)  :: path
     TYPE(Config_t)  , INTENT(INOUT) :: config
@@ -169,6 +201,12 @@ SUBROUTINE read_turbine_config(path, config)
 END SUBROUTINE read_turbine_config
 
 
+! -------------------------------------------------------------------------
+! Subroutine: read_solver_config
+! Reads the "solver_config" namelist from Solver.nml (which acoustic
+! solver method to use, output save path, block size, cluster/debug
+! flags) and packs the values into config % solver.
+! -------------------------------------------------------------------------
 SUBROUTINE read_solver_config(path, config)
     CHARACTER(len=*), INTENT(IN)  :: path
     TYPE(Config_t)  , INTENT(INOUT) :: config
@@ -236,6 +274,12 @@ SUBROUTINE read_solver_config(path, config)
 END SUBROUTINE read_solver_config
 
 
+! -------------------------------------------------------------------------
+! Subroutine: read_environment_config
+! Reads the "environment_config" namelist from Environment.nml (base
+! water depth, speed of sound, density and reference pressure) and packs
+! the values into config % env.
+! -------------------------------------------------------------------------
 SUBROUTINE read_environment_config(path, config)
     CHARACTER(len=*), INTENT(IN)  :: path
     TYPE(Config_t)  , INTENT(INOUT) :: config
@@ -299,6 +343,14 @@ SUBROUTINE read_environment_config(path, config)
 END SUBROUTINE read_environment_config
 
 
+! -------------------------------------------------------------------------
+! Subroutine: read_ImageMethod_config
+! Reads the "ImagesMethod_config" namelist from ImagesMethod.nml (number
+! of images, surface/bottom boundary condition types and heights,
+! attenuation coefficients, epsilon) and packs the values into the
+! Config_ImageMethod_t instance held by config % method. Only called when
+! the Image Method solver was selected in Solver.nml.
+! -------------------------------------------------------------------------
 SUBROUTINE read_ImageMethod_config(path, config)
     CHARACTER(len=*), INTENT(IN)    :: path
     TYPE(Config_t)  , INTENT(INOUT) :: config

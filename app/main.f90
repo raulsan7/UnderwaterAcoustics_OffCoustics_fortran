@@ -1,5 +1,20 @@
+! ===============================================================================
+! PROGRAM: main
+! ===============================================================================
+! Entry point of the off_coustics_fortran application. Orchestrates the full
+! simulation pipeline: load the .nml configuration, instantiate the requested
+! wind turbine type and solve its structural dynamics, translate the physical
+! forces into acoustic point-dipole sources, then instantiate and run the
+! requested acoustic propagation solver over all post-processing outputs.
+! -------------------------------------------------------------------------------
+! Author  : Raul Sanz Ramirez
+! Contact : raul.sanz.ramirez@upm.es
+! Affil.  : ETSIAE, Universidad Politecnica de Madrid
+! Project : ERC project off-coustics
+! Date    : 2026-09-22
+! ===============================================================================
 PROGRAM main
-    
+
 USE Kinds
 USE Types
 USE omp_lib

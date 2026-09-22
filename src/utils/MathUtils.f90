@@ -1,3 +1,19 @@
+! ===============================================================================
+! MODULE: MathUtils
+! ===============================================================================
+! Grab-bag of numerical and signal-processing helpers shared across the code-
+! base: elapsed wall-clock time formatting, duplicate structural-node removal,
+! FFTW-based real FFT of time series, synthetic drivetrain excitation signal
+! generation, frequency-mask filtering, a C qsort wrapper for sorting reals,
+! and Bessel/Hankel-function acoustic scattering helpers (K0/K1 modified
+! Bessel approximations) used to build the impedance/shielding correction.
+! -------------------------------------------------------------------------------
+! Author  : Raul Sanz Ramirez
+! Contact : raul.sanz.ramirez@upm.es
+! Affil.  : ETSIAE, Universidad Politecnica de Madrid
+! Project : ERC project off-coustics
+! Date    : 2026-09-22
+! ===============================================================================
 MODULE MathUtils
 
 USE FFTW3
@@ -8,6 +24,11 @@ USE, INTRINSIC :: iso_c_binding
 IMPLICIT NONE
 PUBLIC
 
+! -------------------------------------------------------------------------
+! C interface: qsort
+! Binds to the C standard library's qsort(3), used by sort_real_c to sort
+! a REAL(WP) array in ascending order via the compare_real callback.
+! -------------------------------------------------------------------------
 INTERFACE
     SUBROUTINE qsort(base, nmemb, size, compar) BIND(c, name='qsort')
         IMPORT :: C_PTR, C_SIZE_T, C_FUNPTR
@@ -22,8 +43,13 @@ END INTERFACE
 CONTAINS
 
 
+! -------------------------------------------------------------------------
+! Subroutine: format_elapsed
+! Converts a wall-clock elapsed time (in seconds, measured via OpenMP's
+! timer) into a human-readable value/unit pair, automatically switching
+! among seconds, minutes, hours and days depending on magnitude.
+! -------------------------------------------------------------------------
 SUBROUTINE format_elapsed(start_time, elapsed_display, tag)
-    ! Returns real physical elapsed time (wall-clock) since start_time
     REAL(WP), INTENT(IN) :: start_time
     REAL(WP), INTENT(OUT) :: elapsed_display
     CHARACTER(len=*), INTENT(OUT) :: tag
@@ -49,24 +75,24 @@ SUBROUTINE format_elapsed(start_time, elapsed_display, tag)
 END SUBROUTINE format_elapsed
 
 
+! -------------------------------------------------------------------------
+! Function: remove_duplicate_nodes
+! Removes duplicate nodes shared between consecutive structural members.
+! Given an array of nodes of shape (Nm, Nn, 3), where Nm is the number of
+! members and Nn the number of nodes per member, identifies nodes that are
+! duplicated at the junction between member i and member i+1 (the last
+! node of member i is assumed to coincide with the first node of member
+! i+1) and marks one of the two for removal, based on delete_last.
+!
+! Arguments:
+!   x_all      : REAL(WP), dimension(:,:,:)  (Nm, Nn, 3)
+!   delete_last: LOGICAL  If .true., the first node of the following member
+!                          is removed; if .false., the last node of the
+!                          previous member is removed.
+! Returns:
+!   mask       : LOGICAL, dimension(Nm*Nn)  Flat mask with .true. for nodes to keep
+! -------------------------------------------------------------------------
 FUNCTION remove_duplicate_nodes(x_all, delete_last) RESULT(mask)
-    !> Removes duplicate nodes shared between consecutive structural members.
-    !>
-    !> Given an array of nodes of shape (Nm, Nn, 3), where Nm is the number of
-    !> members and Nn the number of nodes per member, this function identifies
-    !> nodes that are duplicated at the junction between member i and member i+1.
-    !> The last node of member i is assumed to coincide with the first node of
-    !> member i+1. One of them is marked for removal based on `delete_last`.
-    !>
-    !> Arguments:
-    !>   x_all      : REAL(WP), dimension(:,:,:)  (Nm, Nn, 3)
-    !>   delete_last: LOGICAL  If .true., the first node of the following member
-    !>                          is removed; if .false., the last node of the
-    !>                          previous member is removed.
-    !>
-    !> Returns:
-    !>   mask       : LOGICAL, dimension(Nm*Nn)  Flat mask with .true. for nodes to keep
-    !>     
     REAL(WP), INTENT(IN) :: x_all(:,:,:)   ! (Nm, Nn, 3)
     LOGICAL,  INTENT(IN) :: delete_last
     LOGICAL, ALLOCATABLE :: mask(:)
@@ -108,9 +134,12 @@ FUNCTION remove_duplicate_nodes(x_all, delete_last) RESULT(mask)
 END FUNCTION remove_duplicate_nodes
 
 
+! -------------------------------------------------------------------------
+! Function: divide_span
+! Computes representative span intervals (dx) for an ordered spatial vector.
+! Fully vectorized to eliminate conditionals and temporary arrays.
+! -------------------------------------------------------------------------
 FUNCTION divide_span(x) RESULT(dx)
-    !> Computes representative span intervals (dx) for an ordered spatial vector.
-    !> Fully vectorized to eliminate conditionals and temporary arrays.
     REAL(WP), INTENT(IN) :: x(:)
     REAL(WP), ALLOCATABLE :: dx(:)
 
@@ -156,11 +185,14 @@ FUNCTION divide_span(x) RESULT(dx)
 END FUNCTION divide_span
 
 
+! -------------------------------------------------------------------------
+! Subroutine: compute_rfft
+! Computes the Real Fast Fourier Transform (RFFT) of a 3D time-series array
+! via FFTW. Optimized for HPC: eliminates all intermediate arrays, fuses
+! the mean-removal and windowing passes, and performs direct-to-final-size
+! allocation to avoid memory thrashing.
+! -------------------------------------------------------------------------
 SUBROUTINE compute_rfft(array, nt, dt, skipf, remove_zero, array_out, freqs)
-    !> Computes the Real Fast Fourier Transform (RFFT) of a 3D time-series array.
-    !> Optimized for HPC: Eliminates all intermediate arrays, fuses mean/windowing, 
-    !> and performs direct-to-final-size allocation to avoid memory thrashing.
-
     REAL(WP)                , INTENT(IN)           :: array(:,:,:)
     INTEGER(I32)            , INTENT(IN)           :: nt
     REAL(WP)                , INTENT(IN)           :: dt
@@ -292,12 +324,15 @@ SUBROUTINE compute_rfft(array, nt, dt, skipf, remove_zero, array_out, freqs)
 END SUBROUTINE compute_rfft
 
 
+! -------------------------------------------------------------------------
+! Subroutine: generate_timeseries_banded_sines
+! Reconstructs a synthetic time-series signal from spectral peak
+! distributions. Optimized for HPC: aggregates all frequency components
+! first, then performs a single OpenMP+SIMD pass over the time domain to
+! maximize cache locality.
+! -------------------------------------------------------------------------
 SUBROUTINE generate_timeseries_banded_sines(peaks, keys, t , zeta, nfreq, seed, &
                                             used_freqs, fcut, a, freqs_out)
-    !> Reconstructs a time-series signal from spectral peak distributions.
-    !> Optimized for HPC: Aggregates all frequencies first, then uses a
-    !> single OpenMP+SIMD pass over the time domain to maximize cache locality.
-    
     REAL(WP)         , INTENT(IN) :: peaks(:,:)
     CHARACTER(len=20), INTENT(IN) :: keys(:)
     REAL(WP)         , INTENT(IN) :: t(:)
@@ -444,6 +479,14 @@ SUBROUTINE generate_timeseries_banded_sines(peaks, keys, t , zeta, nfreq, seed, 
 END SUBROUTINE generate_timeseries_banded_sines
 
 
+! -------------------------------------------------------------------------
+! Function: filter_non_useful_freqs
+! Builds a logical mask selecting which frequencies to keep. Frequencies
+! outside the [freqs_over, freqs_under] zone are always kept; frequencies
+! inside that zone are kept only if they lie within one frequency bin (df)
+! of one of the maintain_freqs values, so that physically relevant peaks
+! are preserved while the rest of the band is discarded.
+! -------------------------------------------------------------------------
 FUNCTION filter_non_useful_freqs(freqs, maintain_freqs, freqs_over, freqs_under) RESULT(mask)
     REAL(WP), INTENT(IN) :: freqs(:)
     REAL(WP), INTENT(IN) :: maintain_freqs(:)
@@ -490,9 +533,11 @@ FUNCTION filter_non_useful_freqs(freqs, maintain_freqs, freqs_over, freqs_under)
 END FUNCTION filter_non_useful_freqs
 
 
+! -------------------------------------------------------------------------
+! Function: compare_real
+! Comparison callback for qsort: ascending order for real(c_double) values.
+! -------------------------------------------------------------------------
 FUNCTION compare_real(a,b) BIND(c) RESULT(res)
-    !> Comparison function for qsort: ascending order for real(c_double)
-
     TYPE(C_PTR), VALUE :: a, b
     INTEGER(C_INT) :: res
     REAL(C_DOUBLE), POINTER :: fa, fb
@@ -511,9 +556,12 @@ FUNCTION compare_real(a,b) BIND(c) RESULT(res)
 END FUNCTION compare_real
 
 
+! -------------------------------------------------------------------------
+! Subroutine: sort_real_c
+! Sorts a REAL(WP) array in ascending order using the C standard library's
+! qsort, via the compare_real comparator callback.
+! -------------------------------------------------------------------------
 SUBROUTINE sort_real_c(arr)
-    !> Sorts a real(wp) array using C's qsort (ascending).
-
     REAL(WP), INTENT(INOUT), TARGET :: arr(:)
     REAL(WP), POINTER :: parr(:)
     INTEGER(C_SIZE_T) :: nmemb, size_elem
@@ -528,9 +576,14 @@ SUBROUTINE sort_real_c(arr)
 END SUBROUTINE sort_real_c
 
 
+! -------------------------------------------------------------------------
+! Function: alpha_hankel
+! Analytical scattering-correction coefficient alpha, based on cylindrical
+! Hankel functions (orders 0 and 2, combined into the derivative of the
+! order-1 function). Used to correct the radiated acoustic force for the
+! finite diameter of a cylindrical structural member.
+! -------------------------------------------------------------------------
 FUNCTION alpha_hankel(k, D) RESULT(alpha)
-    !> Analytical scattering correction coefficient $\alpha$ based on Hankel functions.
-
     USE Kinds, ONLY: I1
 
     REAL(WP), INTENT(in) :: k(:)            ! [1/m] Wavenumber array shape(nfreqs)
@@ -555,11 +608,14 @@ FUNCTION alpha_hankel(k, D) RESULT(alpha)
 END FUNCTION alpha_hankel
 
 
+! -------------------------------------------------------------------------
+! Subroutine: compute_hankel_complex
+! Efficiently computes the Hankel functions of the first kind (H0 and H1)
+! for a wavenumber that is either purely real (Propagative Mode, using the
+! intrinsic Bessel functions) or purely imaginary (Evanescent Mode, using
+! the bessel_k0/bessel_k1 polynomial approximations below).
+! -------------------------------------------------------------------------
 SUBROUTINE compute_hankel_complex(k_rm, r, H0, H1)
-    !> Computes ultra-efficiently the Hankel functions of the first kind (H0 and H1)
-    !> for a wavenumber that is Real (Propagative Mode) or Pure Imaginary (Evanescent Mode)
-    !> using standard intrinsic functions and polynomial approximations for K0 and K1.
-
     COMPLEX(WP), INTENT(IN)  :: k_rm
     REAL(WP), INTENT(IN)     :: r
     COMPLEX(WP), INTENT(OUT) :: H0, H1
@@ -582,9 +638,14 @@ SUBROUTINE compute_hankel_complex(k_rm, r, H0, H1)
 END SUBROUTINE compute_hankel_complex
 
 
+! -------------------------------------------------------------------------
+! Function: bessel_k0
+! Abramowitz and Stegun polynomial approximation (9.8.5 - 9.8.6) of the
+! modified Bessel function of the second kind, order 0: K0(x) for x > 0.
+! Used to build the evanescent-mode Hankel function for the cylindrical
+! scattering correction.
+! -------------------------------------------------------------------------
 PURE FUNCTION bessel_k0(x) RESULT(k0)
-    !> Modified Bessel function of the second kind, order 0: K0(x) for x > 0
-    !> Abramowitz and Stegun approximation (9.8.5 - 9.8.6)
     REAL(WP), INTENT(IN) :: x
     REAL(WP) :: k0, y, t, i0
 
@@ -612,9 +673,14 @@ PURE FUNCTION bessel_k0(x) RESULT(k0)
 END FUNCTION bessel_k0
 
 
+! -------------------------------------------------------------------------
+! Function: bessel_k1
+! Abramowitz and Stegun polynomial approximation (9.8.9 - 9.8.10) of the
+! modified Bessel function of the second kind, order 1: K1(x) for x > 0.
+! Used to build the evanescent-mode Hankel function for the cylindrical
+! scattering correction.
+! -------------------------------------------------------------------------
 PURE FUNCTION bessel_k1(x) RESULT(k1)
-    !> Modified Bessel function of the second kind, order 1: K1(x) for x > 0
-    !> Abramowitz and Stegun approximation (9.8.9 - 9.8.10)
     REAL(WP), INTENT(IN) :: x
     REAL(WP) :: k1, y, t, i1
 

@@ -1,3 +1,19 @@
+! ===============================================================================
+! MODULE: DTU10MWMonopile
+! ===============================================================================
+! This module defines DTU10MWMonopile_t, a concrete turbine type extending the
+! abstract WindTurbine_t (src/core/WindTurbine.f90) for the DTU 10 MW monopile-
+! founded bottom-fixed platform. It implements the deferred procedures: force
+! computation from OpenFAST accelerations, distributed dry/added mass along the
+! monopile, drivetrain-based frequency filtering, saving/writing of platform-
+! specific parameters, and the cylindrical-scattering impedance correction.
+! -------------------------------------------------------------------------------
+! Author  : Raul Sanz Ramirez
+! Contact : raul.sanz.ramirez@upm.es
+! Affil.  : ETSIAE, Universidad Politecnica de Madrid
+! Project : ERC project off-coustics
+! Date    : 2026-09-22
+! ===============================================================================
 MODULE DTU10MWMonopile
 
 USE Kinds
@@ -11,9 +27,15 @@ PUBLIC :: DTU10MWMonopile_t
 
 
 
-! ------------------------------
-! Derived type definition
-! ------------------------------
+! ===============================================================================
+! TYPE: DTU10MWMonopile_t
+! ===============================================================================
+! Concrete turbine type extending WindTurbine_t for the DTU 10 MW monopile-
+! founded bottom-fixed offshore wind turbine. Stores the monopile outer
+! diameter, material/water densities and wetted area, and implements every
+! deferred procedure of the abstract parent (force, mass, frequency filtering,
+! parameter I/O and impedance correction).
+! ===============================================================================
 TYPE, EXTENDS(WindTurbine_t) :: DTU10MWMonopile_t
 
     ! Physical and structural parameters specific to the DTU 10 MW Monopile
@@ -41,6 +63,12 @@ END TYPE DTU10MWMonopile_t
 CONTAINS
 
 
+! -------------------------------------------------------------------------
+! Subroutine: init_DTU10MWMonopile
+! Sets the monopile-specific (hardcoded) rpm-curve path, marks the turbine
+! as monopile-founded (both on self and on config), and delegates to the
+! base WindTurbine_t % init for the remaining shared initialization steps.
+! -------------------------------------------------------------------------
 SUBROUTINE init_DTU10MWMonopile(self, config)
 
     CLASS(DTU10MWMonopile_t)  , INTENT(INOUT) :: self
@@ -50,7 +78,7 @@ SUBROUTINE init_DTU10MWMonopile(self, config)
     LOGICAL :: exists = .false.
 
 
-    ! Define path to rpm curve HARDCODED
+    ! Path to the rpm curve file (hardcoded)
     self % path_rpm = "../wind_speed_curves_DTU_10MW/rpm_ws.csv"
 
     ! Verify that the rpm curve file exists
@@ -66,6 +94,14 @@ SUBROUTINE init_DTU10MWMonopile(self, config)
 END SUBROUTINE init_DTU10MWMonopile
 
 
+! -------------------------------------------------------------------------
+! Subroutine: compute_force_DTU10MWMonopile
+! Computes the nodal structural forces from OpenFAST accelerations: removes
+! duplicate/dry (above-water) nodes, computes the real FFT of the wet-node
+! accelerations, and multiplies by the effective (dry + added) mass to get
+! F = -m*a in the frequency domain. Optionally keeps only the frequencies
+! relevant to the drivetrain excitation.
+! -------------------------------------------------------------------------
 SUBROUTINE compute_force_DTU10MWMonopile(self, config, verbose)
     USE MathUtils, ONLY: remove_duplicate_nodes, compute_rfft
     
@@ -158,7 +194,8 @@ SUBROUTINE compute_force_DTU10MWMonopile(self, config, verbose)
     end do
     !$omp end parallel do
 
-    ! Manual filtering without 'RACK' to avoid memory reallocations
+    ! Manual filtering using an explicit do-loop instead of the PACK intrinsic
+    ! (avoids the extra temporary array reallocations PACK would need)
     if (config % filter_freqs) then
         mask_freqs_to_use = self % filter_frequencies(config % freqs_over)
         Nfreqs_new = count(mask_freqs_to_use)
@@ -199,6 +236,14 @@ SUBROUTINE compute_force_DTU10MWMonopile(self, config, verbose)
 END SUBROUTINE compute_force_DTU10MWMonopile
 
 
+! -------------------------------------------------------------------------
+! Subroutine: compute_mass_DTU10MWMonopile
+! Computes the distributed dry (structural) and added (hydrodynamic) mass
+! along the monopile nodes. The outer diameter is constant with depth, but
+! the inner diameter varies across three depth bands to represent the real
+! wall-thickness profile: 8.70 m between +4 m and +10 m, 8.69 m between
+! -10 m and +4 m, and 8.80 m below -10 m.
+! -------------------------------------------------------------------------
 SUBROUTINE compute_mass_DTU10MWMonopile(self, mass, added_mass)
     USE MathUtils, ONLY: divide_span
 
@@ -262,6 +307,13 @@ SUBROUTINE compute_mass_DTU10MWMonopile(self, mass, added_mass)
 END SUBROUTINE compute_mass_DTU10MWMonopile
 
 
+! -------------------------------------------------------------------------
+! Function: filter_frequencies_DTU10MWMonopile
+! Builds a logical mask selecting only the frequencies close to the DTU
+! 10 MW drivetrain excitation peaks (shaft/gear-mesh harmonics) at the
+! current wind speed's rpm, so the force spectrum can be restricted to the
+! physically relevant frequencies.
+! -------------------------------------------------------------------------
 FUNCTION filter_frequencies_DTU10MWMonopile(self, freqs_over) RESULT(mask)
     USE IOUtils, ONLY: read_curve
     USE MathUtils, ONLY: generate_timeseries_banded_sines, filter_non_useful_freqs
@@ -300,6 +352,12 @@ FUNCTION filter_frequencies_DTU10MWMonopile(self, freqs_over) RESULT(mask)
 END FUNCTION filter_frequencies_DTU10MWMonopile
 
 
+! -------------------------------------------------------------------------
+! Subroutine: save_specific_params_DTU10MWMonopile
+! Saves the monopile-specific geometric/material parameters (outer diameter,
+! material density, wetted area) into the solver's HDF5 output file, tagging
+! variable names with an optional instance suffix.
+! -------------------------------------------------------------------------
 SUBROUTINE save_specific_params_DTU10MWMonopile(self, save_path, istr)
     USE IOUtils, ONLY: save_variable
 
@@ -320,6 +378,11 @@ SUBROUTINE save_specific_params_DTU10MWMonopile(self, save_path, istr)
 END SUBROUTINE save_specific_params_DTU10MWMonopile
 
 
+! -------------------------------------------------------------------------
+! Subroutine: write_specific_params_txt_DTU10MWMonopile
+! Writes the monopile-specific parameters (outer diameter, water/material
+! density, wetted area) as human-readable lines into the given text unit.
+! -------------------------------------------------------------------------
 SUBROUTINE write_specific_params_txt_DTU10MWMonopile(self, unit)
     CLASS(DTU10MWMonopile_t), INTENT(IN) :: self
     INTEGER(I32)            , INTENT(IN) :: unit
@@ -332,6 +395,12 @@ SUBROUTINE write_specific_params_txt_DTU10MWMonopile(self, unit)
 END SUBROUTINE write_specific_params_txt_DTU10MWMonopile
 
 
+! -------------------------------------------------------------------------
+! Function: get_impedance_corrected_force_DTU10MWMonopile
+! Applies the cylindrical-scattering (Hankel-function) impedance correction
+! for a monopile to the computed nodal forces, scaling each frequency by
+! the magnitude of the scattering correction factor alpha(k, D).
+! -------------------------------------------------------------------------
 FUNCTION get_impedance_corrected_force_DTU10MWMonopile(self, c) RESULT(corrected_F)
     USE MathUtils, ONLY: alpha_hankel
 

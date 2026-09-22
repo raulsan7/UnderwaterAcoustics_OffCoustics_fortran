@@ -1,3 +1,19 @@
+! ===============================================================================
+! MODULE: AcousticSolver
+! ===============================================================================
+! Defines AcousticSolver_t, the abstract parent type for all acoustic
+! propagation solvers (currently only ImageMethod_t). It holds the shared
+! solver state (sources, environment, generic turbine configuration, save
+! path, block size, debug/cluster flags) and implements the generic
+! observer-geometry post-processing routines (spectrums, polar, cylinder,
+! decay, line, sliceXY, sliceXZ, sphere) shared by every concrete solver.
+! -------------------------------------------------------------------------------
+! Author  : Raul Sanz Ramirez
+! Contact : raul.sanz.ramirez@upm.es
+! Affil.  : ETSIAE, Universidad Politecnica de Madrid
+! Project : ERC project off-coustics
+! Date    : 2026-09-22
+! ===============================================================================
 MODULE AcousticSolver
 
 USE Kinds
@@ -11,17 +27,22 @@ PRIVATE
 PUBLIC :: AcousticSolver_t, save_variable
 
 
-! ------------------
-! Abstract Base Type
-! ------------------
+! ===============================================================================
+! ABSTRACT: AcousticSolver_t
+! ===============================================================================
+! Parent class for all acoustic propagation solvers (currently only
+! ImageMethod_t). Holds the shared sources/environment/turbine state and
+! implements the generic observer-geometry post-processing routines; init,
+! compute_pressure and the parameter/path/summary routines are deferred.
+! ===============================================================================
 TYPE, ABSTRACT :: AcousticSolver_t
 
-    TYPE(AcousticSource_t)     :: sources
-    TYPE(Config_Environment_t) :: env
-    TYPE(Config_WindTurbine_t) :: turbine_data
-    INTEGER(I32)               :: block_size
-    LOGICAL                    :: debug
-    LOGICAL                    :: in_cluster
+    TYPE(AcousticSource_t)     :: sources                        ! [-] Acoustic point-dipole sources (turbine nodes)
+    TYPE(Config_Environment_t) :: env                            ! [-] Environment configuration (depth, sound speed, ...)
+    TYPE(Config_WindTurbine_t) :: turbine_data                   ! [-] Generic turbine configuration (axis/baricenter, wind, depth, ...)
+    INTEGER(I32)               :: block_size                     ! [-] Number of observers processed simultaneously
+    LOGICAL                    :: debug                          ! [-] Whether to print extra debug info (e.g. pressure norms)
+    LOGICAL                    :: in_cluster                     ! [-] Whether the solver runs on a cluster (affects I/O behavior)
     CHARACTER(len=50)          :: solver_name = 'None'           ! [-] Solver name
     CHARACTER(len=512)         :: save_path   = 'None'           ! [-] Path to save acoustics
 
@@ -29,7 +50,6 @@ TYPE, ABSTRACT :: AcousticSolver_t
     CONTAINS
 
     ! --- Public type-bound procedures --- !
-    ! PROCEDURE :: save_variable
     PROCEDURE :: check_observers_distances      ! Helper for run subroutines
     PROCEDURE :: run_spectrums                  ! Subroutines to compute acoustic pressure
     PROCEDURE :: run_polar
@@ -52,9 +72,9 @@ TYPE, ABSTRACT :: AcousticSolver_t
 END TYPE AcousticSolver_t
 
 
-! --------------------------------------------------
-! Abstract interfaces for deferred(abstract) methods
-! --------------------------------------------------
+! =========================================================================
+! Abstract Interfaces for Deferred Procedures
+! =========================================================================
 ! Initialization
 ABSTRACT INTERFACE
     SUBROUTINE init_i(self, sources, config)
@@ -116,6 +136,12 @@ CONTAINS
 
 
 ! ---------- HELPERS ---------- !
+! -------------------------------------------------------------------------
+! Subroutine: check_observers_distances
+! Safety check that aborts execution if any observer point coincides with
+! (or sits closer than min_distance to) a turbine source node, which would
+! make the pressure field computation singular.
+! -------------------------------------------------------------------------
 SUBROUTINE check_observers_distances(self, observers, min_distance)
     CLASS(AcousticSolver_t), INTENT(IN) :: self
     REAL(WP)               , INTENT(IN) :: observers(:,:)          ! (Nobs, 3)
@@ -151,6 +177,12 @@ END SUBROUTINE check_observers_distances
 
 
 ! ---------- RUN FUNCTIONS ---------- !
+! -------------------------------------------------------------------------
+! Subroutine: run_spectrums
+! Computes the pressure spectrum at a small set of fixed observer points
+! (default: 3 points along +x at mid-depth). Saves the pressure, observer
+! coordinates and frequency vector to the solver's HDF5 file.
+! -------------------------------------------------------------------------
 SUBROUTINE run_spectrums(self, observers, z_spectrums)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
 
@@ -163,7 +195,7 @@ SUBROUTINE run_spectrums(self, observers, z_spectrums)
     REAL(WP)                 :: z_spectrums_
     INTEGER(I32) :: bs
 
-    print*, ''; print*, 'Computing spectrums at observer points...'
+    WRITE(*,'(A)') '>> [Spectrums] computing pressure at observer points...'
 
     ! Defaults
     z_spectrums_ = - self % turbine_data % Depth/2.0_WP; if (PRESENT(z_spectrums)) z_spectrums_ = z_spectrums
@@ -183,19 +215,25 @@ SUBROUTINE run_spectrums(self, observers, z_spectrums)
     CALL self % check_observers_distances(observers_)
     CALL self % compute_pressure(observers_, bs, p)
 
-    if (self % debug) write(*, '(A, F0.2)') 'Spectrum Pressure norm: ', norm2(abs(p))
+    if (self % debug) WRITE(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
     ! Save data
     CALL save_variable(self % save_path, "P_spectrums", p)
     CALL save_variable(self % save_path, "Obs_spectrums", observers_)
     CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
 
-    print*, ''
-    print*, '   ---> Spectrum data saved at ', self % save_path
+    WRITE(*,'(A)') '   Saved to: ' // trim(self % save_path)
 
 END SUBROUTINE run_spectrums
 
 
+! -------------------------------------------------------------------------
+! Subroutine: run_polar
+! Computes pressure on a horizontal circle of radius r_polar around the
+! turbine barycenter, at fixed depth z_polar. Saves the pressure plus the
+! polar geometry (radius, depth, azimuth angles, observer coordinates) to
+! the solver's HDF5 file.
+! -------------------------------------------------------------------------
 SUBROUTINE run_polar(self, r_polar, z_polar, n_polar, center_polar)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
 
@@ -240,14 +278,13 @@ SUBROUTINE run_polar(self, r_polar, z_polar, n_polar, center_polar)
 
     CALL self % check_observers_distances(observers)
 
-    write(*, '(A)') ''
-    write(*, '(A, F0.2, A, F0.2, A, F0.2, A, F0.2, A, I0, A)') &
-        'Computing polar pressure (r=', r, ' m, center=(', center(1), ', ', center(2), &
-        ') m, z=', z, ' m), observers=', n_theta, '...'
-        
+    WRITE(*,'(A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,I0)') &
+        '>> [Polar]    r=', r, ' m | center=(', center(1), ',', center(2), &
+        ') m | z=', z, ' m | observers=', n_theta
+
     ! Compute_pressure
     CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) write(*, '(A, F0.2)') 'Polar Pressure Norm: ', norm2(abs(p))
+    if (self % debug) WRITE(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
     ! Save data
     CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
@@ -258,12 +295,18 @@ SUBROUTINE run_polar(self, r_polar, z_polar, n_polar, center_polar)
     CALL save_variable(self % save_path, "Obs_polar", observers)
     CALL save_variable(self % save_path, "Center_polar", center)
 
-    print*, ''
-    print*, '   ---> Polar data saved at ', self % save_path
+    WRITE(*,'(A)') '   Saved to: ' // trim(self % save_path)
 
 END SUBROUTINE run_polar
 
 
+! -------------------------------------------------------------------------
+! Subroutine: run_cylinder
+! Computes pressure on a vertical cylindrical surface (radius r_cyl,
+! n_cyl azimuth points x nz_cyl depth levels) around the turbine
+! barycenter. Saves the reshaped pressure/observer grids and the cylinder
+! geometry metadata to the solver's HDF5 file.
+! -------------------------------------------------------------------------
 SUBROUTINE run_cylinder(self, r_cyl, n_cyl, nz_cyl, center_cyl)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
 
@@ -331,13 +374,12 @@ SUBROUTINE run_cylinder(self, r_cyl, n_cyl, nz_cyl, center_cyl)
 
     CALL self % check_observers_distances(observers)
 
-    write(*, '(A)') ''
-    write(*, '(A, F0.2, A, F0.2, A, F0.2, A, I0, A, I0, A, I0, A)') &
-        'Computing cylindrical pressure (r=', r, ' m, center=(', center(1), ', ', center(2), &
-        ') m, grid=', n_theta, ' x ', nz, ' = ', Nobs, ' obs)...'
+    WRITE(*,'(A,F8.2,A,F8.2,A,F8.2,A,I0,A,I0,A,I0)') &
+        '>> [Cylinder]   r=', r, ' m | center=(', center(1), ',', center(2), &
+        ') m | grid=', n_theta, ' x ', nz, ' = ', Nobs
 
     CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) write(*, '(A, F0.2)') 'Cylinder Pressure Norm: ', norm2(abs(p))
+    if (self % debug) WRITE(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
     ! Reshape pressure and observers to 3D for storage
     ALLOCATE(p_reshaped(SIZE(p,1), n_theta, nz))
@@ -365,12 +407,18 @@ SUBROUTINE run_cylinder(self, r_cyl, n_cyl, nz_cyl, center_cyl)
     CALL save_variable(self % save_path, "Center_cylinder", center)
     CALL save_variable(self % save_path, "dA_cylinder", dA)
 
-    print*, ''
-    print*, '   ---> Cylinder data saved at ', self % save_path
+    WRITE(*,'(A)') '   Saved to: ' // trim(self % save_path)
 
 END SUBROUTINE run_cylinder
 
 
+! -------------------------------------------------------------------------
+! Subroutine: run_decay
+! Computes pressure along a straight line following the wind direction
+! from the turbine axis, at fixed depth z_decay, with linear or log-spaced
+! distances. Saves the pressure and the observer/distance geometry to the
+! solver's HDF5 file.
+! -------------------------------------------------------------------------
 SUBROUTINE run_decay(self, distance_decay, n_decay, z_decay, logspace_decay)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
 
@@ -429,13 +477,12 @@ SUBROUTINE run_decay(self, distance_decay, n_decay, z_decay, logspace_decay)
 
     CALL self % check_observers_distances(observers)
 
-    write(*, '(A)') ''
-    write(*, '(A, I0, A, F0.2, A, F0.2, A)') &
-        'Computing distance decay (points=', n_points, ', direction=', &
-        self % turbine_data % WindDir, ' deg, z=', z, ' m)...'
+    WRITE(*,'(A,I0,A,F8.2,A,F8.2,A)') &
+        '>> [Decay]      points=', n_points, ' | direction=', &
+        self % turbine_data % WindDir, ' deg | z=', z, ' m'
 
     CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) write(*, '(A, F0.2)') 'Decay Pressure Norm: ', norm2(abs(p))
+    if (self % debug) WRITE(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
     ! Convert logical to integer for saving
     logspace_int = merge(1, 0, logspace)
@@ -449,12 +496,17 @@ SUBROUTINE run_decay(self, distance_decay, n_decay, z_decay, logspace_decay)
     CALL save_variable(self % save_path, "Obs_decay", observers)
     CALL save_variable(self % save_path, "Logspace_decay", logspace_int)
 
-    print*, ''
-    print*, '   ---> Decay data saved at ', self % save_path
+    WRITE(*,'(A)') '   Saved to: ' // trim(self % save_path)
 
 END SUBROUTINE run_decay
 
 
+! -------------------------------------------------------------------------
+! Subroutine: run_line
+! Computes pressure along an arbitrary straight line between two points
+! p1_line and p2_line, with linear or log-spaced distances. Saves the
+! pressure and the observer/distance geometry to the solver's HDF5 file.
+! -------------------------------------------------------------------------
 SUBROUTINE run_line(self, p1_line, p2_line, n_line, logspace_line)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
 
@@ -520,13 +572,12 @@ SUBROUTINE run_line(self, p1_line, p2_line, n_line, logspace_line)
 
     CALL self % check_observers_distances(observers)
 
-    write(*, '(A)') ''
-    write(*, '(A, I0, A, F0.2, A, F0.2, A, F0.2, A, F0.2, A, F0.2, A, F0.2, A)') &
-        'Computing line (points=', n_points, '), p1=(', p1(1), ', ', p1(2), ', ', p1(3), &
-        ') m, p2=(', p2(1), ', ', p2(2), ', ', p2(3), ') m)...'
+    WRITE(*,'(A,I0,A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,F8.2,A)') &
+        '>> [Line]       points=', n_points, ' | p1=(', p1(1), ',', p1(2), ',', p1(3), &
+        ') m | p2=(', p2(1), ',', p2(2), ',', p2(3), ') m'
 
     CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) write(*, '(A, F0.2)') 'Line Pressure Norm: ', norm2(abs(p))
+    if (self % debug) WRITE(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
     ! Convert logical to integer for saving
     logspace_int = merge(1, 0, logspace)
@@ -541,12 +592,17 @@ SUBROUTINE run_line(self, p1_line, p2_line, n_line, logspace_line)
     CALL save_variable(self % save_path, "Distances_line", distances)
     CALL save_variable(self % save_path, "Logspace_line", logspace_int)
 
-    print*, ''
-    print*, '   ---> Line data saved at ', self % save_path
+    WRITE(*,'(A)') '   Saved to: ' // trim(self % save_path)
 
 END SUBROUTINE run_line
 
 
+! -------------------------------------------------------------------------
+! Subroutine: run_sliceXY
+! Computes pressure on a horizontal (x,y) grid at fixed depth z_xy, over
+! the given x/y limits. Saves the reshaped pressure/observer grids and the
+! slice geometry metadata to the solver's HDF5 file.
+! -------------------------------------------------------------------------
 SUBROUTINE run_sliceXY(self, z_xy, nx_xy, ny_xy, xlim_xy, ylim_xy, center_xy)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
 
@@ -626,13 +682,12 @@ SUBROUTINE run_sliceXY(self, z_xy, nx_xy, ny_xy, xlim_xy, ylim_xy, center_xy)
 
     CALL self % check_observers_distances(observers, 0.1_WP)
 
-    write(*, '(A)') ''
-    write(*, '(A, I0, A, I0, A, F0.2, A, F0.2, A, F0.2, A)') &
-        'Computing XY slice (nx=', nx, ', ny=', ny, ', z=', z, &
-        ' m, center=(', center(1), ', ', center(2), ') m)...'
+    WRITE(*,'(A,I0,A,I0,A,F8.2,A,F8.2,A,F8.2,A)') &
+        '>> [SliceXY]    nx=', nx, ' | ny=', ny, ' | z=', z, &
+        ' m | center=(', center(1), ',', center(2), ') m'
 
     CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) write(*, '(A, F0.2)') 'SliceXY Pressure Norm: ', norm2(abs(p))
+    if (self % debug) WRITE(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
     ! Reshape pressure and observers to 3D (nx, ny, 3) and (Nfreqs, nx, ny)
     ALLOCATE(p_reshaped(SIZE(p,1), nx, ny))
@@ -658,12 +713,17 @@ SUBROUTINE run_sliceXY(self, z_xy, nx_xy, ny_xy, xlim_xy, ylim_xy, center_xy)
     CALL save_variable(self % save_path, "Nx_slicexy", nx)
     CALL save_variable(self % save_path, "Ny_slicexy", ny)
 
-    print*, ''
-    print*, '   ---> SliceXY data saved at ', self % save_path
+    WRITE(*,'(A)') '   Saved to: ' // trim(self % save_path)
 
 END SUBROUTINE run_sliceXY
 
 
+! -------------------------------------------------------------------------
+! Subroutine: run_sliceXZ
+! Computes pressure on a vertical (x,z) grid at fixed y_xz, over the given
+! x/z limits. Saves the reshaped pressure/observer grids and the slice
+! geometry metadata to the solver's HDF5 file.
+! -------------------------------------------------------------------------
 SUBROUTINE run_sliceXZ(self, y_xz, nx_xz, nz_xz, xlim_xz, zlim_xz)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
 
@@ -720,13 +780,12 @@ SUBROUTINE run_sliceXZ(self, y_xz, nx_xz, nz_xz, xlim_xz, zlim_xz)
 
     CALL self % check_observers_distances(observers, 0.1_WP)
 
-    write(*, '(A)') ''
-    write(*, '(A, I0, A, I0, A, F0.2, A, F0.2, A, F0.2, A)') &
-        'Computing XZ slice (nx=', nx, ', nz=', nz, ', y=', y, &
-        ' m, z from ', zlim(1), ' to ', zlim(2), ' m)...'
+    WRITE(*,'(A,I0,A,I0,A,F8.2,A,F8.2,A,F8.2,A)') &
+        '>> [SliceXZ]    nx=', nx, ' | nz=', nz, ' | y=', y, &
+        ' m | z from ', zlim(1), ' to ', zlim(2), ' m'
 
     CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) write(*, '(A, F0.2)') 'SliceXZ Pressure Norm: ', norm2(abs(p))
+    if (self % debug) WRITE(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
     ! Reshape pressure and observers to 3D (nx, nz, 3) and (Nfreqs, nx, nz)
     ALLOCATE(p_reshaped(SIZE(p,1), nx, nz))
@@ -751,12 +810,17 @@ SUBROUTINE run_sliceXZ(self, y_xz, nx_xz, nz_xz, xlim_xz, zlim_xz)
     CALL save_variable(self % save_path, "Nx_slicexz", nx)
     CALL save_variable(self % save_path, "Nz_slicexz", nz)
 
-    print*, ''
-    print*, '   ---> SliceXZ data saved at ', self % save_path
+    WRITE(*,'(A)') '   Saved to: ' // trim(self % save_path)
 
 END SUBROUTINE run_sliceXZ
 
 
+! -------------------------------------------------------------------------
+! Subroutine: dummy_run_sphere
+! Default (no-op) implementation of run_sphere, used by solvers that do
+! not support a spherical free-field observer geometry. Only consumes its
+! arguments and prints a "skipped" notice.
+! -------------------------------------------------------------------------
 SUBROUTINE dummy_run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
 
@@ -776,11 +840,18 @@ SUBROUTINE dummy_run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sp
     center = 0.0_WP ; if (PRESENT(center_sphere))  center  = center_sphere
 
     ! Does nothing only skips
-    print*, '  [Skipped] Spherical radiation not available for: ', trim(self % solver_name)
+    WRITE(*,'(A)') '>> [Sphere]     skipped, not available for: ' // trim(self % solver_name)
 
 END SUBROUTINE dummy_run_sphere
 
 
+! -------------------------------------------------------------------------
+! Subroutine: run_all
+! Orchestrates the full acoustic post-processing pipeline: runs, in order,
+! spectrums, polar, decay, line, sphere, sliceXY, sliceXZ and cylinder,
+! forwarding each routine's optional arguments and saving every result to
+! the solver's HDF5 output file.
+! -------------------------------------------------------------------------
 SUBROUTINE run_all(self, &
     observers_spectrum, z_spectrums, &
     r_polar, z_polar, n_polar, center_polar, &
@@ -821,48 +892,47 @@ SUBROUTINE run_all(self, &
     INTEGER(I32), INTENT(IN), OPTIONAL  :: n_theta_sphere, nz_sphere
 
 
-    print*, ''
-    print*, '=================================================='
-    print*, ' RUNNING ALL ACOUSTIC POST-PROCESSING'
-    print*, ' Total steps: 8'
-    print*, '=================================================='
+    WRITE(*,'(A)') ''
+    WRITE(*,'(A)') repeat('=', 70)
+    WRITE(*,'(A)') ' RUNNING ALL ACOUSTIC POST-PROCESSING (8 steps)'
+    WRITE(*,'(A)') repeat('=', 70)
 
-    print*, ''
-    print*, '[Step 1/8] Spectrums at observer points ...'
+    WRITE(*,'(A)') ''
+    WRITE(*,'(A)') '[1/8] Spectrums at observer points'
     CALL self % run_spectrums(observers_spectrum, z_spectrums)
 
-    print*, ''
-    print*, '[Step 2/8] Polar contour ...'
+    WRITE(*,'(A)') ''
+    WRITE(*,'(A)') '[2/8] Polar contour'
     CALL self % run_polar(r_polar, z_polar, n_polar, center_polar)
 
-    print*, ''
-    print*, '[Step 3/8] Distance decay along wind ...'
+    WRITE(*,'(A)') ''
+    WRITE(*,'(A)') '[3/8] Distance decay along wind'
     CALL self % run_decay(distance_decay, n_decay, z_decay, logspace_decay)
 
-    print*, ''
-    print*, '[Step 4/8] Line between two points ...'
+    WRITE(*,'(A)') ''
+    WRITE(*,'(A)') '[4/8] Line between two points'
     CALL self % run_line(p1_line, p2_line, n_line, logspace_line)
 
-    print*, ''
-    print*, '[Step 5/8] Spherical radiation (free-field) ...'
+    WRITE(*,'(A)') ''
+    WRITE(*,'(A)') '[5/8] Spherical radiation (free-field)'
     CALL self % run_sphere(r_sphere, n_theta_sphere, nz_sphere, center_sphere)
 
-    print*, ''
-    print*, '[Step 6/8] Horizontal slice XY ...'
+    WRITE(*,'(A)') ''
+    WRITE(*,'(A)') '[6/8] Horizontal slice XY'
     CALL self % run_sliceXY(z_xy, nx_xy, ny_xy, xlim_xy, ylim_xy, center_xy)
 
-    print*, ''
-    print*, '[Step 7/8] Vertical slice XZ ...'
+    WRITE(*,'(A)') ''
+    WRITE(*,'(A)') '[7/8] Vertical slice XZ'
     CALL self % run_sliceXZ(y_xz, nx_xz, nz_xz, xlim_xz, zlim_xz)
 
-    print*, ''
-    print*, '[Step 8/8] Cylinder surface ...'
+    WRITE(*,'(A)') ''
+    WRITE(*,'(A)') '[8/8] Cylinder surface'
     CALL self % run_cylinder(r_cyl, n_cyl, nz_cyl, center_cyl)
 
-    print*, ''
-    print*, '=================================================='
-    print*, ' ALL ACOUSTIC COMPUTATIONS FINISHED'
-    print*, '=================================================='
+    WRITE(*,'(A)') ''
+    WRITE(*,'(A)') repeat('=', 70)
+    WRITE(*,'(A)') ' ALL ACOUSTIC COMPUTATIONS FINISHED'
+    WRITE(*,'(A)') repeat('=', 70)
 
 END SUBROUTINE run_all
 

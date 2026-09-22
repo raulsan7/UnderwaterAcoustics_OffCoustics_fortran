@@ -1,3 +1,21 @@
+! ===============================================================================
+! MODULE: ImageMethod
+! ===============================================================================
+! Defines ImageMethod_t, the concrete acoustic solver extending abstract
+! AcousticSolver_t. It implements the Method of Images for a fluid layer
+! bounded by two horizontal reflecting planes (e.g. free surface above,
+! seabed below): each real dipole source is mirrored into an infinite chain
+! of image dipoles above and below, with reflection coefficients and boundary
+! conditions applied per bounce, then the pressure field is computed as the
+! superposition of all real+image dipole contributions at each observer point
+! (with optional multi-observer chunked/parallel evaluation).
+! -------------------------------------------------------------------------------
+! Author  : Raul Sanz Ramirez
+! Contact : raul.sanz.ramirez@upm.es
+! Affil.  : ETSIAE, Universidad Politecnica de Madrid
+! Project : ERC project off-coustics
+! Date    : 2026-09-22
+! ===============================================================================
 MODULE ImageMethod
 
 USE Kinds
@@ -11,22 +29,27 @@ PRIVATE
 PUBLIC:: ImageMethod_t
 
 
-! ------------------------
-! Main Type Definition
-! ------------------------
+! ===============================================================================
+! TYPE: ImageMethod_t
+! ===============================================================================
+! Concrete acoustic solver implementing the Method of Images: real dipole
+! sources are reflected across an upper and a lower horizontal plane to build
+! an equivalent free-space system (image_system) whose superposed dipole
+! fields reproduce the effect of the bounded fluid layer on the pressure.
+! ===============================================================================
 TYPE, EXTENDS(AcousticSolver_t):: ImageMethod_t
 
     INTEGER(I32) :: N_images         = 30           ! [-] Number of image levels to compute
-    INTEGER(I32) :: default_N_images = 30
+    INTEGER(I32) :: default_N_images = 30           ! [-] Original N_images from config, used to restore after temporary changes
     INTEGER(I32) :: Upper_BC         = -1           ! [-] Upper Boundary condition -1 for  p = 0
     INTEGER(I32) :: Lower_BC         = +1           ! [-] Lower Boundary condition +1 for dp = 0
     REAL(WP)     :: Upper_HBC        = 0.0_WP       ! [m] z-coordinate of the upper reflecting plane (e.g. free surface)
     REAL(WP)     :: Lower_HBC        = -30.0_WP     ! [m] z-coordinate of the lower reflecting plane (e.g. seabed)
     REAL(WP)     :: up_R             = 1.0_WP       ! [-] Attenuation coefficient for upper boundary reflections
     REAL(WP)     :: lw_R             = 0.5_WP       ! [-] Attenuation coefficient for lower boundary reflections
-    REAL(WP)     :: eps              = 1e-6_WP
- 
-    TYPE(ImageSystem_t) :: image_system
+    REAL(WP)     :: eps              = 1e-6_WP      ! [m] Minimum source-observer distance, floors r to avoid singularities
+
+    TYPE(ImageSystem_t) :: image_system             ! [-] Full real+image dipole system (coords, forces, boundary tags)
 
     CONTAINS
     ! --- Public type-bound procedures --- !
@@ -36,7 +59,7 @@ TYPE, EXTENDS(AcousticSolver_t):: ImageMethod_t
     PROCEDURE :: method_of_images
     PROCEDURE :: dipole_pressure_images
     PROCEDURE :: run_sphere
-    
+
     ! --- Deferred(abstract) procedures --- !
     PROCEDURE :: init               => init_ImageMethod
     PROCEDURE :: get_name           => get_name_ImageMethod
@@ -51,7 +74,17 @@ END TYPE ImageMethod_t
 CONTAINS
 
 
-! ---------- DEFERRED ---------- !
+! ===============================================================================
+! DEFERRED (abstract AcousticSolver_t) PROCEDURES
+! ===============================================================================
+! -------------------------------------------------------------------------
+! Subroutine: init_ImageMethod
+! Constructor of the Image Method solver. Copies the shared solver/env/
+! turbine data from the parent AcousticSolver_t setup, reads the method-
+! specific parameters (N_images, boundary planes, reflection coefficients,
+! singularity tolerance) from the configuration, resolves the output save
+! path and builds the initial image system.
+! -------------------------------------------------------------------------
 SUBROUTINE init_ImageMethod(self, sources, config)
 
     CLASS(ImageMethod_t)  , INTENT(INOUT)              :: self
@@ -96,6 +129,11 @@ SUBROUTINE init_ImageMethod(self, sources, config)
 END SUBROUTINE init_ImageMethod
 
 
+! -------------------------------------------------------------------------
+! Function: get_name_ImageMethod
+! Returns the human-readable solver name ("Images Method") and stores it
+! in self % solver_name for later use (logs, summaries, HDF5 output).
+! -------------------------------------------------------------------------
 FUNCTION get_name_ImageMethod(self) RESULT(name)
     CLASS(ImageMethod_t), INTENT(INOUT) :: self
     CHARACTER(len=:)     , ALLOCATABLE   :: name
@@ -103,6 +141,14 @@ FUNCTION get_name_ImageMethod(self) RESULT(name)
 END FUNCTION get_name_ImageMethod
 
 
+! -------------------------------------------------------------------------
+! Subroutine: compute_pressure_ImageMethod
+! Evaluates the total radiated pressure field at an arbitrary set of
+! observer points, for every source frequency. Observers are processed
+! either one-by-one (serial) or split into chunks distributed over OpenMP
+! threads (in_cluster = .true.), each chunk being handed to
+! dipole_pressure_images together with the full real+image dipole system.
+! -------------------------------------------------------------------------
 SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_pressure)
     CLASS(ImageMethod_t)    , INTENT(INOUT)        :: self
     REAL(WP)                , INTENT(IN)           :: observers(:,:)        ! [m] Observers coords (Nobs,3)
@@ -188,6 +234,13 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
 END SUBROUTINE compute_pressure_ImageMethod
 
 
+! -------------------------------------------------------------------------
+! Subroutine: save_parameters_ImageMethod
+! Saves the solver, environment and generic turbine parameters to the
+! HDF5 output file, delegates the turbine-specific parameters to
+! turbine % save_specific_params, and triggers the human-readable .dat
+! text summary via write_txt_summary.
+! -------------------------------------------------------------------------
 SUBROUTINE save_parameters_ImageMethod(self, turbine)
 
     CLASS(ImageMethod_t), INTENT(IN)                        :: self
@@ -215,6 +268,14 @@ SUBROUTINE save_parameters_ImageMethod(self, turbine)
 END SUBROUTINE save_parameters_ImageMethod
 
 
+! -------------------------------------------------------------------------
+! Subroutine: build_save_path_ImageMethod
+! Resolves the final HDF5 output path. If the configured save_path is
+! "None"/"Default", it auto-generates a descriptive filename (turbine
+! type, number of images, wind speed) under a default output folder;
+! otherwise it just appends the .hdf5 extension. Ensures the destination
+! folder exists.
+! -------------------------------------------------------------------------
 SUBROUTINE build_save_path_ImageMethod(self)
     CLASS(ImageMethod_t), INTENT(INOUT) :: self
     
@@ -258,6 +319,12 @@ SUBROUTINE build_save_path_ImageMethod(self)
 END SUBROUTINE build_save_path_ImageMethod
 
 
+! -------------------------------------------------------------------------
+! Subroutine: write_txt_summary_ImageMethod
+! Writes a plain-text (.dat) summary next to the HDF5 output, mirroring
+! the saved turbine, environment and Image Method solver parameters in a
+! human-readable form for quick inspection without opening the HDF5 file.
+! -------------------------------------------------------------------------
 SUBROUTINE write_txt_summary_ImageMethod(self, turbine)
     CLASS(ImageMethod_t), INTENT(IN)                        :: self
     CLASS(WindTurbine_t), INTENT(IN), OPTIONAL, ALLOCATABLE :: turbine
@@ -329,7 +396,18 @@ SUBROUTINE write_txt_summary_ImageMethod(self, turbine)
 END SUBROUTINE write_txt_summary_ImageMethod
 
 
-! ---------- HELPERS ---------- !
+! ===============================================================================
+! HELPERS
+! ===============================================================================
+! -------------------------------------------------------------------------
+! Subroutine: build_image_system
+! Builds (or rebuilds) self % image_system from the real sources: reshapes
+! the per-source force array to the standard (NFreqs, Nnodes, 3) layout,
+! calls method_of_images to generate the full chain of image z-positions,
+! forces and boundary-condition tags, and assembles the resulting (x,y,z)
+! coordinates by pairing each image with its parent source's horizontal
+! position.
+! -------------------------------------------------------------------------
 SUBROUTINE build_image_system(self)
     CLASS(ImageMethod_t), INTENT(INOUT) :: self
 
@@ -379,6 +457,12 @@ SUBROUTINE build_image_system(self)
 END SUBROUTINE build_image_system
 
 
+! -------------------------------------------------------------------------
+! Subroutine: set_N_images
+! Changes the number of image levels and rebuilds the image system to
+! reflect it. Used e.g. to temporarily set N_images = 0 (free-field, no
+! reflections) for calibration runs such as run_sphere.
+! -------------------------------------------------------------------------
 SUBROUTINE set_N_images(self, new_N_images)
     CLASS(ImageMethod_t), INTENT(INOUT) :: self
     INTEGER(I32), INTENT(IN)             :: new_N_images
@@ -388,6 +472,11 @@ SUBROUTINE set_N_images(self, new_N_images)
 END SUBROUTINE set_N_images
 
 
+! -------------------------------------------------------------------------
+! Subroutine: restore_default_images
+! Restores N_images to its original (config-loaded) value and rebuilds
+! the image system if it had been temporarily changed by set_N_images.
+! -------------------------------------------------------------------------
 SUBROUTINE restore_default_images(self)
     CLASS(ImageMethod_t), INTENT(INOUT) :: self
 
@@ -398,7 +487,22 @@ SUBROUTINE restore_default_images(self)
 END SUBROUTINE restore_default_images
 
 
-! ---------- METHOD ---------- !
+! ===============================================================================
+! METHOD (core physics)
+! ===============================================================================
+! -------------------------------------------------------------------------
+! Subroutine: method_of_images
+! Builds the full chain of image dipoles for each real source by repeated
+! reflection across the upper and lower horizontal planes, N_images times
+! in each direction. Starting from the real source, the upper chain
+! alternately reflects across the lower then upper plane (and vice versa
+! for the lower chain), each bounce flipping the sign of the vertical
+! force component, scaling the force by the corresponding reflection
+! coefficient (up_R/lw_R) and tagging the image with the boundary
+! condition (+-1) of the plane it was just reflected across. The result
+! is a flat list of z-positions, forces and BC tags (real source + all
+! images) later consumed by dipole_pressure_images.
+! -------------------------------------------------------------------------
 SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
     CLASS(ImageMethod_t), INTENT(IN)         :: self
     REAL(WP), INTENT(IN)                      :: zi(:)
@@ -488,6 +592,17 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
 END SUBROUTINE method_of_images
 
 
+! -------------------------------------------------------------------------
+! Subroutine: dipole_pressure_images
+! Evaluates the acoustic dipole Green's function for a block of observers,
+! summed over every real and image source, at every frequency. For each
+! source-observer pair it computes the separation vector and distance
+! (floored at eps to avoid the 1/r singularity), then the far/near-field
+! dipole pressure term F.r_hat * (1/r - i*k) * exp(i*k*r) / (4*pi*r),
+! weighted by the source's boundary-condition sign (BC_all), and
+! accumulates it into p_out. Distances are precomputed once per source
+! and reused across all frequencies.
+! -------------------------------------------------------------------------
 SUBROUTINE dipole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_all, p_out)
     CLASS(ImageMethod_t), INTENT(IN)       :: self
     REAL(WP), INTENT(IN)                    :: obs_pos(:,:)     ! (Nob, 3)  ; caller must pass a 2D slice (Nob,3)
@@ -557,7 +672,19 @@ SUBROUTINE dipole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_all
 END SUBROUTINE dipole_pressure_images
 
 
-! ---------- RUN SPHERE ---------- !
+! ===============================================================================
+! RUN SPHERE
+! ===============================================================================
+! -------------------------------------------------------------------------
+! Subroutine: run_sphere
+! Builds a spherical (theta, z) grid of observer points enclosing the
+! turbine, enlarging the requested radius if needed so every source lies
+! inside it, then evaluates the free-field pressure on that surface
+! (temporarily forcing N_images = 0, i.e. no boundary reflections) for
+! later far-field/radiated-power post-processing. Reshapes and saves the
+! pressure field, observer coordinates, angular/vertical grids and surface
+! element area to the HDF5 output.
+! -------------------------------------------------------------------------
 SUBROUTINE run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
     CLASS(ImageMethod_t), INTENT(INOUT) :: self
     REAL(WP)    , INTENT(IN), OPTIONAL :: r_sphere
@@ -597,8 +724,8 @@ SUBROUTINE run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
     max_dist = max_dist * 1.1_WP
 
     if (r_ < max_dist) then
-        print*, "WindTurbine.run_sphere(): requested radius r=", r_, "m is smaller than max dist."
-        print*, "Radius increased to ", max_dist * 1.05_WP, "m"
+        WRITE(*,'(A,F8.2,A)') '   requested radius r=', r_, ' m is smaller than max dist.'
+        WRITE(*,'(A,F8.2,A)') '   radius increased to ', max_dist * 1.05_WP, ' m'
         r_ = max_dist * 1.05_WP
     end if
 
@@ -642,18 +769,15 @@ SUBROUTINE run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
 
     CALL self % check_observers_distances(observers_, 0.1_WP)
 
-    write(*, '(A)') ''
-    write(*, '(A)') 'Computing spherical pressure field ...'
-    write(*, '(A, F0.2, A, F0.2, A, F0.2, A)') &
-        '  Centre: (', center_(1), ', ', center_(2), ', ', center_(3), ') m'
-    write(*, '(A, F0.2, A, I0, A, I0, A, I0, A)') &
-        '  Radius: ', r_, ' m | grid: ', n_theta_, ' azim x ', nz_, ' z (', Nobs, ' observers)'
+    WRITE(*,'(A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,I0,A,I0,A,I0)') &
+        '>> [Sphere]     r=', r_, ' m | center=(', center_(1), ',', center_(2), ',', center_(3), &
+        ') m | grid=', n_theta_, ' azim x ', nz_, ' z = ', Nobs
 
     CALL self % set_N_images(0_I32)
     CALL self % compute_pressure(observers_, self % block_size, p)
     CALL self % restore_default_images()
 
-    if (self % debug) write(*, '(A, F0.2)') 'Sphere Pressure Norm: ', norm2(abs(p))
+    if (self % debug) WRITE(*,'(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
 
     ! Reshape pressure and observers to 3D (n_theta, nz, 3) and (NFreqs, n_theta, nz)
     ALLOCATE(p_reshaped(SIZE(p,1), n_theta_, nz_))
@@ -681,8 +805,7 @@ SUBROUTINE run_sphere(self, r_sphere, n_theta_sphere, nz_sphere, center_sphere)
     CALL save_variable(self % save_path, "Center_sphere", center_)
     CALL save_variable(self % save_path, "dA_sphere", dA)
 
-    print*, ''
-    print*, '   ---> Sphere data saved at ', self % save_path
+    WRITE(*,'(A)') '   Saved to: ' // trim(self % save_path)
 
 END SUBROUTINE run_sphere
 

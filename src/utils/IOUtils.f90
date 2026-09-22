@@ -1,3 +1,19 @@
+! ===============================================================================
+! MODULE: IOUtils
+! ===============================================================================
+! Handles all file I/O for the codebase: parsing OpenFAST SubDyn summary files
+! (node/member topology), parsing OpenFAST binary/ASCII output channel files,
+! a generic HDF5 variable-saving facility (via a save_variable generic
+! interface overloaded for scalar/1D/2D/3D real/int/complex/logical/character
+! data), small string helpers (to_upper, swap_extension, ensure_parent_dir),
+! and a curve-lookup helper (read_curve).
+! -------------------------------------------------------------------------------
+! Author  : Raul Sanz Ramirez
+! Contact : raul.sanz.ramirez@upm.es
+! Affil.  : ETSIAE, Universidad Politecnica de Madrid
+! Project : ERC project off-coustics
+! Date    : 2026-09-22
+! ===============================================================================
 MODULE IOUtils
 
 USE HDF5
@@ -10,6 +26,12 @@ PRIVATE
 PUBLIC :: get_SDsum_variables, read_input_SD, read_curve, save_variable, save_to_hdf5, to_upper, swap_extension, &
           ensure_parent_dir
 
+! -------------------------------------------------------------------------
+! Generic interface: save_to_hdf5
+! Dispatches to the correct save_hdf5_<type>_<rank> specific procedure based
+! on the actual type/rank of the variable passed in. This is the low-level
+! layer used internally by the save_variable dispatcher below.
+! -------------------------------------------------------------------------
 INTERFACE save_to_hdf5
     MODULE PROCEDURE save_hdf5_real_scalar
     MODULE PROCEDURE save_hdf5_int_scalar
@@ -30,6 +52,15 @@ END INTERFACE
 CONTAINS
 
 
+! -------------------------------------------------------------------------
+! Subroutine: get_SDsum_variables
+! Parses an OpenFAST SubDyn summary file (SD.sum.yaml) to recover the
+! structural topology: it locates the "#Member I Joint1_ID Joint2_ID"
+! table to map each member to its node IDs, then locates the node
+! coordinate table ("Node_[#] X_[m] Y_[m] Z_[m]") to recover each node's
+! (x,y,z) position, and finally combines both into a (Nmembers, Nnodes, 3)
+! tensor, padding any missing node with NaN.
+! -------------------------------------------------------------------------
 SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
     CHARACTER(len=*), INTENT(IN)           :: SD_path       ! [-] Path to OpenFAST SubDyn sum file
     INTEGER(I32)    , INTENT(IN), OPTIONAL :: Nmembers      ! [-] Number of OpenFAST members
@@ -180,6 +211,15 @@ SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
 END SUBROUTINE get_SDsum_variables
 
 
+! -------------------------------------------------------------------------
+! Subroutine: read_input_SD
+! Reads a time series of a requested structural quantity ("displacement",
+! "acceleration", "force", "momentum", etc.) for every member/node from an
+! OpenFAST output file. It builds the corresponding "MiNjXXX"-style channel
+! names for all (member, node, xyz) combinations, delegates the actual file
+! reading to parse_channels_auto, then decimates (skip) and reshapes the
+! flat channel array into a (nt, Nmembers, Nnodes, 3) tensor.
+! -------------------------------------------------------------------------
 SUBROUTINE read_input_SD(filename, what, skip, Nmembers, Nnodes, From, Upto, verbose, &
                          Time_out, Array_out, unit_out, status)
     CHARACTER(len=*), INTENT(IN)           :: filename          ! [-] Path to OpenFAST output file
@@ -313,6 +353,13 @@ SUBROUTINE read_input_SD(filename, what, skip, Nmembers, Nnodes, From, Upto, ver
 END SUBROUTINE read_input_SD
 
 
+! -------------------------------------------------------------------------
+! Subroutine: parse_channels_auto
+! Universal entry point for reading OpenFAST output channels: it inspects
+! the file extension (".outb" vs ".out") and dispatches to the matching
+! specialized parser, parse_channels_binary or parse_channels_ascii, so
+! callers do not need to know which format a given run produced.
+! -------------------------------------------------------------------------
 SUBROUTINE parse_channels_auto(full_path, plotChannels, From, Upto, &
                                available_channels, verbose, chunk_size,     &
                                time_out, array_out, units_out, status)
@@ -361,6 +408,16 @@ SUBROUTINE parse_channels_auto(full_path, plotChannels, From, Upto, &
 END SUBROUTINE parse_channels_auto
 
 
+! -------------------------------------------------------------------------
+! Subroutine: parse_channels_binary
+! Parses OpenFAST's packed binary output format (.outb): reads the fixed
+! header (FileID, channel count/names/units, time and per-column scale
+! and offset factors used to decompress the packed INTEGER(2) values),
+! maps the requested channel names to column indices, then streams the
+! data body in chunks (to bound memory use), decoding only the requested
+! time window and channels back into REAL(WP) using the scale/offset
+! factors.
+! -------------------------------------------------------------------------
 SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
                                  available_channels, verbose, chunk_size,     &
                                  time_out, array_out, units_out, status)
@@ -564,6 +621,15 @@ SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
 END SUBROUTINE parse_channels_binary
 
 
+! -------------------------------------------------------------------------
+! Subroutine: parse_channels_ascii
+! Parses OpenFAST's plain-text output format (.out): skips the 6 metadata
+! header lines, reads the channel-name and channel-unit header lines
+! (line 7/8) to map requested channel names to column positions and to
+! locate the "Time" column, does a fast pre-pass to count total data rows
+! (needed to size the From/Upto time window), then rewinds and reads only
+! the requested rows/columns into the output arrays.
+! -------------------------------------------------------------------------
 SUBROUTINE parse_channels_ascii(full_path, plotChannels, From_val, Upto_val, &
                                 available_channels, verbose, time_out,       &
                                 array_out, units_out, status)
@@ -735,6 +801,12 @@ SUBROUTINE parse_channels_ascii(full_path, plotChannels, From_val, Upto_val, &
 END SUBROUTINE PARSE_CHANNELS_ASCII
 
 
+! -------------------------------------------------------------------------
+! Function: read_curve
+! Reads a two-line-header CSV lookup table (windspeed vs. one or more
+! dependent columns) and linearly interpolates (with flat extrapolation
+! outside the table's range) the requested column at the given wind speed.
+! -------------------------------------------------------------------------
 FUNCTION read_curve(filename, ws, col_idx) RESULT(val)
     CHARACTER(len=*), INTENT(IN)        :: filename
     REAL(WP), INTENT(IN)               :: ws        ! [m/s] WIndSpeed
@@ -845,6 +917,12 @@ END FUNCTION read_curve
 ! HELPER FUNCTIONS
 ! -------------------- !
 
+! -------------------------------------------------------------------------
+! Subroutine: parse_member_nodes
+! Tokenizes a whitespace-separated SD.sum.yaml member-mapping line (after
+! stripping any trailing '#' comment) and extracts the last max_nodes
+! tokens as integer node IDs for that member.
+! -------------------------------------------------------------------------
 SUBROUTINE parse_member_nodes(text_line, max_nodes, node_arr)
     CHARACTER(len=*), INTENT(IN) :: text_line           ! [-] Line read in SD.sum.yaml
     INTEGER(I32)    , INTENT(IN) :: max_nodes           ! [-] Amount of nodes per member and line
@@ -922,6 +1000,11 @@ SUBROUTINE parse_member_nodes(text_line, max_nodes, node_arr)
 END SUBROUTINE parse_member_nodes
 
 
+! -------------------------------------------------------------------------
+! Function: extract_number_nodes
+! Extracts the integer node count from an SD.sum.yaml line of the form
+! "Nodes: # 33 x 9", i.e. the number found between the '#' and the 'x'.
+! -------------------------------------------------------------------------
 FUNCTION extract_number_nodes(text_line) RESULT(number_of_nodes)
     IMPLICIT NONE
     CHARACTER(len=*), INTENT(IN) :: text_line          ! [-] Line read in SD.sum.yaml, e.g. "Nodes: # 33 x 9"
@@ -960,6 +1043,10 @@ FUNCTION extract_number_nodes(text_line) RESULT(number_of_nodes)
 END FUNCTION extract_number_nodes
 
 
+! -------------------------------------------------------------------------
+! Function: to_upper
+! Returns "str" with every lowercase ASCII letter converted to uppercase.
+! -------------------------------------------------------------------------
 PURE FUNCTION to_upper(str) RESULT(res)
     CHARACTER(len=*), INTENT(IN) :: str
     CHARACTER(len=LEN(str))      :: res
@@ -1019,6 +1106,13 @@ END SUBROUTINE ensure_parent_dir
 ! -------------------- !
 ! HDF5 FUNCTIONS
 ! -------------------- !
+! -------------------------------------------------------------------------
+! Subroutine: save_variable
+! Generic dispatcher: given a variable of assumed rank/type (CLASS(*)), it
+! uses SELECT RANK / SELECT TYPE to identify the actual rank (0 to 3) and
+! type (real/integer/complex/logical) of "var" and forwards the call to
+! the matching save_to_hdf5 (save_hdf5_<type>_<rank>) specific procedure.
+! -------------------------------------------------------------------------
 SUBROUTINE save_variable(save_path, var_name, var)
 
     CHARACTER(len=*), INTENT(IN) :: save_path
@@ -1055,7 +1149,17 @@ SUBROUTINE save_variable(save_path, var_name, var)
 
 END SUBROUTINE save_variable
 
+! =========================================================================
+! HDF5 save_variable specific procedures
+! =========================================================================
+! Each of the following procedures implements one (type, rank) overload of
+! the save_variable generic interface: it opens (or creates) the target
+! HDF5 file, creates (or overwrites) a dataset named var_name, writes the
+! given data into it, and closes the file. They are otherwise identical
+! in structure — only the HDF5 datatype and dataspace rank differ.
+! =========================================================================
 ! ---------- SCALARS ---------- !
+! save_variable overload: scalar REAL(WP)
 SUBROUTINE save_hdf5_real_scalar(filepath, var_name, data_scalar)
     CHARACTER(len=*), INTENT(IN) :: filepath
     CHARACTER(len=*), INTENT(IN) :: var_name
@@ -1090,6 +1194,7 @@ SUBROUTINE save_hdf5_real_scalar(filepath, var_name, data_scalar)
     CALL h5close_f(error)
 END SUBROUTINE save_hdf5_real_scalar
 
+! save_variable overload: scalar INTEGER
 SUBROUTINE save_hdf5_int_scalar(filepath, var_name, data_scalar)
     CHARACTER(len=*), INTENT(IN) :: filepath
     CHARACTER(len=*), INTENT(IN) :: var_name
@@ -1124,6 +1229,7 @@ SUBROUTINE save_hdf5_int_scalar(filepath, var_name, data_scalar)
     CALL h5close_f(error)
 END SUBROUTINE save_hdf5_int_scalar
 
+! save_variable overload: scalar COMPLEX(WP)
 SUBROUTINE save_hdf5_cplx_scalar(filepath, var_name, data_scalar)
     CHARACTER(len=*), INTENT(IN) :: filepath
     CHARACTER(len=*), INTENT(IN) :: var_name
@@ -1162,6 +1268,7 @@ SUBROUTINE save_hdf5_cplx_scalar(filepath, var_name, data_scalar)
     CALL h5close_f(error)
 END SUBROUTINE save_hdf5_cplx_scalar
 
+! save_variable overload: scalar LOGICAL
 SUBROUTINE save_hdf5_logical_scalar(filepath, var_name, data_scalar)
     CHARACTER(len=*), INTENT(IN) :: filepath
     CHARACTER(len=*), INTENT(IN) :: var_name
@@ -1199,6 +1306,7 @@ SUBROUTINE save_hdf5_logical_scalar(filepath, var_name, data_scalar)
     CALL h5close_f(error)
 END SUBROUTINE save_hdf5_logical_scalar
 
+! save_variable overload: scalar CHARACTER string
 SUBROUTINE save_hdf5_char_scalar(filepath, var_name, data_scalar)
     CHARACTER(len=*), INTENT(IN) :: filepath
     CHARACTER(len=*), INTENT(IN) :: var_name
@@ -1244,6 +1352,7 @@ SUBROUTINE save_hdf5_char_scalar(filepath, var_name, data_scalar)
 END SUBROUTINE save_hdf5_char_scalar
 
 ! ---------- ARRAYS 1D ---------- !
+! save_variable overload: rank-1 REAL(WP) array
 SUBROUTINE save_hdf5_real_1d(filepath, var_name, data_array)
     CHARACTER(len=*), INTENT(IN) :: filepath
     CHARACTER(len=*), INTENT(IN) :: var_name
@@ -1278,6 +1387,7 @@ SUBROUTINE save_hdf5_real_1d(filepath, var_name, data_array)
     CALL h5close_f(error)
 END SUBROUTINE save_hdf5_real_1d
 
+! save_variable overload: rank-1 INTEGER array
 SUBROUTINE save_hdf5_int_1d(filepath, var_name, data_array)
     CHARACTER(len=*), INTENT(IN) :: filepath
     CHARACTER(len=*), INTENT(IN) :: var_name
@@ -1312,6 +1422,7 @@ SUBROUTINE save_hdf5_int_1d(filepath, var_name, data_array)
     CALL h5close_f(error)
 END SUBROUTINE save_hdf5_int_1d
 
+! save_variable overload: rank-1 COMPLEX(WP) array
 SUBROUTINE save_hdf5_cplx_1d(filepath, var_name, data_array)
     CHARACTER(len=*), INTENT(IN) :: filepath
     CHARACTER(len=*), INTENT(IN) :: var_name
@@ -1356,6 +1467,7 @@ SUBROUTINE save_hdf5_cplx_1d(filepath, var_name, data_array)
 END SUBROUTINE save_hdf5_cplx_1d
 
 ! ---------- ARRAYS 2D ---------- !
+! save_variable overload: rank-2 REAL(WP) array
 SUBROUTINE save_hdf5_real_2d(filepath, var_name, data_array)
     CHARACTER(len=*), INTENT(IN) :: filepath
     CHARACTER(len=*), INTENT(IN) :: var_name
@@ -1391,6 +1503,7 @@ SUBROUTINE save_hdf5_real_2d(filepath, var_name, data_array)
     CALL h5close_f(error)
 END SUBROUTINE save_hdf5_real_2d
 
+! save_variable overload: rank-2 INTEGER array
 SUBROUTINE save_hdf5_int_2d(filepath, var_name, data_array)
     CHARACTER(len=*), INTENT(IN) :: filepath
     CHARACTER(len=*), INTENT(IN) :: var_name
@@ -1426,6 +1539,7 @@ SUBROUTINE save_hdf5_int_2d(filepath, var_name, data_array)
     CALL h5close_f(error)
 END SUBROUTINE save_hdf5_int_2d
 
+! save_variable overload: rank-2 COMPLEX(WP) array
 SUBROUTINE save_hdf5_cplx_2d(filepath, var_name, data_array)
     CHARACTER(len=*), INTENT(IN) :: filepath
     CHARACTER(len=*), INTENT(IN) :: var_name
@@ -1471,6 +1585,7 @@ SUBROUTINE save_hdf5_cplx_2d(filepath, var_name, data_array)
 END SUBROUTINE save_hdf5_cplx_2d
 
 ! ---------- ARRAYS 3D ---------- !
+! save_variable overload: rank-3 REAL(WP) array
 SUBROUTINE save_hdf5_real_3d(filepath, var_name, data_array)
     CHARACTER(len=*), INTENT(IN) :: filepath
     CHARACTER(len=*), INTENT(IN) :: var_name
@@ -1507,6 +1622,7 @@ SUBROUTINE save_hdf5_real_3d(filepath, var_name, data_array)
     CALL h5close_f(error)
 END SUBROUTINE save_hdf5_real_3d
 
+! save_variable overload: rank-3 INTEGER array
 SUBROUTINE save_hdf5_int_3d(filepath, var_name, data_array)
     CHARACTER(len=*), INTENT(IN) :: filepath
     CHARACTER(len=*), INTENT(IN) :: var_name
@@ -1543,6 +1659,7 @@ SUBROUTINE save_hdf5_int_3d(filepath, var_name, data_array)
     CALL h5close_f(error)
 END SUBROUTINE save_hdf5_int_3d
 
+! save_variable overload: rank-3 COMPLEX(WP) array
 SUBROUTINE save_hdf5_cplx_3d(filepath, var_name, data_array)
     CHARACTER(len=*), INTENT(IN) :: filepath
     CHARACTER(len=*), INTENT(IN) :: var_name

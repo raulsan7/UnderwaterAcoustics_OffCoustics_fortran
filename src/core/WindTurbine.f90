@@ -1,3 +1,19 @@
+! ===============================================================================
+! MODULE: WindTurbine
+! ===============================================================================
+! Defines WindTurbine_t, the abstract parent type for all wind turbine models
+! (Monopile, Floating, etc.). It centralizes every shared parameter, the
+! standard OpenFAST output/SubDyn reading pipeline, and the translation of
+! structural nodes into acoustic point-dipole sources, so that each concrete
+! turbine type only has to implement its own force/mass computation and
+! platform-specific saved parameters.
+! -------------------------------------------------------------------------------
+! Author  : Raul Sanz Ramirez
+! Contact : raul.sanz.ramirez@upm.es
+! Affil.  : ETSIAE, Universidad Politecnica de Madrid
+! Project : ERC project off-coustics
+! Date    : 2026-09-22
+! ===============================================================================
 MODULE WindTurbine
 
 USE Kinds
@@ -51,10 +67,10 @@ TYPE, ABSTRACT :: WindTurbine_t
 
     CONTAINS
     ! --- Shared procedures --- !
-    PROCEDURE :: init                           ! Constructor
-    PROCEDURE :: read_input                     ! Reads OpenFast outputs
-    PROCEDURE :: translate_align_with_WindDir   ! Place nodes correctly
-    PROCEDURE :: turbine_to_source              ! Translate turbine to source abstraction
+    PROCEDURE :: init                                   ! Constructor
+    PROCEDURE :: read_input                             ! Reads OpenFast outputs
+    PROCEDURE :: translate_align_with_WindDir           ! Place nodes correctly
+    PROCEDURE :: turbine_to_source                      ! Translate turbine to source abstraction
 
 
     ! --- Deferred procedures --- !
@@ -186,7 +202,7 @@ END SUBROUTINE init
 
 
 ! -------------------------------------------------------------------------
-! Subroutine: read_input_base
+! Subroutine: read_input
 ! Reads either binary (.outb) or text (.out) OpenFAST output files.
 ! Since this formatting is standard for OpenFAST, having this in the base
 ! class avoids any code duplication between different turbine types!
@@ -252,6 +268,13 @@ SUBROUTINE read_input(self, config, verbose)
 END SUBROUTINE read_input
 
 
+! -------------------------------------------------------------------------
+! Subroutine: translate_align_with_WindDir
+! Rotates the acceleration and node-coordinate arrays by the wind direction
+! yaw angle and translates them to the turbine axis position, so that all
+! downstream computations work in the global reference frame. No-op if
+! WindDir is (numerically) zero.
+! -------------------------------------------------------------------------
 SUBROUTINE translate_align_with_WindDir(self)
     CLASS(WindTurbine_t), INTENT(INOUT) :: self
 
@@ -304,6 +327,13 @@ SUBROUTINE translate_align_with_WindDir(self)
 END SUBROUTINE
 
 
+! -------------------------------------------------------------------------
+! Subroutine: turbine_to_source
+! Translates the physical turbine (nodes + nodal forces) into the abstract
+! AcousticSource_t representation consumed by the acoustic solvers, applying
+! the impedance/scattering force correction when the selected solver method
+! requires it (currently the Image Method).
+! -------------------------------------------------------------------------
 SUBROUTINE turbine_to_source(self, config, sources)
     CLASS(WindTurbine_t)  , INTENT(IN)               :: self
     TYPE(Config_t)        , INTENT(IN)               :: config
@@ -331,6 +361,12 @@ SUBROUTINE turbine_to_source(self, config, sources)
 END SUBROUTINE turbine_to_source
 
 
+! -------------------------------------------------------------------------
+! Subroutine: save_turbine_params
+! Saves the generic turbine parameters (shared by every turbine type) into
+! the solver's HDF5 output file. Platform-specific parameters are handled
+! separately by each concrete type's save_specific_params.
+! -------------------------------------------------------------------------
 SUBROUTINE save_turbine_params(params, save_path)
     TYPE(Config_WindTurbine_t), INTENT(IN) :: params
     CHARACTER(len=200)        , INTENT(IN) :: save_path
@@ -346,10 +382,17 @@ END SUBROUTINE save_turbine_params
 
 
 
-! ---------- Drivetrain excitations ---------- !
+! =========================================================================
+! Drivetrain Excitations
+! =========================================================================
+! -------------------------------------------------------------------------
+! Function: drivetrain10MW_excitation_spectrum
+! Constructs the physically-consistent excitation spectrum (frequencies +
+! amplitudes) for the DTU 10 MW medium-speed drivetrain, combining shaft
+! and gear-mesh harmonics, RPM-dependent interpolation and a torsional
+! modal transfer function, normalized to unit RMS.
+! -------------------------------------------------------------------------
 SUBROUTINE drivetrain10MW_excitation_spectrum(rpm, damping, p_shaft, alpha_mesh, freqs_amp, keys)
-    !> Constructs the physically-consistent excitation spectrum for the
-    !> DTU 10 MW medium-speed drivetrain.
     REAL(WP), INTENT(IN), OPTIONAL :: rpm
     REAL(WP), INTENT(IN), OPTIONAL :: damping
     REAL(WP), INTENT(IN), OPTIONAL :: p_shaft

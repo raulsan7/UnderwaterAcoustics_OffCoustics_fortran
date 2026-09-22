@@ -1,3 +1,19 @@
+! ===============================================================================
+! MODULE: DTU10MWFloating
+! ===============================================================================
+! This module defines DTU10MWFloating_t, a concrete turbine type extending the
+! abstract WindTurbine_t (src/core/WindTurbine.f90) for the DTU 10 MW floating
+! platform (CENER DeltaWind version). It implements the deferred procedures:
+! compute_force, compute_mass, filter_frequencies, save/write_specific_params
+! and get_impedance_corrected_force, using a representative column/pontoon
+! member to build the platform's distributed mass and scattering correction.
+! -------------------------------------------------------------------------------
+! Author  : Raul Sanz Ramirez
+! Contact : raul.sanz.ramirez@upm.es
+! Affil.  : ETSIAE, Universidad Politecnica de Madrid
+! Project : ERC project off-coustics
+! Date    : 2026-09-22
+! ===============================================================================
 MODULE DTU10MWFloating
 
 USE Kinds
@@ -10,11 +26,17 @@ PRIVATE
 PUBLIC :: DTU10MWFloating_t
 
 
-! ------------------------------
-! Derived type definition
-! ------------------------------
+! ===============================================================================
+! TYPE: DTU10MWFloating_t
+! ===============================================================================
+! Concrete turbine type extending WindTurbine_t for the DTU 10 MW floating
+! platform (CENER DeltaWind version). Stores the platform-specific geometry
+! (column/pontoon cross-sections, wall thickness, densities, wetted area) and
+! the member-ID maps used to build the representative 1D mass distributions.
+! ===============================================================================
 TYPE, EXTENDS(WindTurbine_t) :: DTU10MWFloating_t
-    ! Physical and structural parameters specific to the DTU 10 MW FLoating CENER DeltaWind version
+
+    ! Physical and structural parameters specific to the DTU 10 MW Floating CENER DeltaWind version
     REAL(WP) :: col_D = 14.5_WP         ! [m] Columns Diameter
     REAL(wp) :: XsecA = 10.875_WP       ! [m] Pontoon width
     REAL(wp) :: XsecB = 7.0_WP          ! [m] Pontoon height
@@ -26,7 +48,8 @@ TYPE, EXTENDS(WindTurbine_t) :: DTU10MWFloating_t
     INTEGER(I32) :: col_members(3,2) = reshape([0,2,4, 1,3,5], [3,2])  ! [-] Column members ID list: [[0,1],[2,3],[4,5]]
     INTEGER(I32) :: pon_members(3,1) = reshape([6, 7, 8], [3,1])        ! [-] Pontoon members ID lists: [[6],[7],[8]]
 
-    ! Mask needed
+    ! [-] Flat (Nmembers*Nnodes) wet/dry + non-duplicate node keep-mask, built
+    ! and stored by compute_force for later reuse by get_impedance_corrected_force
     LOGICAL, ALLOCATABLE :: keep_flat(:)
 
     CONTAINS
@@ -47,6 +70,12 @@ END TYPE DTU10MWFloating_t
 
 CONTAINS
 
+! -------------------------------------------------------------------------
+! Subroutine: init_DTU10MWFloating
+! Platform-specific constructor: resolves the (hardcoded) path to the DTU
+! 10 MW rpm-vs-wind-speed curve, flags this turbine as non-monopile, then
+! delegates to the shared base-class init for the common parameters.
+! -------------------------------------------------------------------------
 SUBROUTINE init_DTU10MWFloating(self, config)
     CLASS(DTU10MWFloating_t)  , INTENT(INOUT) :: self
     TYPE(Config_WindTurbine_t), INTENT(INOUT) :: config
@@ -54,7 +83,7 @@ SUBROUTINE init_DTU10MWFloating(self, config)
     ! Local variables
     LOGICAL :: exists = .false.
 
-    ! Define path to rpm curve HARDCODED
+    ! Define path to rpm curve (hardcoded)
     self % path_rpm = "../wind_speed_curves_DTU_10MW/rpm_ws.csv"
 
     ! Verify that the rpm curve file exists
@@ -70,6 +99,15 @@ SUBROUTINE init_DTU10MWFloating(self, config)
 END SUBROUTINE init_DTU10MWFloating
 
 
+! -------------------------------------------------------------------------
+! Subroutine: compute_force_DTU10MWFloating
+! Computes the structural nodal forces from the OpenFAST accelerations:
+! flattens and RFFTs the acceleration time series, combines it with the
+! per-node dry+added mass (F = -A*m_eff), optionally filters the result to
+! the frequencies actually excited by the drivetrain, and finally strips
+! out dry and duplicated nodes so only the wetted structure remains, ready
+! to be treated as an array of point dipoles.
+! -------------------------------------------------------------------------
 SUBROUTINE compute_force_DTU10MWFloating(self, config, verbose)
     USE MathUtils, ONLY: compute_rfft
     
@@ -202,7 +240,7 @@ SUBROUTINE compute_force_DTU10MWFloating(self, config, verbose)
 
     ! Remove the first node of the second member of each column
     do i = 1, 3
-        m1 = self % col_members(i,2) + 1 ! Converto to 1-based indexing
+        m1 = self % col_members(i,2) + 1 ! Convert to 1-based indexing
         keep(m1, 1) = .false.
     end do
 
@@ -285,6 +323,16 @@ SUBROUTINE compute_force_DTU10MWFloating(self, config, verbose)
 END SUBROUTINE compute_force_DTU10MWFloating
 
 
+! -------------------------------------------------------------------------
+! Subroutine: compute_mass_DTU10MWFloating
+! Builds the per-node dry (structural) and added (hydrodynamic) mass for
+! the whole platform. Rather than treating every member independently, it
+! collapses each column/pontoon family into a single representative 1D
+! line of nodes, computes the mass from its cylindrical/rectangular
+! cross-section along that line, and then broadcasts the result back onto
+! the full (Nmembers, Nnodes) grid, since all columns/pontoons share the
+! same geometry.
+! -------------------------------------------------------------------------
 SUBROUTINE compute_mass_DTU10MWFloating(self, mass, added_mass)
     USE MathUtils, ONLY: divide_span
 
@@ -433,6 +481,13 @@ SUBROUTINE compute_mass_DTU10MWFloating(self, mass, added_mass)
 END SUBROUTINE compute_mass_DTU10MWFloating
 
 
+! -------------------------------------------------------------------------
+! Function: filter_frequencies_DTU10MWFloating
+! Builds a mask that keeps only the computed frequencies lying close to the
+! DTU 10 MW drivetrain excitation peaks (shaft/gear-mesh harmonics at the
+! rpm corresponding to the current wind speed), so downstream force arrays
+! can be trimmed to the physically relevant spectral content.
+! -------------------------------------------------------------------------
 FUNCTION filter_frequencies_DTU10MWFloating(self, freqs_over) RESULT(mask)
     USE IOUtils, ONLY: read_curve
     USE MathUtils, ONLY: generate_timeseries_banded_sines, filter_non_useful_freqs
@@ -472,6 +527,13 @@ FUNCTION filter_frequencies_DTU10MWFloating(self, freqs_over) RESULT(mask)
 END FUNCTION filter_frequencies_DTU10MWFloating
 
 
+! -------------------------------------------------------------------------
+! Subroutine: save_specific_params_DTU10MWFloating
+! Persists the platform-specific geometry and material parameters (column
+! diameter, pontoon cross-section, wall thickness, densities, wetted area,
+! member ID maps) to the solver's HDF5 output, optionally suffixing each
+! variable name with an instance tag (istr) when several turbines are saved.
+! -------------------------------------------------------------------------
 SUBROUTINE save_specific_params_DTU10MWFloating(self, save_path, istr)
     USE IOUtils, ONLY: save_variable
 
@@ -502,6 +564,12 @@ SUBROUTINE save_specific_params_DTU10MWFloating(self, save_path, istr)
 END SUBROUTINE save_specific_params_DTU10MWFloating
 
 
+! -------------------------------------------------------------------------
+! Subroutine: write_specific_params_txt_DTU10MWFloating
+! Writes a short, human-readable summary of the platform-specific geometry
+! and member maps to the given text unit, mirroring what
+! save_specific_params_DTU10MWFloating stores in the HDF5 file.
+! -------------------------------------------------------------------------
 SUBROUTINE write_specific_params_txt_DTU10MWFloating(self, unit)
     CLASS(DTU10MWFloating_t), INTENT(IN) :: self
     INTEGER(I32)            , INTENT(IN) :: unit
@@ -520,6 +588,15 @@ SUBROUTINE write_specific_params_txt_DTU10MWFloating(self, unit)
 END SUBROUTINE write_specific_params_txt_DTU10MWFloating
 
 
+! -------------------------------------------------------------------------
+! Function: get_impedance_corrected_force_DTU10MWFloating
+! Applies a cylindrical-scattering (Hankel-function based) shielding
+! correction to the nodal forces, per member family: columns and pontoons
+! are each treated as an infinite cylinder of their own (equivalent)
+! diameter, and the resulting frequency-dependent correction factor scales
+! the raw force so that a solver using the Image Method sees the acoustic
+! shadowing effect of the structure itself.
+! -------------------------------------------------------------------------
 FUNCTION get_impedance_corrected_force_DTU10MWFloating(self, c) RESULT(corrected_F)
     USE MathUtils, ONLY: alpha_hankel
     
