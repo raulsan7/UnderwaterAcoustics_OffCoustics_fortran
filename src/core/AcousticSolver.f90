@@ -192,7 +192,7 @@ SUBROUTINE update_parameters(self)
     CLASS(AcousticSolver_t), INTENT(IN) :: self
 
     CHARACTER(len=:), ALLOCATABLE :: dat_path
-    INTEGER(I32) :: u
+    INTEGER(I32) :: u, i
 
     dat_path = swap_extension(trim(self % save_path), ".dat")
 
@@ -202,78 +202,88 @@ SUBROUTINE update_parameters(self)
     write(u,'(A)') 'POST-PROCESSING STEPS EXECUTED'
     write(u,'(A)') repeat('-', 70)
 
-    associate(d => self % run_inputs % do_run, p => self % run_inputs)
+    associate(d => self % run_inputs % do_run, pp => self % run_inputs)
 
-        if (d % do_spectrums) then
+                if (d % do_spectrums) then
             write(u,'(A)') ''
-            write(u,'(A)')        'Spectrums:'
-            write(u,'(A,F8.2,A)') '   z_spectrums  : ', p % params_spectrums % z_spectrums, ' m'
+            write(u,'(A)') 'Spectrums:'
+            if (.not. ALLOCATED(pp % params_spectrums % observers_x)) then
+                write(u,'(A)') '   observers : 3 default points (auto, x=10/250/500 m, z=-Depth/2)'
+            else
+                write(u,'(A,I0)') '   n_observers : ', pp % params_spectrums % n_observers
+                do i = 1, pp % params_spectrums % n_observers
+                    write(u,'(A,I0,A,F8.2,A,F8.2,A,F8.2,A)') '   obs ', i, ' (x,y,z) : ', &
+                        pp % params_spectrums % observers_x(i), ', ', &
+                        pp % params_spectrums % observers_y(i), ', ', &
+                        pp % params_spectrums % observers_z(i), ' m'
+                end do
+            end if
         end if
 
         if (d % do_polar) then
             write(u,'(A)') ''
             write(u,'(A)')         'Polar:'
-            write(u,'(A,F8.2,A)')  '   r_polar      : ', p % params_polar % r_polar, ' m'
-            write(u,'(A,F8.2,A)')  '   z_polar      : ', p % params_polar % z_polar, ' m'
-            write(u,'(A,I0)')      '   n_polar      : ', p % params_polar % n_polar
-            write(u,'(A,2F10.3)')  '   center_polar : ', p % params_polar % center_polar
+            write(u,'(A,F8.2,A)')  '   r_polar      : ', pp % params_polar % r_polar, ' m'
+            write(u,'(A,F8.2,A)')  '   z_polar      : ', pp % params_polar % z_polar, ' m'
+            write(u,'(A,I0)')      '   n_polar      : ', pp % params_polar % n_polar
+            write(u,'(A,2F10.3)')  '   center_polar : ', pp % params_polar % center_polar
         end if
 
         if (d % do_cylinder) then
             write(u,'(A)') ''
             write(u,'(A)')        'Cylinder:'
-            write(u,'(A,F8.2,A)') '   r_cyl      : ', p % params_cylinder % r_cyl, ' m'
-            write(u,'(A,I0)')     '   n_cyl      : ', p % params_cylinder % n_cyl
-            write(u,'(A,I0)')     '   nz_cyl     : ', p % params_cylinder % nz_cyl
-            write(u,'(A,2F10.3)') '   center_cyl : ', p % params_cylinder % center_cyl
+            write(u,'(A,F8.2,A)') '   r_cyl      : ', pp % params_cylinder % r_cyl, ' m'
+            write(u,'(A,I0)')     '   n_cyl      : ', pp % params_cylinder % n_cyl
+            write(u,'(A,I0)')     '   nz_cyl     : ', pp % params_cylinder % nz_cyl
+            write(u,'(A,2F10.3)') '   center_cyl : ', pp % params_cylinder % center_cyl
         end if
 
         if (d % do_decay) then
             write(u,'(A)') ''
             write(u,'(A)')        'Decay:'
-            write(u,'(A,2F10.3)') '   distance_decay : ', p % params_decay % distance_decay
-            write(u,'(A,I0)')     '   n_decay        : ', p % params_decay % n_decay
-            write(u,'(A,F8.2,A)') '   z_decay        : ', p % params_decay % z_decay, ' m'
-            write(u,'(A,L1)')     '   logspace_decay : ', p % params_decay % logspace_decay
+            write(u,'(A,2F10.3)') '   distance_decay : ', pp % params_decay % distance_decay
+            write(u,'(A,I0)')     '   n_decay        : ', pp % params_decay % n_decay
+            write(u,'(A,F8.2,A)') '   z_decay        : ', pp % params_decay % z_decay, ' m'
+            write(u,'(A,L1)')     '   logspace_decay : ', pp % params_decay % logspace_decay
         end if
 
         if (d % do_line) then
             write(u,'(A)') ''
             write(u,'(A)')        'Line:'
-            write(u,'(A,3F10.3)') '   p1_line       : ', p % params_line % p1_line
-            write(u,'(A,3F10.3)') '   p2_line       : ', p % params_line % p2_line
-            write(u,'(A,I0)')     '   n_line        : ', p % params_line % n_line
-            write(u,'(A,L1)')     '   logspace_line : ', p % params_line % logspace_line
+            write(u,'(A,3F10.3)') '   p1_line       : ', pp % params_line % p1_line
+            write(u,'(A,3F10.3)') '   p2_line       : ', pp % params_line % p2_line
+            write(u,'(A,I0)')     '   n_line        : ', pp % params_line % n_line
+            write(u,'(A,L1)')     '   logspace_line : ', pp % params_line % logspace_line
         end if
 
         if (d % do_sliceXY) then
             write(u,'(A)') ''
             write(u,'(A)')        'SliceXY:'
-            write(u,'(A,F8.2,A)') '   z_xy       : ', p % params_sliceXY % z_xy, ' m'
-            write(u,'(A,I0)')     '   nx_xy      : ', p % params_sliceXY % nx_xy
-            write(u,'(A,I0)')     '   ny_xy      : ', p % params_sliceXY % ny_xy
-            write(u,'(A,2F10.3)') '   xlim_xy    : ', p % params_sliceXY % xlim_xy
-            write(u,'(A,2F10.3)') '   ylim_xy    : ', p % params_sliceXY % ylim_xy
-            write(u,'(A,2F10.3)') '   center_xy  : ', p % params_sliceXY % center_xy
+            write(u,'(A,F8.2,A)') '   z_xy       : ', pp % params_sliceXY % z_xy, ' m'
+            write(u,'(A,I0)')     '   nx_xy      : ', pp % params_sliceXY % nx_xy
+            write(u,'(A,I0)')     '   ny_xy      : ', pp % params_sliceXY % ny_xy
+            write(u,'(A,2F10.3)') '   xlim_xy    : ', pp % params_sliceXY % xlim_xy
+            write(u,'(A,2F10.3)') '   ylim_xy    : ', pp % params_sliceXY % ylim_xy
+            write(u,'(A,2F10.3)') '   center_xy  : ', pp % params_sliceXY % center_xy
         end if
 
         if (d % do_sliceXZ) then
             write(u,'(A)') ''
             write(u,'(A)')        'SliceXZ:'
-            write(u,'(A,F8.2,A)') '   y_xz       : ', p % params_sliceXZ % y_xz, ' m'
-            write(u,'(A,I0)')     '   nx_xz      : ', p % params_sliceXZ % nx_xz
-            write(u,'(A,I0)')     '   nz_xz      : ', p % params_sliceXZ % nz_xz
-            write(u,'(A,2F10.3)') '   xlim_xz    : ', p % params_sliceXZ % xlim_xz
-            write(u,'(A,2F10.3)') '   zlim_xz    : ', p % params_sliceXZ % zlim_xz
+            write(u,'(A,F8.2,A)') '   y_xz       : ', pp % params_sliceXZ % y_xz, ' m'
+            write(u,'(A,I0)')     '   nx_xz      : ', pp % params_sliceXZ % nx_xz
+            write(u,'(A,I0)')     '   nz_xz      : ', pp % params_sliceXZ % nz_xz
+            write(u,'(A,2F10.3)') '   xlim_xz    : ', pp % params_sliceXZ % xlim_xz
+            write(u,'(A,2F10.3)') '   zlim_xz    : ', pp % params_sliceXZ % zlim_xz
         end if
 
         if (d % do_sphere) then
             write(u,'(A)') ''
             write(u,'(A)')        'Sphere:'
-            write(u,'(A,F8.2,A)') '   r_sphere       : ', p % params_sphere % r_sphere, ' m'
-            write(u,'(A,I0)')     '   n_theta_sphere : ', p % params_sphere % n_theta_sphere
-            write(u,'(A,I0)')     '   nz_sphere      : ', p % params_sphere % nz_sphere
-            write(u,'(A,3F10.3)') '   center_sphere  : ', p % params_sphere % center_sphere
+            write(u,'(A,F8.2,A)') '   r_sphere       : ', pp % params_sphere % r_sphere, ' m'
+            write(u,'(A,I0)')     '   n_theta_sphere : ', pp % params_sphere % n_theta_sphere
+            write(u,'(A,I0)')     '   nz_sphere      : ', pp % params_sphere % nz_sphere
+            write(u,'(A,3F10.3)') '   center_sphere  : ', pp % params_sphere % center_sphere
         end if
 
     end associate
@@ -295,34 +305,36 @@ END SUBROUTINE update_parameters
 ! (default: 3 points along +x at mid-depth). Saves the pressure, observer
 ! coordinates and frequency vector to the solver's HDF5 file.
 ! -------------------------------------------------------------------------
-SUBROUTINE run_spectrums(self, observers)
+SUBROUTINE run_spectrums(self)
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self
-    REAL(WP), INTENT(IN), OPTIONAL :: observers(:,:)
 
     ! Local variables
     COMPLEX(WP), ALLOCATABLE :: p(:,:)
     REAL(WP)   , ALLOCATABLE :: observers_(:,:)
-    REAL(WP)                 :: z_spectrums_
     INTEGER(I32) :: bs
 
     write(*,'(A)') '>> [Spectrums] computing pressure at observer points...'
 
     ! Defaults (resolved once, persisted back into run_inputs)
     associate(pp => self % run_inputs % params_spectrums)
-        if (pp % z_spectrums == DEFAULT_R) pp % z_spectrums = - self % turbine_data % Depth/2.0_WP
-        z_spectrums_ = pp % z_spectrums
+        if (pp % n_observers == DEFAULT_I) then
+            ALLOCATE(observers_(3,3))
+            observers_(:,1) = [10.0_WP, 250.0_WP, 500.0_WP]
+            observers_(:,2) = 0.0_WP
+            observers_(:,3) = - self % turbine_data % Depth / 2.0_WP
+        else
+            ALLOCATE(observers_(pp % n_observers, 3))
+            observers_(:,1) = pp % observers_x
+            observers_(:,2) = pp % observers_y
+            observers_(:,3) = pp % observers_z
+        end if
     end associate
 
-    if (PRESENT(observers)) then
-        observers_ = observers
-    else
-        ALLOCATE(observers_(3,3))
-        observers_(:,3) = z_spectrums_
-        observers_(:,2) = 0.0_WP
-        observers_(:,1) = [10.0_WP, 250.0_WP, 500.0_WP]
-    end if
-
     bs = self % block_size
+
+    if (any(observers_(:,3) > 0.0_WP)) & 
+    write(*,*) "WARNING AcousticSolver % run_spectrums: there are observers placed over z = 0 m"
+
 
     ! Compute pressure
     CALL self % check_observers_distances(observers_)

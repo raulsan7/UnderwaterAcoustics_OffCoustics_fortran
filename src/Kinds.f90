@@ -41,10 +41,12 @@ COMPLEX(WP), PARAMETER :: I1 = (0.0_WP, 1.0_WP)             ! [-] Imaginary unit
 
 
 ! ----------------------------------------
-! Default seintinel values
+! Arguments parser parameters
 ! ----------------------------------------
-REAL(WP)    , PARAMETER :: DEFAULT_R = -999.0_WP   ! [-] Sentinel for an unset REAL parameter
-INTEGER(I32), PARAMETER :: DEFAULT_I = -999_I32    ! [-] Sentinel for an unset INTEGER parameter
+REAL(WP)    , PARAMETER :: DEFAULT_R = -999.0_WP        ! [-] Sentinel for an unset REAL parameter
+INTEGER(I32), PARAMETER :: DEFAULT_I = -999_I32         ! [-] Sentinel for an unset INTEGER parameter
+INTEGER(I32), PARAMETER :: MAX_PARSE_OBS = 200_I32      ! [-] Internal buffer to inputed observers
+
 
 
 END MODULE Kinds

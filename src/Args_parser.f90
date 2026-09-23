@@ -568,19 +568,29 @@ SUBROUTINE read_spectrums_config(path, config)
     CHARACTER(len=200) :: iomsg
 
     ! Input variables
-    REAL(WP) :: z_spectrums
+    INTEGER(I32) :: n_observers
+    REAL(WP)     :: z_spectrums
+    REAL(WP)     :: observers_x(MAX_PARSE_OBS)
+    REAL(WP)     :: observers_y(MAX_PARSE_OBS)
+    REAL(WP)     :: observers_z(MAX_PARSE_OBS)
 
 
     ! ==============================
     ! Configuration namelist
     ! ==============================
-    namelist /spectrums_config/    &
-        z_spectrums
+    namelist /spectrums_config/     &
+        n_observers,                &
+        observers_x,                &
+        observers_y,                &
+        observers_z
 
     ! ==============================
     ! Defaults
     ! ==============================
-        z_spectrums = DEFAULT_R
+        n_observers = DEFAULT_I
+        observers_x = DEFAULT_R
+        observers_y = DEFAULT_R
+        observers_z = DEFAULT_R
 
     ! ==============================
     ! Open and read namelist file
@@ -601,10 +611,21 @@ SUBROUTINE read_spectrums_config(path, config)
 
     close(unit_num)
 
+    if (n_observers > MAX_PARSE_OBS) then
+        write(*,*) "ERROR read_spectrums_config: n_observers, exceeds the internal parsing cap of ", MAX_PARSE_OBS
+        stop
+    end if 
+
     ! ==============================
     ! Pack values into Config_t 
     ! ==============================
-    config % run_inputs % params_spectrums % z_spectrums = z_spectrums
+    config % run_inputs % params_spectrums % n_observers = n_observers
+
+    if (n_observers /= DEFAULT_I .and. n_observers > 0) then
+        config % run_inputs % params_spectrums % observers_x = observers_x(1:n_observers)
+        config % run_inputs % params_spectrums % observers_y = observers_y(1:n_observers)
+        config % run_inputs % params_spectrums % observers_z = observers_z(1:n_observers)
+    end if
 
 END SUBROUTINE read_spectrums_config
 

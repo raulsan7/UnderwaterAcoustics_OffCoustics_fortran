@@ -91,6 +91,8 @@ SUBROUTINE init_ImageMethod(self, sources, config)
     TYPE(AcousticSource_t), INTENT(INOUT), ALLOCATABLE :: sources
     TYPE(Config_t)        , INTENT(INOUT), ALLOCATABLE :: config
 
+    REAL(WP) :: H
+
     ! Parent variables
     self % sources      = sources
     self % env          = config % env
@@ -118,7 +120,13 @@ SUBROUTINE init_ImageMethod(self, sources, config)
     ! Build save_path
     CALL self % build_save_path()
     
-    if (self % Upper_HBC <= self % Lower_HBC) error stop "ImageMethod % init: Upper_HBC must be strictly greater than Lower_HBC"
+    H = self % Upper_HBC - self % Lower_HBC
+    if (H < 0.0_WP) error stop "ImageMethod % init: Upper_HBC must be strictly greater than Lower_HBC"
+    if ( abs(H - self % env % depth_base) > 1e-6 .or. &
+         abs(H - self % turbine_data % Depth) > 1e-6 .or. &
+         abs(self % env % depth_base - self % turbine_data % Depth) > 1e-6 ) then
+            error stop "ImageMethod % init: turbine, environmental and solver depth must be equal"
+    end if
     
     print*, ''
     print*, 'Selected method: ', self % get_name()

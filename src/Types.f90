@@ -198,7 +198,10 @@ END TYPE Config_DoRun_t
 ! ===============================================================================
 TYPE :: Config_Spectrums_t
 
-    REAL(WP) :: z_spectrums = DEFAULT_R     ! [m] Depth of the 3 default observer points
+    INTEGER(I32)          :: n_observers        ! [-] Number of observers
+    REAL(WP), ALLOCATABLE :: observers_x(:)     ! [m] x-coordinates for the observers
+    REAL(WP), ALLOCATABLE :: observers_y(:)     ! [m] y-coordinates for the observers
+    REAL(WP), ALLOCATABLE :: observers_z(:)     ! [m] z-coordinates for the observers
 
 END TYPE Config_Spectrums_t
 

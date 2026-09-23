@@ -162,6 +162,7 @@ SUBROUTINE init(self, config)
     LOGICAL          :: exists = .false.
 
     self % rootname      = config % rootname
+    self % case_type     = config % case_type
     self % OP_output_dir = config % OP_output_dir
     self % Binary        = config % Binary
     self % WindSpeed     = config % WindSpeed
