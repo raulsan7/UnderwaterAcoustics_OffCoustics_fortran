@@ -204,7 +204,7 @@ SUBROUTINE update_parameters(self)
 
     associate(d => self % run_inputs % do_run, pp => self % run_inputs)
 
-                if (d % do_spectrums) then
+        if (d % do_spectrums) then
             write(u,'(A)') ''
             write(u,'(A)') 'Spectrums:'
             if (.not. ALLOCATED(pp % params_spectrums % observers_x)) then
