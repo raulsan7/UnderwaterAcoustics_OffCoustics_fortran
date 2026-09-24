@@ -88,7 +88,8 @@ OBJS := \
     $(BUILD)/DTU10MWFloating.o \
     $(BUILD)/DTU10MWMonopile.o \
     $(BUILD)/SAITEC2MWFloating.o \
-    $(BUILD)/ImageMethod.o
+    $(BUILD)/ImageMethod.o \
+    $(BUILD)/AnalyticalNormalModes.o
 
 .PHONY: all run clean
 all: $(EXE)
@@ -130,6 +131,9 @@ $(BUILD)/SAITEC2MWFloating.o: $(SRC_DIR)/core/TurbineTypes/SAITEC2MWFloating.f90
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/ImageMethod.o: $(SRC_DIR)/core/AcousticMethods/ImageMethod.f90 $(BUILD)/Kinds.o $(BUILD)/Types.o $(BUILD)/IOUtils.o $(BUILD)/WindTurbine.o $(BUILD)/AcousticSolver.o | $(BUILD)
+	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
+
+$(BUILD)/AnalyticalNormalModes.o: $(SRC_DIR)/core/AcousticMethods/AnalyticalNormalModes.f90 $(BUILD)/Kinds.o $(BUILD)/Types.o $(BUILD)/IOUtils.o $(BUILD)/MathUtils.o $(BUILD)/WindTurbine.o $(BUILD)/AcousticSolver.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/main.o: $(APP_DIR)/main.f90 $(OBJS) | $(BUILD)
