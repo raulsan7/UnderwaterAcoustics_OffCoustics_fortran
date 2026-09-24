@@ -4,7 +4,7 @@
 # =========================================================
 # 1. Ignora todo en la raíz y subcarpetas
 # *
-/build
+/build*
 /turbine_acoustic_data
 *.hdf5
 # SAITEC*

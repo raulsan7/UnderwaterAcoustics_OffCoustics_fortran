@@ -568,6 +568,11 @@ SUBROUTINE run_decay(self)
     ALLOCATE(observers(n_points, 3))
     ALLOCATE(distances(n_points))
 
+    if (distance(1) <= 0.0_WP) then
+        write(*,*) "WARNING AcousticSOlver % run_decay(): first point can't be placed at r = 0 m"
+        distance(1) = 1.0_WP
+    end if
+
     if (logspace) then
         d_log1 = log10(distance(1))
         d_log2 = log10(distance(2))
