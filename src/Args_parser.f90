@@ -42,8 +42,11 @@ SUBROUTINE read_input_files(files_path, config)
     CHARACTER(len=200) :: turbine_config_path
     CHARACTER(len=200) :: solver_config_path
     CHARACTER(len=200) :: environment_config_path
-    CHARACTER(len=200) :: ImagesMethod_config_path
     CHARACTER(len=200) :: computation_config_path
+
+    ! Methods
+    CHARACTER(len=200) :: ImagesMethod_config_path
+    CHARACTER(len=200) :: AnalyticalNormalModes_config_path
 
 
     if (.not. ALLOCATED(config)) ALLOCATE(Config_t :: config)
@@ -51,13 +54,18 @@ SUBROUTINE read_input_files(files_path, config)
     turbine_config_path      = files_path // "Turbine.nml"
     solver_config_path       = files_path // "Solver.nml"
     environment_config_path  = files_path // "Environment.nml"
-    ImagesMethod_config_path = files_path // "ImagesMethod.nml"
     computation_config_path  = files_path // "ComputationSetupTurbine.nml"
 
+    ! Methods paths
+    ImagesMethod_config_path = files_path          // "ImagesMethod.nml"
+    AnalyticalNormalModes_config_path = files_path // "AnalyticalNormalModes.nml"
+
+    ! Read principal files
     CALL read_turbine_config     (turbine_config_path     , config)
     CALL read_solver_config      (solver_config_path      , config)
     CALL read_environment_config (environment_config_path , config)
     CALL read_computation_config (computation_config_path , config)
+
 
     ! Dispatch to the method-specific config reader based on which
     ! acoustic solver was selected in Solver.nml
@@ -67,7 +75,8 @@ SUBROUTINE read_input_files(files_path, config)
         CALL read_ImageMethod_config(ImagesMethod_config_path, config)
     
     CASE('AnalyticalNormalModes')
-        error stop "Analytical normal modes: Not implemented yet"
+        ALLOCATE(Config_AnalyticalNormalModes_t :: config % method)
+        CALL read_AnalyticalNormalModes_config(AnalyticalNormalModes_config_path, config)
 
     CASE DEFAULT
         error stop "read_input_files(): Unknown method "
@@ -432,8 +441,80 @@ SUBROUTINE read_ImageMethod_config(path, config)
         m % epsilon             = epsilon
     END SELECT
 
-
 END SUBROUTINE read_ImageMethod_config
+
+
+! -------------------------------------------------------------------------
+! Subroutine: read_AnalyticalNormalModes_config
+! Reads the "AnalyticalNormalModes_config" namelist from
+! AnalyticalNormalModes.nml (number of retained modes, upper/lower
+! waveguide boundary heights, epsilon) and packs the values into the
+! Config_AnalyticalNormalModes_t instance held by config % method. Only
+! called when the Analytical Normal Modes solver was selected in Solver.nml.
+! -------------------------------------------------------------------------
+SUBROUTINE read_AnalyticalNormalModes_config(path, config)
+    CHARACTER(len=*), INTENT(IN)    :: path
+    TYPE(Config_t)  , INTENT(INOUT) :: config
+
+    ! Local variables
+    INTEGER(I32)       :: unit_num, ierr
+    CHARACTER(len=200) :: iomsg
+
+    ! Input variables
+    INTEGER(I32) :: Nmodes  
+    REAL(WP)     :: UpperHBC
+    REAL(WP)     :: LowerHBC
+    REAL(WP)     :: epsilon 
+
+
+    ! ==============================
+    ! Configuration namelist
+    ! ==============================
+    namelist /AnalyticalNormalModes_config/     &
+        Nmodes,                                 &
+        UpperHBC,                               &
+        LowerHBC,                               &
+        epsilon
+
+    ! ==============================
+    ! Defaults
+    ! ==============================
+    Nmodes   = DEFAULT_I
+    UpperHBC = 0.0_WP
+    LowerHBC = -30.0_WP
+    epsilon  = 1.0e-12_WP
+
+    ! ==============================
+    ! Open and read namelist file
+    ! ==============================
+    open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
+    if (ierr /= 0) then
+        write(*,*) "ERROR: Could not open input file: ", path
+        stop
+    end if
+
+    rewind(unit_num)
+    read(unit_num, nml=AnalyticalNormalModes_config, iostat=ierr, iomsg=iomsg)
+    if (ierr /= 0) then
+        write(*,*) "ERROR: Failed to read &AnalyticalNormalModes_config: ", trim(iomsg)
+        close(unit_num)
+        stop
+    end if
+
+    close(unit_num)
+
+    ! ==============================
+    ! Pack values into Config_t 
+    ! ==============================
+    SELECT TYPE(m => config % method)
+    TYPE IS(Config_AnalyticalNormalModes_t)
+        m % Nmodes   = Nmodes
+        m % UpperHBC = UpperHBC
+        m % LowerHBC = LowerHBC
+        m % epsilon  = epsilon
+    END SELECT
+
+END SUBROUTINE read_AnalyticalNormalModes_config
 
 
 ! -------------------------------------------------------------------------

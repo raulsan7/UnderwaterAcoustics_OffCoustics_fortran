@@ -1,0 +1,20 @@
+! =====================================================================
+! Analytical normal modes configuration file
+! =====================================================================
+
+&AnalyticalNormalModes_config
+
+    ! --- Modal expansion --- !
+    Nmodes = -999                  ! [-] Number of normal modes retained (-999 = auto: propagating modes at f_max + 5)
+
+    ! --- Waveguide boundaries --- !
+    UpperHBC = 0.0                 ! [m] z-coordinate of the upper boundary (free surface, pressure-release p=0)
+    LowerHBC = -350.0               ! [m] z-coordinate of the lower boundary (seabed, rigid dp/dz=0)
+
+    ! --- Numerical tolerance --- !
+    epsilon = 1.0e-6              ! [m] Minimum horizontal source-observer distance, avoids the r=0 singularity
+
+/
+
+
+! Mandatory: Leave blank space at the end of the file

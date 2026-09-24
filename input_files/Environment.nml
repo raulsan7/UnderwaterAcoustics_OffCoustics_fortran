@@ -3,7 +3,7 @@
 ! =====================================================================
 
 &environment_config
-    depth_base = 80.0             ! [m] Default site water depth
+    depth_base = 350.0             ! [m] Default site water depth
     speed_sound_base = 1500.0     ! [m/s] Speed of sound in the fluid
     density_base = 1025.0         ! [kg/m3] Fluid density
     reference_pressure = 1.0e-6   ! [Pa] Reference pressure used for dB/SPL calculations

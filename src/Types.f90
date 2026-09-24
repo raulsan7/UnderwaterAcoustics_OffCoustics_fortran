@@ -137,8 +137,6 @@ END TYPE Config_Method_t
 TYPE, EXTENDS(Config_Method_t) :: Config_ImageMethod_t
 
     INTEGER(I32) :: N_images               ! [-] Number of image source levels used to enforce boundary conditions
-    REAL(WP)     :: speed_sound            ! [m/s] Speed of sound override for the image method (reserved, currently unused)
-    REAL(WP)     :: density                ! [kg/m3] Fluid density override for the image method (reserved, currently unused)
     INTEGER(I32) :: UpperBC                ! [-] Upper boundary condition flag (-1: pressure-release surface, p = 0)
     INTEGER(I32) :: LowerBC                ! [-] Lower boundary condition flag (+1: rigid boundary, dp/dn = 0)
     REAL(WP)     :: UpperHBC               ! [m] z-coordinate of the upper reflecting plane (e.g. free surface)
@@ -165,6 +163,16 @@ TYPE :: ImageSystem_t
     INTEGER(I32), ALLOCATABLE :: BC_all(:)     ! [-] Boundary conditions array
 
 END TYPE ImageSystem_t
+
+
+TYPE, EXTENDS(Config_Method_t) :: Config_AnalyticalNormalModes_t
+
+    INTEGER(I32) :: Nmodes      ! [-] Number of retained nodes
+    REAL(WP)     :: UpperHBC    ! [m] z-coordinate of the upper reflecting plane (e.g. free surface)
+    REAL(WP)     :: LowerHBC    ! [m] z-coordinate of the lower reflecting plane (e.g. seabed)
+    REAL(WP)     :: epsilon     ! [-] Small numerical tolerance used to avoid singularities
+
+END TYPE Config_AnalyticalNormalModes_t
 
 
 ! ===============================================================================

@@ -121,11 +121,11 @@ SUBROUTINE init_ImageMethod(self, sources, config)
     CALL self % build_save_path()
     
     H = self % Upper_HBC - self % Lower_HBC
-    if (H < 0.0_WP) error stop "ImageMethod % init: Upper_HBC must be strictly greater than Lower_HBC"
+    if (H <= 0.0_WP) error stop "ImageMethod % init(): Upper_HBC must be strictly greater than Lower_HBC"
     if ( abs(H - self % env % depth_base) > 1e-6 .or. &
          abs(H - self % turbine_data % Depth) > 1e-6 .or. &
          abs(self % env % depth_base - self % turbine_data % Depth) > 1e-6 ) then
-            error stop "ImageMethod % init: turbine, environmental and solver depth must be equal"
+            error stop "ImageMethod % init(): turbine, environmental and solver depth must be equal"
     end if
     
     print*, ''

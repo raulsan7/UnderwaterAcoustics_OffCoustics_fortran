@@ -28,6 +28,7 @@ USE AcousticSolver, ONLY: AcousticSolver_t
 USE DTU10MWMonopile, ONLY: DTU10MWMonopile_t
 USE DTU10MWFloating, ONLY: DTU10MWFloating_t
 USE SAITEC2MWFloating, ONLY: SAITEC2MWFloating_t
+USE AnalyticalNormalModes, ONLY: AnalyticalNormalModes_t
 
 IMPLICIT NONE
 
@@ -78,8 +79,7 @@ CHARACTER(len=8) :: tag
     CASE("ImageMethod")
         ALLOCATE(ImageMethod_t :: active_solver)
     CASE("AnalyticalNormalModes")
-        ! ALLOCATE(AnalyticalNormalModes_t :: active_solver)
-        error stop "Not implemented yet"
+        ALLOCATE(AnalyticalNormalModes_t :: active_solver)
     END SELECT
     write(*,*) ">> Launching acoustic propagation solver: ", trim(config % solver % method)
     
@@ -90,7 +90,7 @@ CHARACTER(len=8) :: tag
 
 
     ! 7. Run acoustic propagation
-        DEALLOCATE(active_turbine)      ! Memory cleanup
+    DEALLOCATE(active_turbine)      ! Memory cleanup
     CALL active_solver % run()
     CALL active_solver % update_parameters()
 
