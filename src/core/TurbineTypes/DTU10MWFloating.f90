@@ -540,25 +540,30 @@ SUBROUTINE save_specific_params_DTU10MWFloating(self, save_path, istr)
     CLASS(DTU10MWFloating_t), INTENT(IN) :: self
     CHARACTER(len=*)      , INTENT(IN) :: save_path
     CHARACTER(len=*)      , INTENT(IN), OPTIONAL :: istr
+
     
     if (PRESENT(istr)) then
-        CALL save_variable(save_path, "col_D_"       // istr, self % col_D)
-        CALL save_variable(save_path, "XsecA_"       // istr, self % XsecA)
-        CALL save_variable(save_path, "XsecB_"       // istr, self % XsecB)
-        CALL save_variable(save_path, "t_"           // istr, self % t)
-        CALL save_variable(save_path, "rho_mat_"     // istr, self % rho_mat)
-        CALL save_variable(save_path, "wet_area_"    // istr, self % wet_area)
-        CALL save_variable(save_path, "col_members_" // istr, self % col_members)
-        CALL save_variable(save_path, "pon_members_" // istr, self % pon_members)
+        CALL save_variable(save_path, "Case_type_"       // istr, self % case_type)
+        CALL save_variable(save_path, "Structure_nodes_" // istr, self % xyz_all)
+        CALL save_variable(save_path, "col_D_"           // istr, self % col_D)
+        CALL save_variable(save_path, "XsecA_"           // istr, self % XsecA)
+        CALL save_variable(save_path, "XsecB_"           // istr, self % XsecB)
+        CALL save_variable(save_path, "t_"               // istr, self % t)
+        CALL save_variable(save_path, "rho_mat_"         // istr, self % rho_mat)
+        CALL save_variable(save_path, "wet_area_"        // istr, self % wet_area)
+        CALL save_variable(save_path, "col_members_"     // istr, self % col_members)
+        CALL save_variable(save_path, "pon_members_"     // istr, self % pon_members)
     else
-        CALL save_variable(save_path, "col_D"      , self % col_D)
-        CALL save_variable(save_path, "XsecA"      , self % XsecA)
-        CALL save_variable(save_path, "XsecB"      , self % XsecB)
-        CALL save_variable(save_path, "t"          , self % t)
-        CALL save_variable(save_path, "rho_mat"    , self % rho_mat)
-        CALL save_variable(save_path, "wet_area"   , self % wet_area)
-        CALL save_variable(save_path, "col_members", self % col_members)
-        CALL save_variable(save_path, "pon_members", self % pon_members)
+        CALL save_variable(save_path, "Case_type"      , self % case_type)
+        CALL save_variable(save_path, "Structure_nodes", self % xyz_all)
+        CALL save_variable(save_path, "col_D"          , self % col_D)
+        CALL save_variable(save_path, "XsecA"          , self % XsecA)
+        CALL save_variable(save_path, "XsecB"          , self % XsecB)
+        CALL save_variable(save_path, "t"              , self % t)
+        CALL save_variable(save_path, "rho_mat"        , self % rho_mat)
+        CALL save_variable(save_path, "wet_area"       , self % wet_area)
+        CALL save_variable(save_path, "col_members"    , self % col_members)
+        CALL save_variable(save_path, "pon_members"    , self % pon_members)
     end if
 
 END SUBROUTINE save_specific_params_DTU10MWFloating

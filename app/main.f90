@@ -27,6 +27,7 @@ USE Args_parser, ONLY: read_input_files
 USE AcousticSolver, ONLY: AcousticSolver_t
 USE DTU10MWMonopile, ONLY: DTU10MWMonopile_t
 USE DTU10MWFloating, ONLY: DTU10MWFloating_t
+USE SAITEC2MWFloating, ONLY: SAITEC2MWFloating_t
 
 IMPLICIT NONE
 
@@ -51,6 +52,8 @@ CHARACTER(len=8) :: tag
         ALLOCATE(DTU10MWMonopile_t :: active_turbine)
     CASE ('DTU10MWFloating')
         ALLOCATE(DTU10MWFloating_t :: active_turbine)
+    CASE ('SAITEC2MWFloating')
+        ALLOCATE(SAITEC2MWFloating_t :: active_turbine)
     CASE DEFAULT
         write(*,*) 'Unsupported turbine type: ' // trim(config % turbine % case_type)
         stop

@@ -186,6 +186,34 @@ END FUNCTION divide_span
 
 
 ! -------------------------------------------------------------------------
+! Function: integral_elipse_z
+! Area under the horizontal line z = k inside the ellipse
+! (2y/Dy)^2 + (2z/Dz)^2 <= 1, i.e. the submerged cross-sectional area of an
+! elliptical member (semi-axes Dy/2, Dz/2) up to elevation k. Used to build
+! the outer/inner submerged shell area of the SAITEC elliptical floaters.
+! -------------------------------------------------------------------------
+PURE FUNCTION integral_elipse_z(Dy, Dz, k) RESULT(area)
+    REAL(WP), INTENT(IN) :: Dy   ! [m] Diameter in y-direction
+    REAL(WP), INTENT(IN) :: Dz   ! [m] Diameter in z-direction
+    REAL(WP), INTENT(IN) :: k    ! [m] z(y) = k line
+    REAL(WP) :: area
+
+    REAL(WP) :: a, b, elipse_area, k_clip, u
+
+    a = Dy / 2.0_WP
+    b = Dz / 2.0_WP
+
+    elipse_area = PI * a * b
+
+    k_clip = min(max(k, -b), b)
+    u = k_clip / b
+
+    area = 0.5_WP * elipse_area + a * b * (asin(u) + u * sqrt(1.0_WP - u*u))
+
+END FUNCTION integral_elipse_z
+
+
+! -------------------------------------------------------------------------
 ! Subroutine: compute_rfft
 ! Computes the Real Fast Fourier Transform (RFFT) of a 3D time-series array
 ! via FFTW. Optimized for HPC: eliminates all intermediate arrays, fuses

@@ -7,6 +7,7 @@
 /build
 /turbine_acoustic_data
 *.hdf5
+# SAITEC*
 
 # 2. Permite explorar dentro de las carpetas (necesario para que
 #    Git entre en subdirectorios y aplique las reglas siguientes)

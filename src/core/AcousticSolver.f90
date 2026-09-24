@@ -65,12 +65,12 @@ TYPE, ABSTRACT :: AcousticSolver_t
     PROCEDURE :: run_sphere => dummy_run_sphere
 
     ! --- Deferred(abstract) procedures --- !
-    PROCEDURE(init_i)            , DEFERRED :: init
-    PROCEDURE(get_name_i)        , DEFERRED :: get_name
-    PROCEDURE(compute_pressure_i), DEFERRED :: compute_pressure
-    PROCEDURE(save_parameters_i)   , DEFERRED :: save_parameters
-    PROCEDURE(build_save_path_i)   , DEFERRED :: build_save_path
-    PROCEDURE(write_txt_summary_i) , DEFERRED :: write_txt_summary
+    PROCEDURE(init_i)             , DEFERRED :: init
+    PROCEDURE(get_name_i)         , DEFERRED :: get_name
+    PROCEDURE(compute_pressure_i) , DEFERRED :: compute_pressure
+    PROCEDURE(save_parameters_i)  , DEFERRED :: save_parameters
+    PROCEDURE(build_save_path_i)  , DEFERRED :: build_save_path
+    PROCEDURE(write_txt_summary_i), DEFERRED :: write_txt_summary
 
 END TYPE AcousticSolver_t
 

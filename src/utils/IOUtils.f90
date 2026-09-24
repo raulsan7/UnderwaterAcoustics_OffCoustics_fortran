@@ -919,9 +919,15 @@ END FUNCTION read_curve
 
 ! -------------------------------------------------------------------------
 ! Subroutine: parse_member_nodes
-! Tokenizes a whitespace-separated SD.sum.yaml member-mapping line (after
-! stripping any trailing '#' comment) and extracts the last max_nodes
-! tokens as integer node IDs for that member.
+! Tokenizes a whitespace-separated SD.sum.yaml member-mapping line (of the
+! form "#Member I Joint1_ID Joint2_ID Prop_I Prop_J Mass Length Node
+! IDs..."), skips the fixed 7-column prefix, and extracts the remaining
+! tokens as this member's integer node IDs. That trailing node-ID list can
+! be SHORTER than max_nodes (e.g. exactly 2 for a two-noded "Rigid link"
+! member, versus Nnodes for a fully-discretized one); missing slots are
+! left as 0, later padded to NaN coordinates by the caller. Any trailing
+! "# <comment>" annotation (e.g. "# Rigid link") is truncated away rather
+! than blanked, so it never turns into spurious extra tokens.
 ! -------------------------------------------------------------------------
 SUBROUTINE parse_member_nodes(text_line, max_nodes, node_arr)
     CHARACTER(len=*), INTENT(IN) :: text_line           ! [-] Line read in SD.sum.yaml
@@ -932,18 +938,24 @@ SUBROUTINE parse_member_nodes(text_line, max_nodes, node_arr)
     ! Local variables
     INTEGER(I32), PARAMETER  :: max_tokens = 200        ! [-] Safety upper bound on number of whitespace-separated tokens
     INTEGER(I32), PARAMETER  :: token_len = 32          ! [-] Max characters per token
+    INTEGER(I32), PARAMETER  :: n_prefix = 7            ! [-] I, Joint1_ID, Joint2_ID, Prop_I, Prop_J, Mass, Length
     CHARACTER(len=token_len) :: tokens(max_tokens)
     CHARACTER(len=len(text_line)) :: line_trim
-    INTEGER(I32) :: n_tokens, i, istart, line_len, ierr
+    INTEGER(I32) :: n_tokens, i, istart, line_len, ierr, n_node_ids, pos_hash
     LOGICAL :: in_token
 
 
     line_trim = adjustl(text_line)
     line_len  = len_trim(line_trim)
 
-    do i = 1, line_len
-        if (line_trim(i:i) == '#') line_trim(i:i) = ' '
-    end do
+    ! Strip the leading '#' comment marker
+    if (line_len > 0 .and. line_trim(1:1) == '#') line_trim(1:1) = ' '
+
+    ! A second '#' marks a trailing annotation (e.g. "# Rigid link"):
+    ! truncate the line there instead of blanking it.
+    pos_hash = index(line_trim(1:line_len), '#')
+    if (pos_hash > 0) line_len = pos_hash - 1
+    line_len = len_trim(line_trim(1:line_len))
 
 
     n_tokens = 0; in_token = .false.; istart = 0
@@ -980,19 +992,23 @@ SUBROUTINE parse_member_nodes(text_line, max_nodes, node_arr)
         tokens(n_tokens) = line_trim(istart:line_len)
     end if
 
-    ! Fast fall validation
-    if (n_tokens < max_nodes) then
+    ! Fast fail validation: need at least the fixed prefix columns
+    if (n_tokens < n_prefix) then
         print *, 'Error in parse_member_nodes: line has only ', n_tokens, &
-                    ' tokens, but max_nodes = ', max_nodes, '. Line: ', TRIM(text_line)
+                    ' tokens, expected at least ', n_prefix, ' prefix columns. Line: ', TRIM(text_line)
         stop 1
     end if
 
-    ! Extract and convert the LAST max_nodes tokens to integers
-    do i = 1, max_nodes
-        read(tokens(n_tokens - max_nodes + i), *, IOSTAT=ierr) node_arr(i)
+    ! Node IDs are whatever tokens remain after the fixed prefix columns
+    ! (variable length: e.g. 2 for a rigid-link member, max_nodes for a
+    ! fully-discretized one). Missing slots are left as 0.
+    node_arr = 0_I32
+    n_node_ids = min(n_tokens - n_prefix, max_nodes)
+    do i = 1, n_node_ids
+        read(tokens(n_prefix + i), *, IOSTAT=ierr) node_arr(i)
         if (ierr /= 0) then
             print *, 'Error in parse_member_nodes: could not parse token "', &
-                        TRIM(tokens(n_tokens - max_nodes + i)), '" as integer. Line: ', TRIM(text_line)
+                        TRIM(tokens(n_prefix + i)), '" as integer. Line: ', TRIM(text_line)
             stop 1
         end if
     end do
@@ -1120,12 +1136,13 @@ SUBROUTINE save_variable(save_path, var_name, var)
     CLASS(*)        , INTENT(IN) :: var(..)
     
     SELECT RANK (v_rank => var)
-    RANK(0) 
+    RANK(0)
         SELECT TYPE (v => v_rank)
         TYPE IS (REAL(WP)) ; CALL save_to_hdf5(save_path, trim(var_name), v)
         TYPE IS (INTEGER) ; CALL save_to_hdf5(save_path, trim(var_name), v)
         TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
         TYPE IS (LOGICAL) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (CHARACTER(*)); CALL save_to_hdf5(save_path, trim(var_name), v)
         END SELECT
     RANK(1) 
         SELECT TYPE (v => v_rank)

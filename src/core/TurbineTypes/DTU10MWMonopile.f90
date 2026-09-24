@@ -366,13 +366,17 @@ SUBROUTINE save_specific_params_DTU10MWMonopile(self, save_path, istr)
     CHARACTER(len=*)        , INTENT(IN), OPTIONAL :: istr
     
     if (PRESENT(istr)) then
-        CALL save_variable(save_path, "D_"        // istr, self % D)
-        CALL save_variable(save_path, "rho_mat_"  // istr, self % rho_mat)
-        CALL save_variable(save_path, "wet_area_" // istr, self % wet_area)
+        CALL save_variable(save_path, "Case_type_"       // istr, self % case_type)
+        CALL save_variable(save_path, "Structure_nodes_" // istr, self % xyz_all)
+        CALL save_variable(save_path, "D_"               // istr, self % D)
+        CALL save_variable(save_path, "rho_mat_"         // istr, self % rho_mat)
+        CALL save_variable(save_path, "wet_area_"        // istr, self % wet_area)
     else
-        CALL save_variable(save_path, "D", self % D)
-        CALL save_variable(save_path, "rho_mat", self % rho_mat)
-        CALL save_variable(save_path, "wet_area", self % wet_area)
+        CALL save_variable(save_path, "Case_type"      , self % case_type)
+        CALL save_variable(save_path, "Structure_nodes", self % xyz_all)
+        CALL save_variable(save_path, "D"              , self % D)
+        CALL save_variable(save_path, "rho_mat"        , self % rho_mat)
+        CALL save_variable(save_path, "wet_area"       , self % wet_area)
     end if
 
 END SUBROUTINE save_specific_params_DTU10MWMonopile

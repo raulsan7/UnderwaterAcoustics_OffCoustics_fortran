@@ -5,13 +5,13 @@
 &ImagesMethod_config
 
     ! --- Image construction --- !
-    N_images = 30                  ! [-] Number of image source levels used to enforce the boundary conditions
+    N_images = 12                  ! [-] Number of image source levels used to enforce the boundary conditions
 
     ! --- Boundary conditions --- !
     UpperBC = -1                   ! [-] Upper boundary type: -1 = pressure-release (p=0), +1 = rigid (dp/dn=0)
     LowerBC = 1                    ! [-] Lower boundary type: -1 = pressure-release (p=0), +1 = rigid (dp/dn=0)
     UpperHBC = 0.0                 ! [m] z-coordinate of the upper reflecting plane (e.g. free surface)
-    LowerHBC = -30.0               ! [m] z-coordinate of the lower reflecting plane (e.g. seabed)
+    LowerHBC = -80.0               ! [m] z-coordinate of the lower reflecting plane (e.g. seabed)
 
     ! --- Attenuation and numerical tolerance --- !
     attenuation_surface = 1.0      ! [-] Attenuation coefficient applied to surface-reflected images

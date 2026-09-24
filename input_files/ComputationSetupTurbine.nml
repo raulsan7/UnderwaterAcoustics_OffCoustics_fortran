@@ -26,15 +26,15 @@
 ! Which post-processing steps to run
 ! ---------------------------------------------------------------
 &do_config
-    do_all       = .true.       ! [-] Run all cases listed bellow
+    do_all       = .false.       ! [-] Run all cases listed bellow
     do_spectrums = .true.       ! [-] Spectrums at observer points (run_spectrums)
-    do_polar     = .true.       ! [-] Polar contour (run_polar)
-    do_cylinder  = .true.       ! [-] Cylinder surface (run_cylinder)
-    do_decay     = .true.       ! [-] Distance decay along wind direction (run_decay)
-    do_line      = .true.       ! [-] Line between two points (run_line)
-    do_sliceXY   = .true.       ! [-] Horizontal slice XY (run_sliceXY)
-    do_sliceXZ   = .true.       ! [-] Vertical slice XZ (run_sliceXZ)
-    do_sphere    = .true.       ! [-] Spherical radiation, free-field (run_sphere)
+    do_polar     = .false.       ! [-] Polar contour (run_polar)
+    do_cylinder  = .false.       ! [-] Cylinder surface (run_cylinder)
+    do_decay     = .false.       ! [-] Distance decay along wind direction (run_decay)
+    do_line      = .false.       ! [-] Line between two points (run_line)
+    do_sliceXY   = .false.       ! [-] Horizontal slice XY (run_sliceXY)
+    do_sliceXZ   = .false.       ! [-] Vertical slice XZ (run_sliceXZ)
+    do_sphere    = .false.       ! [-] Spherical radiation, free-field (run_sphere)
 /
 
 
@@ -43,9 +43,9 @@
 ! ---------------------------------------------------------------
 &spectrums_config
     n_observers = 3                  ! [-] Number of observers that are going to be listed below
-    observers_x = 10.0, 250.0, 750.0    ! [m] x-coordinate of the observers
+    observers_x = 70.0, 80.0, 90.0    ! [m] x-coordinate of the observers
     observers_y = 0.0, 0.0, 0.0         ! [m] y-coordinate of the observers
-    observers_z = -15.0, -15.0, -15.0   ! [m] z-coordinate of the observers
+    observers_z = -80.0, -80.0, -80.0   ! [m] z-coordinate of the observers
 /
 
 
@@ -75,9 +75,9 @@
 ! Distance decay along wind direction (run_decay)
 ! ---------------------------------------------------------------
 &decay_config
-    distance_decay = 10.0, 500.0    ! [m] Start and end distance from the turbine along the wind direction
+    distance_decay = 1.0, 200.0    ! [m] Start and end distance from the turbine along the wind direction
     n_decay = 200                   ! [-] Number of observer points along the decay line
-    z_decay = -999.0                ! [m] Depth of the decay line (-999.0 = auto: -Depth/2)
+    z_decay = -80.0                ! [m] Depth of the decay line (-999.0 = auto: -Depth/2)
     logspace_decay = .true.         ! [-] Whether to space the observer points logarithmically instead of linearly
 /
 
@@ -88,8 +88,8 @@
 ! n_line = -999 requests the automatic point count (distance/5 if the
 ! line is longer than 200 m, otherwise one point per metre).
 &line_config
-    p1_line = 100.0, 0.0, 0.0       ! [m] Line start point (x, y, z)
-    p2_line = 100.0, 0.0, -999.0    ! [m] Line end point (x, y, z); z = -999.0 = auto: -Depth
+    p1_line = 80.0, 0.0, 0.0       ! [m] Line start point (x, y, z)
+    p2_line = 80.0, 0.0, -999.0    ! [m] Line end point (x, y, z); z = -999.0 = auto: -Depth
     n_line = -999                   ! [-] Number of observer points along the line (-999 = automatic)
     logspace_line = .false.         ! [-] Whether to space the observer points logarithmically instead of linearly
 /
