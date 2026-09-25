@@ -290,7 +290,7 @@ SUBROUTINE compute_force_SAITEC2MWFloating(self, config, verbose)
     ! Use the parsed configuration for runtime options
     filter_freqs_ = config % filter_freqs
     verbose_      = verbose
-    skipf_        = config % skip
+    skipf_        = config % skipf
 
     Nm = self % Nmembers
     Nn = self % Nnodes

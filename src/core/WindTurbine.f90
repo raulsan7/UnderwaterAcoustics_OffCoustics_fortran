@@ -291,14 +291,14 @@ SUBROUTINE read_input(self, config, verbose)
         error stop "WindTurbine % read_input: Nmembers and Nnodes must be positive integers to read SubDyn nodes"
     end if
 
+    ! Align with wind direction and translate to axis position
+    CALL self % translate_align_with_WindDir()
+    
     ! Compute barycenter if not provided (BariPos = (0, 0) is taken as not provided)
     if (all(self % BariPos == [0.0_WP, 0.0_WP])) then
         self % BariPos(1) = sum(self % xyz_all(:, :, 1)) / real(self % Nmembers * self % Nnodes, WP)
         self % BariPos(2) = sum(self % xyz_all(:, :, 2)) / real(self % Nmembers * self % Nnodes, WP)
     end if
-
-    ! Align with wind direction and translate to axis position
-    CALL self % translate_align_with_WindDir()
     config % BariPos = self % BariPos
     config % AxisPos = self % AxisPos
 
@@ -345,7 +345,13 @@ SUBROUTINE translate_align_with_WindDir(self)
     c   = cos(yaw)
     s   = sin(yaw)
 
-    if (abs(self % WindDir) < 1.0e-12_WP) return
+    if (abs(self % WindDir) < 1.0e-12_WP) then
+        if (any(self % AxisPos /= 0.0_WP)) then
+            self % xyz_all(:, :, 1) = self % xyz_all(:, :, 1) + self % AxisPos(1)
+            self % xyz_all(:, :, 2) = self % xyz_all(:, :, 2) + self % AxisPos(2)
+        end if
+        return
+    end if
 
     axis_xy = self % AxisPos
 

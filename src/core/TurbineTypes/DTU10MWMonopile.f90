@@ -175,7 +175,7 @@ SUBROUTINE compute_force_DTU10MWMonopile(self, config, verbose)
     mass_eff = mass + added_mass
     DEALLOCATE(mass, added_mass)
 
-    CALL compute_rfft(acc_flat, nt, dt, skipf=config % skip, remove_zero=.true., &
+    CALL compute_rfft(acc_flat, nt, dt, skipf=config % skipf, remove_zero=.true., &
                       array_out=A, freqs=freqs)
     self % Freqs = freqs
 

@@ -220,7 +220,7 @@ SUBROUTINE check_observers_distances(self, observers, min_distance)
             dz   = self % sources % xyz(j, 3) - observers(i, 3)
             dist = sqrt(dx * dx + dy * dy + dz * dz)
 
-            if (abs(dist - min_dist) < 1.0e-6_WP) then
+            if (dist < min_dist) then
                 write(*, '(A,I0,A,3(F12.4,1X),A,F6.2,A)') &
                     "Observer ", i, " at (", observers(i, :), ") is too close to a turbine node (min distance: ", &
                     min_dist, " m)."
