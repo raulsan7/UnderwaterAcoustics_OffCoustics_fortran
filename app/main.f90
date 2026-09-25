@@ -12,7 +12,7 @@
 ! Affil.  : ETSIAE, Universidad Politecnica de Madrid
 ! Project : ERC project off-coustics
 ! Date    : 09/2026
-!-------------------------------------------------------------------------------
+! -------------------------------------------------------------------------------
 ! COMPILE AND RUN: fpm run --flag "-O3 -fopenmp"
 ! ===============================================================================
 PROGRAM main
@@ -40,14 +40,14 @@ CLASS(AcousticSolver_t), ALLOCATABLE :: active_solver
 REAL(WP)         :: start_time, elapsed_display
 CHARACTER(len=8) :: tag
 
-    WRITE(*,*) "=== Off_coustics_fortran Initialization ==="
+
+    write(*,*) "=== Off_coustics_fortran Initialization ==="
     start_time = real(omp_get_wtime(), WP)
 
-    ! 1. Load namelist dinamically
+    ! --- 1. Load namelists dynamically --- !
     CALL read_input_files("./input_files/", config)
 
-
-    ! 2. Polymorphic instance for wind turbine
+    ! --- 2. Polymorphic instance for wind turbine --- !
     SELECT CASE (trim(config % turbine % case_type))
     CASE ('DTU10MWMonopile')
         ALLOCATE(DTU10MWMonopile_t :: active_turbine)
@@ -61,41 +61,35 @@ CHARACTER(len=8) :: tag
     END SELECT
     write(*,*) '>> Instantiating ', trim(config % turbine % case_type), ' Turbine...'
 
-
-    ! 3. Solve structual dynamics
+    ! --- 3. Solve structural dynamics --- !
     write(*,*) ">> Processing turbine dynamics and structural forces..."
-    CALL active_turbine % init(config = config % turbine)
-    CALL active_turbine % read_input(config = config % turbine, verbose = .true.)
-    CALL active_turbine % compute_force(config = config % turbine, verbose=.true.)
+    CALL active_turbine % init(config=config % turbine)
+    CALL active_turbine % read_input(config=config % turbine, verbose=.true.)
+    CALL active_turbine % compute_force(config=config % turbine, verbose=.true.)
 
-
-    ! 4. Translate physical forces to mathematical acoustic sources
+    ! --- 4. Translate physical forces to mathematical acoustic sources --- !
     write(*,*) ">> Translating physical forces to mathematical acoustic sources..."
     CALL active_turbine % turbine_to_source(config, active_sources)
 
-    
-    ! 5. Execute generic solver
-    SELECT CASE(trim(config % solver % method))
-    CASE("ImageMethod")
+    ! --- 5. Execute generic solver --- !
+    SELECT CASE (trim(config % solver % method))
+    CASE ("ImageMethod")
         ALLOCATE(ImageMethod_t :: active_solver)
-    CASE("AnalyticalNormalModes")
+    CASE ("AnalyticalNormalModes")
         ALLOCATE(AnalyticalNormalModes_t :: active_solver)
     END SELECT
     write(*,*) ">> Launching acoustic propagation solver: ", trim(config % solver % method)
-    
 
-    ! 6. Set acoustic solver
+    ! --- 6. Set acoustic solver --- !
     CALL active_solver % init(active_sources, config)
     CALL active_solver % save_parameters(active_turbine)
 
-
-    ! 7. Run acoustic propagation
-    DEALLOCATE(active_turbine)      ! Memory cleanup
+    ! --- 7. Run acoustic propagation --- !
+    DEALLOCATE(active_turbine)    ! Memory cleanup
     CALL active_solver % run()
     CALL active_solver % update_parameters()
 
-
-    ! Finalize simulation
+    ! --- 8. Finalize simulation --- !
     CALL format_elapsed(start_time, elapsed_display, tag)
 
     write(*,*)

@@ -5,8 +5,8 @@
 &turbine_config
 
     ! --- Turbine identification --- !
-    case_type = 'DTU10MWFloating'             ! [-] Turbine model: 'DTU10MWMonopile', 'DTU10MWFloating' or 'SAITEC2MWFloating'
-    rootname = 'DTU_DeltaWind_fl_ws11.4'          ! [-] OpenFAST run name (no extension), used to locate its output files
+    case_type = 'DTU10MWMonopile'             ! [-] Turbine model: 'DTU10MWMonopile', 'DTU10MWFloating' or 'SAITEC2MWFloating'
+    rootname = 'DTU_DeltaWind_mn_ws11.4'          ! [-] OpenFAST run name (no extension), used to locate its output files
 
     ! --- OpenFAST input files --- !
     OP_output_dir = '../OP_output/'             ! [-] Directory containing the OpenFAST output/SubDyn files
@@ -17,13 +17,13 @@
     ! --- Operating point and placement --- !
     WindSpeed = 11.4                            ! [m/s] Wind speed of this operating point
     WindDir = 0.0                               ! [deg] Wind direction (0 deg points to +x, anticlockwise)
-    Depth = 350.0                                ! [m] Water depth at the turbine site
+    Depth = 30.0                                ! [m] Water depth at the turbine site
     AxisPos = 0.0, 0.0                          ! [m] Turbine axis (x, y) position in the global frame
     BariPos = 0.0, 0.0                          ! [m] Turbine baricenter (x, y) position; 0,0 triggers automatic computation
 
     ! --- Structural model size --- !
-    Nmembers = 9                                ! [-] Number of structural members in the SD.sum.yaml (incl. rigid links)
-    Nnodes = 9                                  ! [-] Number of structural nodes per member
+    Nmembers = 8                                ! [-] Number of structural members in the SD.sum.yaml (incl. rigid links)
+    Nnodes = 5                                  ! [-] Number of structural nodes per member
 
     ! --- Time-series reading window --- !
     From = 0.0                                  ! [-] Fraction of the time series to start reading from

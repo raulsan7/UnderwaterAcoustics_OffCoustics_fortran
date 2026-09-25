@@ -17,26 +17,28 @@
 ! ===============================================================================
 MODULE Args_parser
 
-    USE Kinds
-    USE Types
+USE Kinds
+USE Types
 
-    IMPLICIT NONE
+IMPLICIT NONE
 
-    PRIVATE
-    PUBLIC :: read_input_files
+PRIVATE
+PUBLIC :: read_input_files
+
 
 CONTAINS
 
-! -------------------------------------------------------------------------
-! Subroutine: read_input_files
-! Top-level entry point of the input-parsing stage. Builds the paths of
-! the four .nml files from files_path, reads the turbine, solver and
-! environment namelists, then dispatches to the method-specific config
-! reader based on the selected acoustic solver (config % solver % method).
-! -------------------------------------------------------------------------
+
 SUBROUTINE read_input_files(files_path, config)
-    CHARACTER(len=*), INTENT(IN)  :: files_path
-    TYPE(Config_t)  , INTENT(OUT), ALLOCATABLE :: config
+    ! -------------------------------------------------------------------------
+    ! Top-level entry point of the input-parsing stage. Builds the paths of
+    ! the four .nml files from files_path, reads the turbine, solver and
+    ! environment namelists, then dispatches to the method-specific config
+    ! reader based on the selected acoustic solver (config % solver % method).
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)               :: files_path    ! [-] Directory of the .nml files (with trailing '/')
+    TYPE(Config_t)  , INTENT(OUT), ALLOCATABLE :: config        ! [-] Global configuration filled in from the .nml files
 
     ! Local variables
     CHARACTER(len=200) :: turbine_config_path
@@ -44,37 +46,36 @@ SUBROUTINE read_input_files(files_path, config)
     CHARACTER(len=200) :: environment_config_path
     CHARACTER(len=200) :: computation_config_path
 
-    ! Methods
+    ! Method-specific configuration paths
     CHARACTER(len=200) :: ImagesMethod_config_path
     CHARACTER(len=200) :: AnalyticalNormalModes_config_path
 
 
     if (.not. ALLOCATED(config)) ALLOCATE(Config_t :: config)
 
-    turbine_config_path      = files_path // "Turbine.nml"
-    solver_config_path       = files_path // "Solver.nml"
-    environment_config_path  = files_path // "Environment.nml"
-    computation_config_path  = files_path // "ComputationSetupTurbine.nml"
+    turbine_config_path     = files_path // "Turbine.nml"
+    solver_config_path      = files_path // "Solver.nml"
+    environment_config_path = files_path // "Environment.nml"
+    computation_config_path = files_path // "ComputationSetupTurbine.nml"
 
-    ! Methods paths
-    ImagesMethod_config_path = files_path          // "ImagesMethod.nml"
+    ! Method-specific paths
+    ImagesMethod_config_path          = files_path // "ImagesMethod.nml"
     AnalyticalNormalModes_config_path = files_path // "AnalyticalNormalModes.nml"
 
     ! Read principal files
-    CALL read_turbine_config     (turbine_config_path     , config)
-    CALL read_solver_config      (solver_config_path      , config)
-    CALL read_environment_config (environment_config_path , config)
-    CALL read_computation_config (computation_config_path , config)
-
+    CALL read_turbine_config(turbine_config_path, config)
+    CALL read_solver_config(solver_config_path, config)
+    CALL read_environment_config(environment_config_path, config)
+    CALL read_computation_config(computation_config_path, config)
 
     ! Dispatch to the method-specific config reader based on which
     ! acoustic solver was selected in Solver.nml
-    SELECT CASE(trim(config % solver % method))
-    CASE('ImageMethod')
+    SELECT CASE (trim(config % solver % method))
+    CASE ('ImageMethod')
         ALLOCATE(Config_ImageMethod_t :: config % method)
         CALL read_ImageMethod_config(ImagesMethod_config_path, config)
-    
-    CASE('AnalyticalNormalModes')
+
+    CASE ('AnalyticalNormalModes')
         ALLOCATE(Config_AnalyticalNormalModes_t :: config % method)
         CALL read_AnalyticalNormalModes_config(AnalyticalNormalModes_config_path, config)
 
@@ -82,22 +83,21 @@ SUBROUTINE read_input_files(files_path, config)
         error stop "read_input_files(): Unknown method "
     END SELECT
 
-
 END SUBROUTINE read_input_files
 
 
-! -------------------------------------------------------------------------
-! Subroutine: read_turbine_config
-! Reads the "turbine_config" namelist from Turbine.nml (rootname, OpenFAST
-! output paths, wind/depth conditions, node counts, time window, frequency
-! filtering, etc.) and packs the values into config % turbine.
-! -------------------------------------------------------------------------
 SUBROUTINE read_turbine_config(path, config)
-    CHARACTER(len=*), INTENT(IN)  :: path
-    TYPE(Config_t)  , INTENT(INOUT) :: config
+    ! -------------------------------------------------------------------------
+    ! Reads the "turbine_config" namelist from Turbine.nml (rootname, OpenFAST
+    ! output paths, wind/depth conditions, node counts, time window, frequency
+    ! filtering, etc.) and packs the values into config % turbine.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to Turbine.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
-    INTEGER(I32) :: unit_num, ierr
+    INTEGER(I32)       :: unit_num, ierr
     CHARACTER(len=200) :: iomsg
 
     ! Input variables
@@ -110,7 +110,6 @@ SUBROUTINE read_turbine_config(path, config)
     INTEGER(I32)       :: Nnodes
     INTEGER(I32)       :: skip
     INTEGER(I32)       :: skipf
-    INTEGER(I32)       :: block_size
     REAL(WP)           :: WindSpeed
     REAL(WP)           :: WindDir
     REAL(WP)           :: Depth
@@ -122,34 +121,30 @@ SUBROUTINE read_turbine_config(path, config)
     LOGICAL            :: Binary
     LOGICAL            :: filter_freqs
 
-    
-    ! ==============================
-    ! Configuration namelist
-    ! ==============================
-    namelist /turbine_config/   &
-        case_type,              &
-        rootname,               &
-        OP_output_dir,          &
-        OP_output_filename,     &
-        OP_SubDyn_filename,     &
-        Binary,                 &
-        WindSpeed,              &
-        WindDir,                &
-        Depth,                  &
-        Nmembers,               &
-        Nnodes,                 &
-        AxisPos,                &
-        BariPos,                &
-        From,                   &
-        Upto,                   &
-        skip,                   &
-        skipf,                  &
-        filter_freqs,           &
+    ! --- 1. Configuration namelist --- !
+    NAMELIST /turbine_config/ &
+        case_type,            &
+        rootname,             &
+        OP_output_dir,        &
+        OP_output_filename,   &
+        OP_SubDyn_filename,   &
+        Binary,               &
+        WindSpeed,            &
+        WindDir,              &
+        Depth,                &
+        Nmembers,             &
+        Nnodes,               &
+        AxisPos,              &
+        BariPos,              &
+        From,                 &
+        Upto,                 &
+        skip,                 &
+        skipf,                &
+        filter_freqs,         &
         freqs_over
 
-    ! ==============================
-    ! Defaults
-    ! ==============================
+
+    ! --- 2. Defaults --- !
     case_type          = 'DTU10MWMonopile'
     rootname           = 'DTU_DeltaWind_mn_ws11.4'
     OP_output_dir      = '../OP_output/'
@@ -161,8 +156,8 @@ SUBROUTINE read_turbine_config(path, config)
     Depth              = 30.0_WP
     Nmembers           = 8_I32
     Nnodes             = 5_I32
-    AxisPos            = (/ 0.0_WP, 0.0_WP /)
-    BariPos            = (/ 0.0_WP, 0.0_WP /)
+    AxisPos            = [0.0_WP, 0.0_WP]
+    BariPos            = [0.0_WP, 0.0_WP]
     From               = 0.0_WP
     Upto               = 1.0_WP
     skip               = 1_I32
@@ -170,18 +165,16 @@ SUBROUTINE read_turbine_config(path, config)
     filter_freqs       = .true.
     freqs_over         = 10.0_WP
 
-    ! ==============================
-    ! Open and read namelist file
-    ! ==============================
+    ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
         stop
     end if
 
     rewind(unit_num)
     read(unit_num, nml=turbine_config, iostat=ierr, iomsg=iomsg)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &turbine_config: ", trim(iomsg)
         close(unit_num)
         stop
@@ -189,44 +182,42 @@ SUBROUTINE read_turbine_config(path, config)
 
     close(unit_num)
 
-    ! ==============================
-    ! Pack values into Config_t 
-    ! ==============================
-    config % turbine % case_type       = trim(case_type)
-    config % turbine % rootname        = trim(rootname)
-    config % turbine % OP_output_dir   = trim(OP_output_dir)
-    config % turbine % OP_output_path  = trim(OP_output_filename)
-    config % turbine % OP_SubDyn_path  = trim(OP_SubDyn_filename)
-    config % turbine % Binary          = Binary
-    config % turbine % WindSpeed       = WindSpeed
-    config % turbine % WindDir         = WindDir
-    config % turbine % Depth           = Depth
-    config % turbine % Nmembers        = Nmembers
-    config % turbine % Nnodes          = Nnodes
-    config % turbine % AxisPos         = AxisPos
-    config % turbine % BariPos         = BariPos
-    config % turbine % From            = From
-    config % turbine % Upto            = Upto
-    config % turbine % skip            = skip
-    config % turbine % skipf           = skipf
-    config % turbine % filter_freqs    = filter_freqs
-    config % turbine % freqs_over      = freqs_over
+    ! --- 4. Pack values into Config_t --- !
+    config % turbine % case_type      = trim(case_type)
+    config % turbine % rootname       = trim(rootname)
+    config % turbine % OP_output_dir  = trim(OP_output_dir)
+    config % turbine % OP_output_path = trim(OP_output_filename)
+    config % turbine % OP_SubDyn_path = trim(OP_SubDyn_filename)
+    config % turbine % Binary         = Binary
+    config % turbine % WindSpeed      = WindSpeed
+    config % turbine % WindDir        = WindDir
+    config % turbine % Depth          = Depth
+    config % turbine % Nmembers       = Nmembers
+    config % turbine % Nnodes         = Nnodes
+    config % turbine % AxisPos        = AxisPos
+    config % turbine % BariPos        = BariPos
+    config % turbine % From           = From
+    config % turbine % Upto           = Upto
+    config % turbine % skip           = skip
+    config % turbine % skipf          = skipf
+    config % turbine % filter_freqs   = filter_freqs
+    config % turbine % freqs_over     = freqs_over
 
 END SUBROUTINE read_turbine_config
 
 
-! -------------------------------------------------------------------------
-! Subroutine: read_solver_config
-! Reads the "solver_config" namelist from Solver.nml (which acoustic
-! solver method to use, output save path, block size, cluster/debug
-! flags) and packs the values into config % solver.
-! -------------------------------------------------------------------------
 SUBROUTINE read_solver_config(path, config)
-    CHARACTER(len=*), INTENT(IN)  :: path
-    TYPE(Config_t)  , INTENT(INOUT) :: config
+    ! -------------------------------------------------------------------------
+    ! Reads the "solver_config" namelist from Solver.nml (which acoustic
+    ! solver method to use, output save path, block size, cluster/debug
+    ! flags) and packs the values into config % solver.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to Solver.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
-    INTEGER(I32) :: unit_num, ierr
+    INTEGER(I32)       :: unit_num, ierr
     CHARACTER(len=200) :: iomsg
 
     ! Input variables
@@ -236,38 +227,32 @@ SUBROUTINE read_solver_config(path, config)
     LOGICAL            :: in_cluster
     LOGICAL            :: debug
 
-    
-    ! ==============================
-    ! Configuration namelist
-    ! ==============================
-    namelist /solver_config/    &
-        method,                 &
-        save_path,              &
-        block_size,             &
-        in_cluster,             &
+    ! --- 1. Configuration namelist --- !
+    NAMELIST /solver_config/ &
+        method,              &
+        save_path,           &
+        block_size,          &
+        in_cluster,          &
         debug
 
-    ! ==============================
-    ! Defaults
-    ! ==============================
+
+    ! --- 2. Defaults --- !
     method     = "ImageMethod"
     save_path  = "None"
     block_size = 128_I32
     in_cluster = .true.
     debug      = .false.
 
-    ! ==============================
-    ! Open and read namelist file
-    ! ==============================
+    ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
         stop
     end if
 
     rewind(unit_num)
     read(unit_num, nml=solver_config, iostat=ierr, iomsg=iomsg)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &solver_config: ", trim(iomsg)
         close(unit_num)
         stop
@@ -275,9 +260,7 @@ SUBROUTINE read_solver_config(path, config)
 
     close(unit_num)
 
-    ! ==============================
-    ! Pack values into Config_t 
-    ! ==============================
+    ! --- 4. Pack values into Config_t --- !
     config % solver % method     = method
     config % solver % save_path  = save_path
     config % solver % block_size = block_size
@@ -287,18 +270,18 @@ SUBROUTINE read_solver_config(path, config)
 END SUBROUTINE read_solver_config
 
 
-! -------------------------------------------------------------------------
-! Subroutine: read_environment_config
-! Reads the "environment_config" namelist from Environment.nml (base
-! water depth, speed of sound, density and reference pressure) and packs
-! the values into config % env.
-! -------------------------------------------------------------------------
 SUBROUTINE read_environment_config(path, config)
-    CHARACTER(len=*), INTENT(IN)  :: path
-    TYPE(Config_t)  , INTENT(INOUT) :: config
+    ! -------------------------------------------------------------------------
+    ! Reads the "environment_config" namelist from Environment.nml (base
+    ! water depth, speed of sound, density and reference pressure) and packs
+    ! the values into config % env.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to Environment.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
-    INTEGER(I32) :: unit_num, ierr
+    INTEGER(I32)       :: unit_num, ierr
     CHARACTER(len=200) :: iomsg
 
     ! Input variables
@@ -307,36 +290,30 @@ SUBROUTINE read_environment_config(path, config)
     REAL(WP) :: density_base
     REAL(WP) :: reference_pressure
 
-    
-    ! ==============================
-    ! Configuration namelist
-    ! ==============================
-    namelist /environment_config/   &
-        depth_base,                 &
-        speed_sound_base,           &
-        density_base,               &
+    ! --- 1. Configuration namelist --- !
+    NAMELIST /environment_config/ &
+        depth_base,               &
+        speed_sound_base,         &
+        density_base,             &
         reference_pressure
 
-    ! ==============================
-    ! Defaults
-    ! ==============================
+
+    ! --- 2. Defaults --- !
     depth_base         = 30.0_WP
     speed_sound_base   = 1500.0_WP
     density_base       = 1025.0_WP
-    reference_pressure = 1e-6_WP
+    reference_pressure = 1.0e-6_WP
 
-    ! ==============================
-    ! Open and read namelist file
-    ! ==============================
+    ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
         stop
     end if
 
     rewind(unit_num)
     read(unit_num, nml=environment_config, iostat=ierr, iomsg=iomsg)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &environment_config: ", trim(iomsg)
         close(unit_num)
         stop
@@ -344,9 +321,7 @@ SUBROUTINE read_environment_config(path, config)
 
     close(unit_num)
 
-    ! ==============================
-    ! Pack values into Config_t 
-    ! ==============================
+    ! --- 4. Pack values into Config_t --- !
     config % env % depth_base         = depth_base
     config % env % speed_sound_base   = speed_sound_base
     config % env % density_base       = density_base
@@ -355,17 +330,17 @@ SUBROUTINE read_environment_config(path, config)
 END SUBROUTINE read_environment_config
 
 
-! -------------------------------------------------------------------------
-! Subroutine: read_ImageMethod_config
-! Reads the "ImagesMethod_config" namelist from ImagesMethod.nml (number
-! of images, surface/bottom boundary condition types and heights,
-! attenuation coefficients, epsilon) and packs the values into the
-! Config_ImageMethod_t instance held by config % method. Only called when
-! the Image Method solver was selected in Solver.nml.
-! -------------------------------------------------------------------------
 SUBROUTINE read_ImageMethod_config(path, config)
-    CHARACTER(len=*), INTENT(IN)    :: path
-    TYPE(Config_t)  , INTENT(INOUT) :: config
+    ! -------------------------------------------------------------------------
+    ! Reads the "ImagesMethod_config" namelist from ImagesMethod.nml (number
+    ! of images, surface/bottom boundary condition types and heights,
+    ! attenuation coefficients, epsilon) and packs the values into the
+    ! Config_ImageMethod_t instance held by config % method. Only called when
+    ! the Image Method solver was selected in Solver.nml.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ImagesMethod.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
     INTEGER(I32)       :: unit_num, ierr
@@ -381,23 +356,19 @@ SUBROUTINE read_ImageMethod_config(path, config)
     REAL(WP)     :: attenuation_bottom
     REAL(WP)     :: epsilon
 
-
-    ! ==============================
-    ! Configuration namelist
-    ! ==============================
-    namelist /ImagesMethod_config/  &
-        N_images,                   &
-        UpperBC,                    &
-        LowerBC,                    &
-        UpperHBC,                   &
-        LowerHBC,                   &
-        attenuation_surface,        &
-        attenuation_bottom,         &
+    ! --- 1. Configuration namelist --- !
+    NAMELIST /ImagesMethod_config/ &
+        N_images,                  &
+        UpperBC,                   &
+        LowerBC,                   &
+        UpperHBC,                  &
+        LowerHBC,                  &
+        attenuation_surface,       &
+        attenuation_bottom,        &
         epsilon
 
-    ! ==============================
-    ! Defaults
-    ! ==============================
+
+    ! --- 2. Defaults --- !
     N_images            = 30_I32
     UpperBC             = -1_I32
     LowerBC             = 1_I32
@@ -407,18 +378,16 @@ SUBROUTINE read_ImageMethod_config(path, config)
     attenuation_bottom  = 0.5_WP
     epsilon             = 1.0e-6_WP
 
-    ! ==============================
-    ! Open and read namelist file
-    ! ==============================
+    ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
         stop
     end if
 
     rewind(unit_num)
     read(unit_num, nml=ImagesMethod_config, iostat=ierr, iomsg=iomsg)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &ImagesMethod_config: ", trim(iomsg)
         close(unit_num)
         stop
@@ -426,11 +395,9 @@ SUBROUTINE read_ImageMethod_config(path, config)
 
     close(unit_num)
 
-    ! ==============================
-    ! Pack values into Config_t 
-    ! ==============================
-    SELECT TYPE(m => config % method)
-    TYPE IS(Config_ImageMethod_t)
+    ! --- 4. Pack values into Config_t --- !
+    SELECT TYPE (m => config % method)
+    TYPE IS (Config_ImageMethod_t)
         m % N_images            = N_images
         m % UpperBC             = UpperBC
         m % LowerBC             = LowerBC
@@ -444,58 +411,52 @@ SUBROUTINE read_ImageMethod_config(path, config)
 END SUBROUTINE read_ImageMethod_config
 
 
-! -------------------------------------------------------------------------
-! Subroutine: read_AnalyticalNormalModes_config
-! Reads the "AnalyticalNormalModes_config" namelist from
-! AnalyticalNormalModes.nml (number of retained modes, upper/lower
-! waveguide boundary heights, epsilon) and packs the values into the
-! Config_AnalyticalNormalModes_t instance held by config % method. Only
-! called when the Analytical Normal Modes solver was selected in Solver.nml.
-! -------------------------------------------------------------------------
 SUBROUTINE read_AnalyticalNormalModes_config(path, config)
-    CHARACTER(len=*), INTENT(IN)    :: path
-    TYPE(Config_t)  , INTENT(INOUT) :: config
+    ! -------------------------------------------------------------------------
+    ! Reads the "AnalyticalNormalModes_config" namelist from
+    ! AnalyticalNormalModes.nml (number of retained modes, upper/lower
+    ! waveguide boundary heights, epsilon) and packs the values into the
+    ! Config_AnalyticalNormalModes_t instance held by config % method. Only
+    ! called when the Analytical Normal Modes solver was selected in Solver.nml.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to AnalyticalNormalModes.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
     INTEGER(I32)       :: unit_num, ierr
     CHARACTER(len=200) :: iomsg
 
     ! Input variables
-    INTEGER(I32) :: Nmodes  
+    INTEGER(I32) :: Nmodes
     REAL(WP)     :: UpperHBC
     REAL(WP)     :: LowerHBC
-    REAL(WP)     :: epsilon 
+    REAL(WP)     :: epsilon
 
-
-    ! ==============================
-    ! Configuration namelist
-    ! ==============================
-    namelist /AnalyticalNormalModes_config/     &
-        Nmodes,                                 &
-        UpperHBC,                               &
-        LowerHBC,                               &
+    ! --- 1. Configuration namelist --- !
+    NAMELIST /AnalyticalNormalModes_config/ &
+        Nmodes,                             &
+        UpperHBC,                           &
+        LowerHBC,                           &
         epsilon
 
-    ! ==============================
-    ! Defaults
-    ! ==============================
+
+    ! --- 2. Defaults --- !
     Nmodes   = DEFAULT_I
     UpperHBC = 0.0_WP
     LowerHBC = -30.0_WP
     epsilon  = 1.0e-12_WP
 
-    ! ==============================
-    ! Open and read namelist file
-    ! ==============================
+    ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
         stop
     end if
 
     rewind(unit_num)
     read(unit_num, nml=AnalyticalNormalModes_config, iostat=ierr, iomsg=iomsg)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &AnalyticalNormalModes_config: ", trim(iomsg)
         close(unit_num)
         stop
@@ -503,11 +464,9 @@ SUBROUTINE read_AnalyticalNormalModes_config(path, config)
 
     close(unit_num)
 
-    ! ==============================
-    ! Pack values into Config_t 
-    ! ==============================
-    SELECT TYPE(m => config % method)
-    TYPE IS(Config_AnalyticalNormalModes_t)
+    ! --- 4. Pack values into Config_t --- !
+    SELECT TYPE (m => config % method)
+    TYPE IS (Config_AnalyticalNormalModes_t)
         m % Nmodes   = Nmodes
         m % UpperHBC = UpperHBC
         m % LowerHBC = LowerHBC
@@ -517,39 +476,40 @@ SUBROUTINE read_AnalyticalNormalModes_config(path, config)
 END SUBROUTINE read_AnalyticalNormalModes_config
 
 
-! -------------------------------------------------------------------------
-! Subroutine: read_computation_config
-! Reads every namelist group in ComputationSetupTurbine.nml (do_config
-! plus one group per run_* post-processing step) and packs the values
-! into config % run_inputs.
-! -------------------------------------------------------------------------
 SUBROUTINE read_computation_config(path, config)
-    CHARACTER(len=*), INTENT(IN)    :: path
-    TYPE(Config_t)  , INTENT(INOUT) :: config
+    ! -------------------------------------------------------------------------
+    ! Reads every namelist group in ComputationSetupTurbine.nml (do_config
+    ! plus one group per run_* post-processing step) and packs the values
+    ! into config % run_inputs.
+    ! -------------------------------------------------------------------------
 
-    CALL read_do_config       (path, config)
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
+
+
+    CALL read_do_config(path, config)
     if (config % run_inputs % do_run % do_spectrums) CALL read_spectrums_config(path, config)
-    if (config % run_inputs % do_run % do_polar)     CALL read_polar_config    (path, config)
-    if (config % run_inputs % do_run % do_cylinder)  CALL read_cylinder_config (path, config)
-    if (config % run_inputs % do_run % do_decay)     CALL read_decay_config    (path, config)
-    if (config % run_inputs % do_run % do_line)      CALL read_line_config     (path, config)
-    if (config % run_inputs % do_run % do_sliceXY)   CALL read_sliceXY_config  (path, config)
-    if (config % run_inputs % do_run % do_sliceXZ)   CALL read_sliceXZ_config  (path, config)
-    if (config % run_inputs % do_run % do_sphere)    Call read_sphere_config   (path, config)
+    if (config % run_inputs % do_run % do_polar)     CALL read_polar_config(path, config)
+    if (config % run_inputs % do_run % do_cylinder)  CALL read_cylinder_config(path, config)
+    if (config % run_inputs % do_run % do_decay)     CALL read_decay_config(path, config)
+    if (config % run_inputs % do_run % do_line)      CALL read_line_config(path, config)
+    if (config % run_inputs % do_run % do_sliceXY)   CALL read_sliceXY_config(path, config)
+    if (config % run_inputs % do_run % do_sliceXZ)   CALL read_sliceXZ_config(path, config)
+    if (config % run_inputs % do_run % do_sphere)    CALL read_sphere_config(path, config)
 
 END SUBROUTINE read_computation_config
 
 
-! -------------------------------------------------------------------------
-! Subroutine: read_do_config
-! Reads the "do_config" namelist from ComputationSetupTurbine.nml and
-! packs the post-processing execution switches into config % run_inputs.
-! When do_all is enabled, all individual post-processing switches are
-! forced to true.
-! -------------------------------------------------------------------------
 SUBROUTINE read_do_config(path, config)
-    CHARACTER(len=*), INTENT(IN)    :: path
-    TYPE(Config_t)  , INTENT(INOUT) :: config
+    ! -------------------------------------------------------------------------
+    ! Reads the "do_config" namelist from ComputationSetupTurbine.nml and
+    ! packs the post-processing execution switches into config % run_inputs.
+    ! When do_all is enabled, all individual post-processing switches are
+    ! forced to true.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
     INTEGER(I32)       :: unit_num, ierr
@@ -559,24 +519,20 @@ SUBROUTINE read_do_config(path, config)
     LOGICAL :: do_all, do_spectrums, do_polar, do_cylinder, do_decay
     LOGICAL :: do_line, do_sliceXY, do_sliceXZ, do_sphere
 
-
-    ! ==============================
-    ! Configuration namelist
-    ! ==============================
-    namelist /do_config/    &
-        do_all,             &
-        do_spectrums,       &
-        do_polar,           &
-        do_cylinder,        &
-        do_decay,           &
-        do_line,            &
-        do_sliceXY,         &
-        do_sliceXZ,         &
+    ! --- 1. Configuration namelist --- !
+    NAMELIST /do_config/ &
+        do_all,          &
+        do_spectrums,    &
+        do_polar,        &
+        do_cylinder,     &
+        do_decay,        &
+        do_line,         &
+        do_sliceXY,      &
+        do_sliceXZ,      &
         do_sphere
 
-    ! ==============================
-    ! Defaults
-    ! ==============================
+
+    ! --- 2. Defaults --- !
     do_all       = .true.
     do_spectrums = .true.
     do_polar     = .true.
@@ -587,18 +543,16 @@ SUBROUTINE read_do_config(path, config)
     do_sliceXZ   = .true.
     do_sphere    = .true.
 
-    ! ==============================
-    ! Open and read namelist file
-    ! ==============================
+    ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
         stop
     end if
 
     rewind(unit_num)
     read(unit_num, nml=do_config, iostat=ierr, iomsg=iomsg)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &do_config: ", trim(iomsg)
         close(unit_num)
         stop
@@ -606,9 +560,7 @@ SUBROUTINE read_do_config(path, config)
 
     close(unit_num)
 
-    ! ==============================
-    ! Pack values into Config_t 
-    ! ==============================
+    ! --- 4. Pack values into Config_t --- !
     config % run_inputs % do_run % do_all = do_all
 
     if (do_all) then
@@ -634,15 +586,15 @@ SUBROUTINE read_do_config(path, config)
 END SUBROUTINE read_do_config
 
 
-! -------------------------------------------------------------------------
-! Subroutine: read_spectrums_config
-! Reads the "spectrums_config" namelist from
-! ComputationSetupTurbine.nml (shared depth of the default spectrum
-! observer points) and packs the value into config % run_inputs.
-! -------------------------------------------------------------------------
 SUBROUTINE read_spectrums_config(path, config)
-    CHARACTER(len=*), INTENT(IN)    :: path
-    TYPE(Config_t)  , INTENT(INOUT) :: config
+    ! -------------------------------------------------------------------------
+    ! Reads the "spectrums_config" namelist from ComputationSetupTurbine.nml
+    ! (number of spectrum observer points and their coordinates) and packs
+    ! the values into config % run_inputs.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
     INTEGER(I32)       :: unit_num, ierr
@@ -650,41 +602,34 @@ SUBROUTINE read_spectrums_config(path, config)
 
     ! Input variables
     INTEGER(I32) :: n_observers
-    REAL(WP)     :: z_spectrums
     REAL(WP)     :: observers_x(MAX_PARSE_OBS)
     REAL(WP)     :: observers_y(MAX_PARSE_OBS)
     REAL(WP)     :: observers_z(MAX_PARSE_OBS)
 
-
-    ! ==============================
-    ! Configuration namelist
-    ! ==============================
-    namelist /spectrums_config/     &
-        n_observers,                &
-        observers_x,                &
-        observers_y,                &
+    ! --- 1. Configuration namelist --- !
+    NAMELIST /spectrums_config/ &
+        n_observers,            &
+        observers_x,            &
+        observers_y,            &
         observers_z
 
-    ! ==============================
-    ! Defaults
-    ! ==============================
-        n_observers = DEFAULT_I
-        observers_x = DEFAULT_R
-        observers_y = DEFAULT_R
-        observers_z = DEFAULT_R
 
-    ! ==============================
-    ! Open and read namelist file
-    ! ==============================
-        open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
-    if (ierr /= 0) then
+    ! --- 2. Defaults --- !
+    n_observers = DEFAULT_I
+    observers_x = DEFAULT_R
+    observers_y = DEFAULT_R
+    observers_z = DEFAULT_R
+
+    ! --- 3. Open and read namelist file --- !
+    open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
         stop
     end if
 
     rewind(unit_num)
     read(unit_num, nml=spectrums_config, iostat=ierr, iomsg=iomsg)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &spectrums_config: ", trim(iomsg)
         close(unit_num)
         stop
@@ -693,16 +638,14 @@ SUBROUTINE read_spectrums_config(path, config)
     close(unit_num)
 
     if (n_observers > MAX_PARSE_OBS) then
-        write(*,*) "ERROR read_spectrums_config: n_observers, exceeds the internal parsing cap of ", MAX_PARSE_OBS
+        write(*,*) "ERROR read_spectrums_config: n_observers exceeds the internal parsing cap of ", MAX_PARSE_OBS
         stop
-    end if 
+    end if
 
-    ! ==============================
-    ! Pack values into Config_t 
-    ! ==============================
+    ! --- 4. Pack values into Config_t --- !
     config % run_inputs % params_spectrums % n_observers = n_observers
 
-    if (n_observers /= DEFAULT_I .and. n_observers > 0) then
+    if (n_observers /= DEFAULT_I .and. n_observers > 0_I32) then
         config % run_inputs % params_spectrums % observers_x = observers_x(1:n_observers)
         config % run_inputs % params_spectrums % observers_y = observers_y(1:n_observers)
         config % run_inputs % params_spectrums % observers_z = observers_z(1:n_observers)
@@ -711,15 +654,15 @@ SUBROUTINE read_spectrums_config(path, config)
 END SUBROUTINE read_spectrums_config
 
 
-! -------------------------------------------------------------------------
-! Subroutine: read_polar_config
-! Reads the "polar_config" namelist from ComputationSetupTurbine.nml
-! (circle radius, depth, observer count and centre) and packs the values
-! into config % run_inputs.
-! -------------------------------------------------------------------------
 SUBROUTINE read_polar_config(path, config)
-    CHARACTER(len=*), INTENT(IN)    :: path
-    TYPE(Config_t)  , INTENT(INOUT) :: config
+    ! -------------------------------------------------------------------------
+    ! Reads the "polar_config" namelist from ComputationSetupTurbine.nml
+    ! (circle radius, depth, observer count and centre) and packs the values
+    ! into config % run_inputs.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
     INTEGER(I32)       :: unit_num, ierr
@@ -729,36 +672,30 @@ SUBROUTINE read_polar_config(path, config)
     REAL(WP)     :: r_polar, z_polar, center_polar(2)
     INTEGER(I32) :: n_polar
 
-
-    ! ==============================
-    ! Configuration namelist
-    ! ==============================
-    namelist /polar_config/     &
-        r_polar,                &
-        z_polar,                &
-        n_polar,                &
+    ! --- 1. Configuration namelist --- !
+    NAMELIST /polar_config/ &
+        r_polar,            &
+        z_polar,            &
+        n_polar,            &
         center_polar
 
-    ! ==============================
-    ! Defaults
-    ! ==============================
+
+    ! --- 2. Defaults --- !
     r_polar      = DEFAULT_R
     z_polar      = DEFAULT_R
     n_polar      = DEFAULT_I
     center_polar = DEFAULT_R
 
-    ! ==============================
-    ! Open and read namelist file
-    ! ==============================
-        open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
-    if (ierr /= 0) then
+    ! --- 3. Open and read namelist file --- !
+    open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
         stop
     end if
 
     rewind(unit_num)
     read(unit_num, nml=polar_config, iostat=ierr, iomsg=iomsg)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &polar_config: ", trim(iomsg)
         close(unit_num)
         stop
@@ -766,9 +703,7 @@ SUBROUTINE read_polar_config(path, config)
 
     close(unit_num)
 
-    ! ==============================
-    ! Pack values into Config_t 
-    ! ==============================
+    ! --- 4. Pack values into Config_t --- !
     config % run_inputs % params_polar % r_polar      = r_polar
     config % run_inputs % params_polar % z_polar      = z_polar
     config % run_inputs % params_polar % n_polar      = n_polar
@@ -777,15 +712,15 @@ SUBROUTINE read_polar_config(path, config)
 END SUBROUTINE read_polar_config
 
 
-! -------------------------------------------------------------------------
-! Subroutine: read_cylinder_config
-! Reads the "cylinder_config" namelist from ComputationSetupTurbine.nml
-! (cylinder radius, azimuthal and vertical observer counts, and centre)
-! and packs the values into config % run_inputs.
-! -------------------------------------------------------------------------
 SUBROUTINE read_cylinder_config(path, config)
-    CHARACTER(len=*), INTENT(IN)    :: path
-    TYPE(Config_t)  , INTENT(INOUT) :: config
+    ! -------------------------------------------------------------------------
+    ! Reads the "cylinder_config" namelist from ComputationSetupTurbine.nml
+    ! (cylinder radius, azimuthal and vertical observer counts, and centre)
+    ! and packs the values into config % run_inputs.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
     INTEGER(I32)       :: unit_num, ierr
@@ -795,36 +730,30 @@ SUBROUTINE read_cylinder_config(path, config)
     REAL(WP)     :: r_cyl, center_cyl(2)
     INTEGER(I32) :: n_cyl, nz_cyl
 
-
-    ! ==============================
-    ! Configuration namelist
-    ! ==============================
-    namelist /cylinder_config/  &
-        r_cyl,                  &
-        n_cyl,                  &
-        nz_cyl,                 &
+    ! --- 1. Configuration namelist --- !
+    NAMELIST /cylinder_config/ &
+        r_cyl,                 &
+        n_cyl,                 &
+        nz_cyl,                &
         center_cyl
 
-    ! ==============================
-    ! Defaults
-    ! ==============================
+
+    ! --- 2. Defaults --- !
     r_cyl      = DEFAULT_R
     n_cyl      = DEFAULT_I
     nz_cyl     = DEFAULT_I
     center_cyl = DEFAULT_R
 
-    ! ==============================
-    ! Open and read namelist file
-    ! ==============================
+    ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
         stop
     end if
 
     rewind(unit_num)
     read(unit_num, nml=cylinder_config, iostat=ierr, iomsg=iomsg)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &cylinder_config: ", trim(iomsg)
         close(unit_num)
         stop
@@ -832,9 +761,7 @@ SUBROUTINE read_cylinder_config(path, config)
 
     close(unit_num)
 
-    ! ==============================
-    ! Pack values into Config_t
-    ! ==============================
+    ! --- 4. Pack values into Config_t --- !
     config % run_inputs % params_cylinder % r_cyl      = r_cyl
     config % run_inputs % params_cylinder % n_cyl      = n_cyl
     config % run_inputs % params_cylinder % nz_cyl     = nz_cyl
@@ -843,15 +770,15 @@ SUBROUTINE read_cylinder_config(path, config)
 END SUBROUTINE read_cylinder_config
 
 
-! -------------------------------------------------------------------------
-! Subroutine: read_decay_config
-! Reads the "decay_config" namelist from ComputationSetupTurbine.nml
-! (start/end distances, observer count, depth and spacing mode) and packs
-! the values into config % run_inputs.
-! -------------------------------------------------------------------------
 SUBROUTINE read_decay_config(path, config)
-    CHARACTER(len=*), INTENT(IN)    :: path
-    TYPE(Config_t)  , INTENT(INOUT) :: config
+    ! -------------------------------------------------------------------------
+    ! Reads the "decay_config" namelist from ComputationSetupTurbine.nml
+    ! (start/end distances, observer count, depth and spacing mode) and packs
+    ! the values into config % run_inputs.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
     INTEGER(I32)       :: unit_num, ierr
@@ -862,36 +789,30 @@ SUBROUTINE read_decay_config(path, config)
     INTEGER(I32) :: n_decay
     LOGICAL      :: logspace_decay
 
-
-    ! ==============================
-    ! Configuration namelist
-    ! ==============================
-    namelist /decay_config/       &
-        distance_decay,           &
-        n_decay,                  &
-        z_decay,                  &
+    ! --- 1. Configuration namelist --- !
+    NAMELIST /decay_config/ &
+        distance_decay,     &
+        n_decay,            &
+        z_decay,            &
         logspace_decay
 
-    ! ==============================
-    ! Defaults
-    ! ==============================
+
+    ! --- 2. Defaults --- !
     distance_decay = DEFAULT_R
     n_decay        = DEFAULT_I
     z_decay        = DEFAULT_R
     logspace_decay = .true.
 
-    ! ==============================
-    ! Open and read namelist file
-    ! ==============================
+    ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
         stop
     end if
 
     rewind(unit_num)
     read(unit_num, nml=decay_config, iostat=ierr, iomsg=iomsg)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &decay_config: ", trim(iomsg)
         close(unit_num)
         stop
@@ -899,9 +820,7 @@ SUBROUTINE read_decay_config(path, config)
 
     close(unit_num)
 
-    ! ==============================
-    ! Pack values into Config_t
-    ! ==============================
+    ! --- 4. Pack values into Config_t ---
     config % run_inputs % params_decay % distance_decay = distance_decay
     config % run_inputs % params_decay % n_decay        = n_decay
     config % run_inputs % params_decay % z_decay        = z_decay
@@ -910,15 +829,15 @@ SUBROUTINE read_decay_config(path, config)
 END SUBROUTINE read_decay_config
 
 
-! -------------------------------------------------------------------------
-! Subroutine: read_line_config
-! Reads the "line_config" namelist from ComputationSetupTurbine.nml
-! (line endpoints, observer count and spacing mode) and packs the values
-! into config % run_inputs.
-! -------------------------------------------------------------------------
 SUBROUTINE read_line_config(path, config)
-    CHARACTER(len=*), INTENT(IN)    :: path
-    TYPE(Config_t)  , INTENT(INOUT) :: config
+    ! -------------------------------------------------------------------------
+    ! Reads the "line_config" namelist from ComputationSetupTurbine.nml
+    ! (line endpoints, observer count and spacing mode) and packs the values
+    ! into config % run_inputs.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
     INTEGER(I32)       :: unit_num, ierr
@@ -929,36 +848,30 @@ SUBROUTINE read_line_config(path, config)
     INTEGER(I32) :: n_line
     LOGICAL      :: logspace_line
 
-
-    ! ==============================
-    ! Configuration namelist
-    ! ==============================
-    namelist /line_config/    &
-        p1_line,              &
-        p2_line,              &
-        n_line,               &
+    ! --- 1. Configuration namelist --- !
+    NAMELIST /line_config/ &
+        p1_line,           &
+        p2_line,           &
+        n_line,            &
         logspace_line
 
-    ! ==============================
-    ! Defaults
-    ! ==============================
-    p1_line      = DEFAULT_R
-    p2_line      = DEFAULT_R
-    n_line       = DEFAULT_I
+
+    ! --- 2. Defaults --- !
+    p1_line       = DEFAULT_R
+    p2_line       = DEFAULT_R
+    n_line        = DEFAULT_I
     logspace_line = .false.
 
-    ! ==============================
-    ! Open and read namelist file
-    ! ==============================
+    ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
         stop
     end if
 
     rewind(unit_num)
     read(unit_num, nml=line_config, iostat=ierr, iomsg=iomsg)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &line_config: ", trim(iomsg)
         close(unit_num)
         stop
@@ -966,9 +879,7 @@ SUBROUTINE read_line_config(path, config)
 
     close(unit_num)
 
-    ! ==============================
-    ! Pack values into Config_t
-    ! ==============================
+    ! --- 4. Pack values into Config_t --- !
     config % run_inputs % params_line % p1_line       = p1_line
     config % run_inputs % params_line % p2_line       = p2_line
     config % run_inputs % params_line % n_line        = n_line
@@ -977,15 +888,15 @@ SUBROUTINE read_line_config(path, config)
 END SUBROUTINE read_line_config
 
 
-! -------------------------------------------------------------------------
-! Subroutine: read_sliceXY_config
-! Reads the "sliceXY_config" namelist from ComputationSetupTurbine.nml
-! (slice depth, grid dimensions, extents and centre) and packs the values
-! into config % run_inputs.
-! -------------------------------------------------------------------------
 SUBROUTINE read_sliceXY_config(path, config)
-    CHARACTER(len=*), INTENT(IN)    :: path
-    TYPE(Config_t)  , INTENT(INOUT) :: config
+    ! -------------------------------------------------------------------------
+    ! Reads the "sliceXY_config" namelist from ComputationSetupTurbine.nml
+    ! (slice depth, grid dimensions, extents and centre) and packs the values
+    ! into config % run_inputs.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
     INTEGER(I32)       :: unit_num, ierr
@@ -995,21 +906,17 @@ SUBROUTINE read_sliceXY_config(path, config)
     REAL(WP)     :: z_xy, xlim_xy(2), ylim_xy(2), center_xy(2)
     INTEGER(I32) :: nx_xy, ny_xy
 
-
-    ! ==============================
-    ! Configuration namelist
-    ! ==============================
-    namelist /sliceXY_config/  &
-        z_xy,                   &
-        nx_xy,                  &
-        ny_xy,                  &
-        xlim_xy,                &
-        ylim_xy,                &
+    ! --- 1. Configuration namelist --- !
+    NAMELIST /sliceXY_config/ &
+        z_xy,                 &
+        nx_xy,                &
+        ny_xy,                &
+        xlim_xy,              &
+        ylim_xy,              &
         center_xy
 
-    ! ==============================
-    ! Defaults
-    ! ==============================
+
+    ! --- 2. Defaults --- !
     z_xy      = DEFAULT_R
     nx_xy     = DEFAULT_I
     ny_xy     = DEFAULT_I
@@ -1017,18 +924,16 @@ SUBROUTINE read_sliceXY_config(path, config)
     ylim_xy   = DEFAULT_R
     center_xy = DEFAULT_R
 
-    ! ==============================
-    ! Open and read namelist file
-    ! ==============================
+    ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
         stop
     end if
 
     rewind(unit_num)
     read(unit_num, nml=sliceXY_config, iostat=ierr, iomsg=iomsg)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &sliceXY_config: ", trim(iomsg)
         close(unit_num)
         stop
@@ -1036,9 +941,7 @@ SUBROUTINE read_sliceXY_config(path, config)
 
     close(unit_num)
 
-    ! ==============================
-    ! Pack values into Config_t
-    ! ==============================
+    ! --- 4. Pack values into Config_t --- !
     config % run_inputs % params_sliceXY % z_xy      = z_xy
     config % run_inputs % params_sliceXY % nx_xy     = nx_xy
     config % run_inputs % params_sliceXY % ny_xy     = ny_xy
@@ -1049,15 +952,15 @@ SUBROUTINE read_sliceXY_config(path, config)
 END SUBROUTINE read_sliceXY_config
 
 
-! -------------------------------------------------------------------------
-! Subroutine: read_sliceXZ_config
-! Reads the "sliceXZ_config" namelist from ComputationSetupTurbine.nml
-! (slice position, grid dimensions and x/z extents) and packs the values
-! into config % run_inputs.
-! -------------------------------------------------------------------------
 SUBROUTINE read_sliceXZ_config(path, config)
-    CHARACTER(len=*), INTENT(IN)    :: path
-    TYPE(Config_t)  , INTENT(INOUT) :: config
+    ! -------------------------------------------------------------------------
+    ! Reads the "sliceXZ_config" namelist from ComputationSetupTurbine.nml
+    ! (slice position, grid dimensions and x/z extents) and packs the values
+    ! into config % run_inputs.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
     INTEGER(I32)       :: unit_num, ierr
@@ -1067,38 +970,32 @@ SUBROUTINE read_sliceXZ_config(path, config)
     REAL(WP)     :: y_xz, xlim_xz(2), zlim_xz(2)
     INTEGER(I32) :: nx_xz, nz_xz
 
-
-    ! ==============================
-    ! Configuration namelist
-    ! ==============================
-    namelist /sliceXZ_config/  &
-        y_xz,                   &
-        nx_xz,                  &
-        nz_xz,                  &
-        xlim_xz,                &
+    ! --- 1. Configuration namelist --- !
+    NAMELIST /sliceXZ_config/ &
+        y_xz,                 &
+        nx_xz,                &
+        nz_xz,                &
+        xlim_xz,              &
         zlim_xz
 
-    ! ==============================
-    ! Defaults
-    ! ==============================
+
+    ! --- 2. Defaults --- !
     y_xz    = DEFAULT_R
     nx_xz   = DEFAULT_I
     nz_xz   = DEFAULT_I
     xlim_xz = DEFAULT_R
     zlim_xz = DEFAULT_R
 
-    ! ==============================
-    ! Open and read namelist file
-    ! ==============================
+    ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
         stop
     end if
 
     rewind(unit_num)
     read(unit_num, nml=sliceXZ_config, iostat=ierr, iomsg=iomsg)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &sliceXZ_config: ", trim(iomsg)
         close(unit_num)
         stop
@@ -1106,9 +1003,7 @@ SUBROUTINE read_sliceXZ_config(path, config)
 
     close(unit_num)
 
-    ! ==============================
-    ! Pack values into Config_t
-    ! ==============================
+    ! --- 4. Pack values into Config_t --- !
     config % run_inputs % params_sliceXZ % y_xz    = y_xz
     config % run_inputs % params_sliceXZ % nx_xz   = nx_xz
     config % run_inputs % params_sliceXZ % nz_xz   = nz_xz
@@ -1118,15 +1013,15 @@ SUBROUTINE read_sliceXZ_config(path, config)
 END SUBROUTINE read_sliceXZ_config
 
 
-! -------------------------------------------------------------------------
-! Subroutine: read_sphere_config
-! Reads the "sphere_config" namelist from ComputationSetupTurbine.nml
-! (sphere radius, angular and vertical observer counts, and centre) and
-! packs the values into config % run_inputs.
-! -------------------------------------------------------------------------
 SUBROUTINE read_sphere_config(path, config)
-    CHARACTER(len=*), INTENT(IN)    :: path
-    TYPE(Config_t)  , INTENT(INOUT) :: config
+    ! -------------------------------------------------------------------------
+    ! Reads the "sphere_config" namelist from ComputationSetupTurbine.nml
+    ! (sphere radius, angular and vertical observer counts, and centre) and
+    ! packs the values into config % run_inputs.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
     INTEGER(I32)       :: unit_num, ierr
@@ -1136,36 +1031,30 @@ SUBROUTINE read_sphere_config(path, config)
     REAL(WP)     :: r_sphere, center_sphere(3)
     INTEGER(I32) :: n_theta_sphere, nz_sphere
 
-
-    ! ==============================
-    ! Configuration namelist
-    ! ==============================
-    namelist /sphere_config/       &
-        r_sphere,                  &
-        n_theta_sphere,            &
-        nz_sphere,                 &
+    ! --- 1. Configuration namelist --- !
+    NAMELIST /sphere_config/ &
+        r_sphere,            &
+        n_theta_sphere,      &
+        nz_sphere,           &
         center_sphere
 
-    ! ==============================
-    ! Defaults
-    ! ==============================
+
+    ! --- 2. Defaults --- !
     r_sphere       = DEFAULT_R
     n_theta_sphere = DEFAULT_I
     nz_sphere      = DEFAULT_I
     center_sphere  = DEFAULT_R
 
-    ! ==============================
-    ! Open and read namelist file
-    ! ==============================
+    ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
         stop
     end if
 
     rewind(unit_num)
     read(unit_num, nml=sphere_config, iostat=ierr, iomsg=iomsg)
-    if (ierr /= 0) then
+    if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &sphere_config: ", trim(iomsg)
         close(unit_num)
         stop
@@ -1173,15 +1062,12 @@ SUBROUTINE read_sphere_config(path, config)
 
     close(unit_num)
 
-    ! ==============================
-    ! Pack values into Config_t
-    ! ==============================
+    ! --- 4. Pack values into Config_t --- !
     config % run_inputs % params_sphere % r_sphere       = r_sphere
     config % run_inputs % params_sphere % n_theta_sphere = n_theta_sphere
     config % run_inputs % params_sphere % nz_sphere      = nz_sphere
     config % run_inputs % params_sphere % center_sphere  = center_sphere
 
 END SUBROUTINE read_sphere_config
-
 
 END MODULE Args_parser

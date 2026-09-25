@@ -1,0 +1,246 @@
+===============================================================================
+ PROGRAMMING STYLE GUIDELINES - off-coustics FORTRAN code (FORTRAN/src, FORTRAN/app)
+===============================================================================
+ Author  : Raul Sanz Ramirez
+ Agreed  : 09/2026
+ Scope   : Every .f90 file of the project. Any new or modified Fortran code
+           MUST follow these rules exactly. When in doubt, copy the pattern
+           already used in the existing files (e.g. src/utils/MathUtils.f90).
+
+ GOLDEN RULE: a style change must NEVER change a calculation, the program
+ flow, or a single byte of the outputs (HDF5 datasets, .dat summaries,
+ stdout messages). HDF5 dataset names, .dat contents and namelist variable
+ names are part of the interface and are never renamed.
+
+
+-------------------------------------------------------------------------------
+ 1. KEYWORD CASE
+-------------------------------------------------------------------------------
+ 1.1 UPPERCASE: declarations and program structure
+       MODULE, PROGRAM, SUBROUTINE, FUNCTION, RESULT, PURE, CONTAINS, USE, ONLY,
+       INTRINSIC, IMPLICIT NONE, PUBLIC, PRIVATE, TYPE, CLASS, EXTENDS, ABSTRACT,
+       INTERFACE, ABSTRACT INTERFACE, MODULE PROCEDURE, PROCEDURE, DEFERRED,
+       IMPORT, BIND(C, name='...'), VALUE, REAL, INTEGER, COMPLEX, LOGICAL,
+       CHARACTER, INTENT(IN/OUT/INOUT), ALLOCATABLE, OPTIONAL, PARAMETER,
+       TARGET, POINTER, DIMENSION, NAMELIST
+       Memory / calls: CALL, ALLOCATE, DEALLOCATE, ALLOCATED, MOVE_ALLOC
+       Constructs: SELECT CASE, CASE, CASE DEFAULT, SELECT TYPE, TYPE IS,
+       SELECT RANK, RANK, END SELECT, WHERE, END WHERE
+ 1.2 lowercase: control flow, I/O and intrinsic functions
+       if, then, else if, else, end if, do, do while, end do, exit, cycle,
+       return, stop, error stop, associate, end associate, block, end block
+       write, read, open, close, inquire, rewind, flush
+       size, trim, present, abs, sqrt, min, max, sum, all, any, count, merge,
+       index, len, len_trim, adjustl, norm2, cmplx, real() (as a conversion
+       function), int, nint, aimag, exp, log, cos, sin, repeat, maxval, minval,
+       pack, huge, floor, mod, execute_command_line, ...
+       .true., .false., .and., .or., .not.
+       I/O and intrinsic keyword arguments: newunit=, file=, status=, iostat=,
+       kind=, dim=, back=, source=, len= (as in CHARACTER(len=200))
+ 1.3 OpenMP: directives AND clauses in UPPERCASE, variable names untouched
+       !$OMP PARALLEL DO COLLAPSE(2) PRIVATE(i, j)
+       !$OMP END PARALLEL DO
+       !$OMP SIMD REDUCTION(+:current_sum)
+     The OpenMP API stays lowercase: USE omp_lib, omp_get_wtime().
+ 1.4 ISO C binding: types and constants UPPERCASE (C_PTR, C_INT, C_DOUBLE,
+     C_DOUBLE_COMPLEX, C_SIZE_T, C_FUNPTR); functions lowercase (c_f_pointer,
+     c_loc, c_funloc, c_sizeof, c_associated). Intrinsic modules lowercase:
+     USE, INTRINSIC :: iso_c_binding / ieee_arithmetic (functions lowercase,
+     named constants UPPERCASE: IEEE_QUIET_NAN).
+ 1.5 Kind suffixes always UPPERCASE: _WP, _I32 (never _wp).
+ 1.6 Identifiers are always written exactly as declared (e.g. Types, Kinds,
+     Force, Time, NFreqs, AnalyticalNormalModes_t). Never rename variables.
+
+
+-------------------------------------------------------------------------------
+ 2. INDENTATION AND LAYOUT
+-------------------------------------------------------------------------------
+ 2.1 4 spaces per level. No tabs. No trailing whitespace. Every file ends
+     with exactly one newline.
+ 2.2 Module content (USE, IMPLICIT NONE, PRIVATE/PUBLIC, TYPE definitions,
+     INTERFACE blocks) and every procedure after CONTAINS start at column 1.
+     Procedure bodies are indented 4.
+ 2.3 PROGRAM main: USE and declarations at column 1, executable body
+     indented 4.
+ 2.4 CASE at the same level as SELECT CASE / SELECT TYPE / SELECT RANK:
+       SELECT CASE (trim(x))
+       CASE ('A')
+           ...
+       CASE DEFAULT
+           ...
+       END SELECT
+ 2.5 Inside a TYPE: components indented 4; "CONTAINS" indented 4 with one
+     blank line before and after it; type-bound PROCEDURE lines indented 4.
+ 2.6 Continuation lines: align with the first argument after the opening
+     parenthesis. One space before the '&'. In vertical lists (NAMELIST
+     groups, multi-line PUBLIC lists) the '&' characters are aligned in one
+     column:
+       NAMELIST /solver_config/ &
+           method,              &
+           save_path
+ 2.7 Maximum line length: 120 characters (docstrings included). Long strings
+     are split with // (the printed output must stay identical).
+
+
+-------------------------------------------------------------------------------
+ 3. BLANK LINES
+-------------------------------------------------------------------------------
+ 3.1 0 blank lines between the SUBROUTINE/FUNCTION/TYPE line and its
+     docstring (the docstring follows immediately).
+ 3.2 1 blank line after the docstring.
+ 3.3 1 blank line between the USE block of a procedure and its declarations,
+     and between the dummy-argument block and "! Local variables".
+ 3.4 EXACTLY 2 blank lines between the last declaration (or NAMELIST) and the
+     first executable statement (also in procedures without local variables
+     and in PROGRAM main and BLOCK constructs).
+ 3.5 1 blank line inside procedures between logical blocks of code.
+ 3.6 1 blank line before END SUBROUTINE / END FUNCTION / END TYPE /
+     END PROGRAM.
+ 3.7 2 blank lines between procedures, between TYPE definitions, between
+     module-level INTERFACE blocks, and before a level-1 section separator.
+ 3.8 Module header: USE block, 1 blank, IMPLICIT NONE, 1 blank,
+     PRIVATE/PUBLIC.
+ 3.9 EXACTLY 1 blank line before END MODULE.
+ 3.10 INTERFACE blocks: 1 blank line after "INTERFACE", between interface
+      bodies and before "END INTERFACE".
+
+
+-------------------------------------------------------------------------------
+ 4. SPACING
+-------------------------------------------------------------------------------
+ 4.1 Component access with spaces: self % sources % xyz   (never self%xyz).
+ 4.2 One space on each side of '::'  (PUBLIC :: x, IMPORT :: x, TYPE :: X).
+ 4.3 Keyword arguments without spaces around '=':
+       CALL compute_rfft(acc_flat, nt, dt, skipf=config % skip, remove_zero=.true.)
+ 4.4 Spaces around binary + - * / and relational/assignment operators; NO
+     spaces around ** (x**2). Unary minus without space (-A, -Depth).
+     Inside array subscripts (and ALLOCATE shapes) the compact form is used:
+       A_flat(i, (j-1)*Nn+k, 1)     x(i+1)     ALLOCATE(col_pos(2*Nn-1, 3))
+ 4.5 Space after every comma in argument lists and subscripts: a(i, j, :).
+     Exceptions: write(*,*), shape specs in declarations (x(:,:)), and the
+     interior of format strings ('(A,F8.2,A)').
+     write(u, *) and write(*, '(A)') carry the space after the comma.
+ 4.6 Space before '(' after: if, do while, SELECT CASE, SELECT TYPE,
+     TYPE IS, RANK, WHERE.  No space in: write(, read(, open(, ALLOCATE(,
+     DEALLOCATE(, CALL name(.
+ 4.7 Alignment of '=' in blocks of consecutive, related assignments:
+       Nm           = self % Nmembers
+       Nn           = self % Nnodes
+       Nnodes_total = Nm * Nn
+ 4.8 Inline comments of a declaration block aligned in one column, 4 spaces
+     after the longest commented line of the block.
+
+
+-------------------------------------------------------------------------------
+ 5. DECLARATIONS
+-------------------------------------------------------------------------------
+ 5.1 "Comma-aligned" style in every declaration block: type spec padded so
+     the first comma aligns, attributes padded so '::' aligns, '=' of
+     single-entity initializations aligned:
+       CHARACTER(len=*), INTENT(IN)               :: path       ! [-] Path to the file
+       REAL(WP)        , INTENT(OUT), ALLOCATABLE :: mass(:)    ! [kg] Dry mass per node
+       REAL(WP)                                   :: dt         ! [s] Time step
+ 5.2 Attribute order: type, INTENT, OPTIONAL, ALLOCATABLE/TARGET/POINTER.
+ 5.3 Dummy arguments declared in the same order as in the signature; the
+     function RESULT variable is declared in the dummy-argument block.
+ 5.4 Every dummy argument and every TYPE component carries a unit comment:
+       ! [unit] Description        units: [-], [m], [s], [Hz], [N], [Pa],
+       [kg], [m/s], [m^2], [kg/m^3], [m/s^2], [1/m], [deg], [rpm], [B]
+     (powers always with ^, e.g. kg/m^3, never kg/m3).
+ 5.5 Local variables introduced by "! Local variables" (always this exact
+     label). Further groups may carry their own descriptive label
+     ("! FFTW variables", "! Input variables", ...).
+ 5.6 Array dimensions on the entity name (dims(3)), not DIMENSION(3);
+     DIMENSION(*) is kept only in the C interfaces (FFTW3).
+ 5.7 INTEGER variables are INTEGER(I32), except inside the HDF5 routines
+     where plain INTEGER is tied to H5T_NATIVE_INTEGER. The binary-format
+     kinds of the .outb parser (REAL(8), REAL(4), INTEGER(2), INTEGER(4))
+     are kept literally.
+ 5.8 No unused variables (check with gfortran -Wall).
+
+
+-------------------------------------------------------------------------------
+ 6. LITERALS AND STATEMENTS
+-------------------------------------------------------------------------------
+ 6.1 Real literals: 1.0e-6_WP (never 1e-6_WP), 0.0_WP, 2.0_WP ...
+ 6.2 Integer literals take the _I32 suffix in assignments, initializations,
+     comparisons, arithmetic with INTEGER(I32) variables and when passed to
+     INTEGER(I32) dummy arguments:  n = 0_I32 ; if (n == 0_I32) ; n - 1_I32
+     NOT in loop bounds, array subscripts/shapes, intrinsic arguments
+     (size(x, 1), repeat('=', 70), bessel_jn(0, x)) or stop codes.
+ 6.3 Array constructors with [ ] (never (/ /)).
+ 6.4 write, never print:  write(*,*) ...   write(*, '(A)') ...
+ 6.5 end if / else if / end do (never endif, elseif, enddo).
+ 6.6 Named ends: END SUBROUTINE name, END FUNCTION name, END TYPE name,
+     END MODULE name, END INTERFACE name (generic interfaces).
+ 6.7 One statement per line. The ONLY allowed ';' is the optional-argument
+     default idiom, aligned in blocks:
+       skipf_       = 1_I32  ; if (present(skipf))       skipf_       = skipf
+       remove_zero_ = .true. ; if (present(remove_zero)) remove_zero_ = remove_zero
+ 6.8 USE statements ordered by line length, shortest first (USE, INTRINSIC
+     included), in modules, in PROGRAM main and inside procedures. Local USE
+     statements inside procedures and existing ONLY lists are kept as they are.
+
+
+-------------------------------------------------------------------------------
+ 7. COMMENTS AND DOCSTRINGS
+-------------------------------------------------------------------------------
+ 7.1 All comments in English. Capitalized first letter; one-line comments
+     without final period; docstrings in full sentences with periods.
+     No development notes ("CORRECTED:", "unchanged", ...) and no
+     commented-out code.
+ 7.2 File header (column 1, above MODULE/PROGRAM), 79 '=' / '-' wide:
+       ! ===============================================================================
+       ! MODULE: Name
+       ! ===============================================================================
+       ! Defines ... (description, starting with "Defines")
+       ! -------------------------------------------------------------------------------
+       ! Author  : Raul Sanz Ramirez
+       ! Contact : raul.sanz.ramirez@upm.es
+       ! Affil.  : ETSIAE, Universidad Politecnica de Madrid
+       ! Project : ERC project off-coustics
+       ! Date    : MM/YYYY
+       ! ===============================================================================
+ 7.3 Docstrings live INSIDE every procedure, TYPE, interface body and
+     generic INTERFACE, indented one level more than the declaration line
+     (so they fold in VS Code), placed right after the last continuation line
+     of the declaration, between two lines of 73 dashes, WITHOUT a
+     "Subroutine: name" line and without Arguments/Returns sections
+     (arguments are documented inline, rule 5.4):
+       SUBROUTINE read_input(self, config, verbose)
+           ! -------------------------------------------------------------------------
+           ! Reads either binary (.outb) or text (.out) OpenFAST output files.
+           ! -------------------------------------------------------------------------
+
+           USE IOUtils, ONLY: get_SDsum_variables, read_input_SD
+
+           CLASS(WindTurbine_t), INTENT(INOUT) :: self    ! [-] Turbine instance
+ 7.4 Level-1 separator (between groups of module-level entities, column 1,
+     79 '=' wide, title in UPPERCASE, optional description lines below):
+       ! ===============================================================================
+       ! ABSTRACT INTERFACES FOR DEFERRED PROCEDURES
+       ! ===============================================================================
+ 7.5 Level-2 separator (sections inside a procedure), sentence case,
+     numbered when the procedure has several sections:
+       ! --- 1. Read header --- !
+       ! --- Verbose summary --- !
+ 7.6 Labels inside a TYPE:
+       ! --- Input parameters --- !
+       ! --- Shared procedures --- !
+       ! --- Public type-bound procedures --- !
+       ! --- Deferred (abstract) procedures --- !
+ 7.7 Printed strings (stdout) may only get spelling fixes; their wording,
+     prefixes (ERROR:, WARNING, ...) and spacing are otherwise untouched.
+
+
+-------------------------------------------------------------------------------
+ 8. VERIFICATION AFTER ANY STYLE CHANGE
+-------------------------------------------------------------------------------
+ 8.1 Keep a copy of the original sources and binary before touching code.
+ 8.2 Build with: fpm run --flag "-O3 -fopenmp"  (from FORTRAN/).
+ 8.3 Compare old vs new with OMP_NUM_THREADS=1 (multi-threaded runs are not
+     bit-reproducible run to run, ~1e-15): HDF5 datasets must be bitwise
+     identical (h5py/h5diff), .dat files and stdout identical (diff).
+ 8.4 Do not overwrite the user's files in FORTRAN/turbine_acoustic_data;
+     run test cases in an isolated copy.
+===============================================================================
