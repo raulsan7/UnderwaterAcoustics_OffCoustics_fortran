@@ -88,8 +88,8 @@
 ! n_line = -999 requests the automatic point count (distance/5 if the
 ! line is longer than 200 m, otherwise one point per metre).
 &line_config
-    p1_line = 80.0, 0.0, 0.0       ! [m] Line start point (x, y, z)
-    p2_line = 80.0, 0.0, -999.0    ! [m] Line end point (x, y, z); z = -999.0 = auto: -Depth
+    p1_line = 100.0, 0.0, 0.0       ! [m] Line start point (x, y, z)
+    p2_line = 100.0, 0.0, -999.0    ! [m] Line end point (x, y, z); z = -999.0 = auto: -Depth
     n_line = -999                   ! [-] Number of observer points along the line (-999 = automatic)
     logspace_line = .false.         ! [-] Whether to space the observer points logarithmically instead of linearly
 /

@@ -42,6 +42,7 @@ SUBROUTINE read_input_files(files_path, config)
 
     ! Local variables
     CHARACTER(len=200) :: turbine_config_path
+    CHARACTER(len=200) :: farm_config_path
     CHARACTER(len=200) :: solver_config_path
     CHARACTER(len=200) :: environment_config_path
     CHARACTER(len=200) :: computation_config_path
@@ -53,10 +54,10 @@ SUBROUTINE read_input_files(files_path, config)
 
     if (.not. ALLOCATED(config)) ALLOCATE(Config_t :: config)
 
-    turbine_config_path     = files_path // "Turbine.nml"
+    turbine_config_path     = files_path // "WindTurbine.nml"
+    farm_config_path        = files_path // "WindFarm.nml"
     solver_config_path      = files_path // "Solver.nml"
     environment_config_path = files_path // "Environment.nml"
-    computation_config_path = files_path // "ComputationSetupTurbine.nml"
 
     ! Method-specific paths
     ImagesMethod_config_path          = files_path // "ImagesMethod.nml"
@@ -64,12 +65,24 @@ SUBROUTINE read_input_files(files_path, config)
 
     ! Read principal files
     CALL read_solver_config(solver_config_path, config)
-    CALL read_turbine_config(turbine_config_path, config)
     CALL read_environment_config(environment_config_path, config)
-    CALL read_computation_config(computation_config_path, config)
 
-    ! The environment is the single source of the water depth
-    config % turbine % Depth = config % env % depth_base
+    ! Emitter: a single turbine or a whole farm, each one with its own post-processing setup
+    SELECT CASE (trim(config % solver % simulation_type))
+    CASE ('turbine')
+        CALL read_turbine_config(turbine_config_path, config)
+        config % turbine % Depth = config % env % depth_base
+        computation_config_path  = files_path // "ComputationSetupTurbine.nml"
+
+    CASE ('farm')
+        CALL read_farm_config(farm_config_path, config)
+        computation_config_path = files_path // "ComputationSetupFarm.nml"
+
+    CASE DEFAULT
+        error stop "read_input_files(): Unknown simulation_type (use 'turbine' or 'farm')"
+    END SELECT
+
+    CALL read_computation_config(computation_config_path, config)
 
     ! Dispatch to the method-specific config reader based on which
     ! acoustic solver was selected in Solver.nml
@@ -205,6 +218,178 @@ SUBROUTINE read_turbine_config(path, config)
 END SUBROUTINE read_turbine_config
 
 
+SUBROUTINE read_farm_config(path, config)
+    ! -------------------------------------------------------------------------
+    ! Reads WindFarm.nml: the &farm_config block with the settings shared by
+    ! every turbine (they define the common frequency grid) and one &turbine
+    ! block per turbine, in order. Blocks are first counted and then read one
+    ! by one, resetting the per-turbine defaults before each block so that no
+    ! value leaks from the previous turbine. Every turbine takes the water
+    ! depth from Environment.nml, which must therefore be read first.
+    ! -------------------------------------------------------------------------
+
+    USE, INTRINSIC :: iso_fortran_env, ONLY: IOSTAT_END
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to WindFarm.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
+
+    ! Local variables
+    INTEGER(I32)       :: unit_num, ierr, n, i, j
+    CHARACTER(len=200) :: iomsg
+
+    ! Input variables: shared by the whole farm
+    REAL(WP)     :: From
+    REAL(WP)     :: Upto
+    INTEGER(I32) :: skip
+    INTEGER(I32) :: skipf
+    LOGICAL      :: filter_freqs
+    REAL(WP)     :: freqs_over
+
+    ! Input variables: one set per turbine
+    CHARACTER(len=200) :: case_type
+    CHARACTER(len=200) :: rootname
+    CHARACTER(len=200) :: OP_output_dir
+    CHARACTER(len=200) :: OP_output_filename
+    CHARACTER(len=200) :: OP_SubDyn_filename
+    LOGICAL            :: Binary
+    REAL(WP)           :: WindSpeed
+    REAL(WP)           :: WindDir
+    REAL(WP)           :: AxisPos(2)
+    REAL(WP)           :: BariPos(2)
+    INTEGER(I32)       :: Nmembers
+    INTEGER(I32)       :: Nnodes
+
+    ! --- 1. Configuration namelists --- !
+    NAMELIST /farm_config/ &
+        From,              &
+        Upto,              &
+        skip,              &
+        skipf,             &
+        filter_freqs,      &
+        freqs_over
+
+    NAMELIST /turbine/      &
+        case_type,          &
+        rootname,           &
+        OP_output_dir,      &
+        OP_output_filename, &
+        OP_SubDyn_filename, &
+        Binary,             &
+        WindSpeed,          &
+        WindDir,            &
+        AxisPos,            &
+        BariPos,            &
+        Nmembers,           &
+        Nnodes
+
+
+    ! --- 2. Shared defaults and &farm_config block --- !
+    From         = 0.0_WP
+    Upto         = 1.0_WP
+    skip         = 1_I32
+    skipf        = 1_I32
+    filter_freqs = .true.
+    freqs_over   = 10.0_WP
+
+    open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
+    if (ierr /= 0_I32) then
+        write(*,*) "ERROR: Could not open input file: ", path
+        stop
+    end if
+
+    rewind(unit_num)
+    read(unit_num, nml=farm_config, iostat=ierr, iomsg=iomsg)
+    if (ierr /= 0_I32) then
+        write(*,*) "ERROR: Failed to read &farm_config: ", trim(iomsg)
+        close(unit_num)
+        stop
+    end if
+
+    ! --- 3. Count the &turbine blocks --- !
+    rewind(unit_num)
+    n = 0_I32
+    do
+        read(unit_num, nml=turbine, iostat=ierr, iomsg=iomsg)
+        if (ierr == IOSTAT_END) exit
+        if (ierr /= 0_I32) then
+            write(*, '(A,I0,A)') " ERROR: Failed to read &turbine block ", n + 1_I32, ": " // trim(iomsg)
+            close(unit_num)
+            stop
+        end if
+        n = n + 1_I32
+    end do
+
+    if (n == 0_I32) then
+        write(*,*) "ERROR: No &turbine block found in ", path
+        close(unit_num)
+        stop
+    end if
+
+    config % farm % Nturbines = n
+    ALLOCATE(config % farm % turbines(n))
+
+    ! --- 4. Read every &turbine block, resetting the per-turbine defaults each time --- !
+    rewind(unit_num)
+    do i = 1, n
+        case_type          = 'DTU10MWMonopile'
+        rootname           = 'None'
+        OP_output_dir      = '../OP_output/'
+        OP_output_filename = 'None'
+        OP_SubDyn_filename = 'None'
+        Binary             = .true.
+        WindSpeed          = 11.4_WP
+        WindDir            = 0.0_WP
+        AxisPos            = [0.0_WP, 0.0_WP]
+        BariPos            = [0.0_WP, 0.0_WP]
+        Nmembers           = 8_I32
+        Nnodes             = 5_I32
+
+        read(unit_num, nml=turbine)
+
+        if (trim(rootname) == 'None') then
+            write(*, '(A,I0)') " ERROR: rootname missing in &turbine block ", i
+            close(unit_num)
+            stop
+        end if
+
+        ! --- 5. Pack values into Config_t: per-turbine, shared and environment depth --- !
+        associate(t => config % farm % turbines(i))
+            t % case_type      = trim(case_type)
+            t % rootname       = trim(rootname)
+            t % OP_output_dir  = trim(OP_output_dir)
+            t % OP_output_path = trim(OP_output_filename)
+            t % OP_SubDyn_path = trim(OP_SubDyn_filename)
+            t % Binary         = Binary
+            t % WindSpeed      = WindSpeed
+            t % WindDir        = WindDir
+            t % AxisPos        = AxisPos
+            t % BariPos        = BariPos
+            t % Nmembers       = Nmembers
+            t % Nnodes         = Nnodes
+            t % From           = From
+            t % Upto           = Upto
+            t % skip           = skip
+            t % skipf          = skipf
+            t % filter_freqs   = filter_freqs
+            t % freqs_over     = freqs_over
+            t % Depth          = config % env % depth_base
+        end associate
+    end do
+
+    close(unit_num)
+
+    ! --- 6. Replicas of the same OpenFAST run radiate fully coherent sources --- !
+    do i = 1, n
+        do j = i + 1, n
+            if (trim(config % farm % turbines(i) % rootname) == trim(config % farm % turbines(j) % rootname)) &
+                write(*, '(A,I0,A,I0,A)') " WARNING read_farm_config: turbines ", i, " and ", j, &
+                                          " share the same rootname (fully coherent sources)"
+        end do
+    end do
+
+END SUBROUTINE read_farm_config
+
+
 SUBROUTINE read_solver_config(path, config)
     ! -------------------------------------------------------------------------
     ! Reads the "solver_config" namelist from Solver.nml (which acoustic
@@ -220,6 +405,7 @@ SUBROUTINE read_solver_config(path, config)
     CHARACTER(len=200) :: iomsg
 
     ! Input variables
+    CHARACTER(len=200) :: simulation_type
     CHARACTER(len=200) :: method
     CHARACTER(len=200) :: save_path
     INTEGER(I32)       :: block_size
@@ -227,20 +413,22 @@ SUBROUTINE read_solver_config(path, config)
     LOGICAL            :: debug
 
     ! --- 1. Configuration namelist --- !
-    NAMELIST /solver_config/ &
-        method,              &
-        save_path,           &
-        block_size,          &
-        in_cluster,          &
+    NAMELIST /solver_config/    &
+        simulation_type,        &
+        method,                 &
+        save_path,              &
+        block_size,             &
+        in_cluster,             &
         debug
 
 
     ! --- 2. Defaults --- !
-    method     = "ImageMethod"
-    save_path  = "None"
-    block_size = 128_I32
-    in_cluster = .true.
-    debug      = .false.
+    simulation_type = "turbine"
+    method          = "ImageMethod"
+    save_path       = "None"
+    block_size      = 128_I32
+    in_cluster      = .true.
+    debug           = .false.
 
     ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
@@ -260,11 +448,12 @@ SUBROUTINE read_solver_config(path, config)
     close(unit_num)
 
     ! --- 4. Pack values into Config_t --- !
-    config % solver % method     = method
-    config % solver % save_path  = save_path
-    config % solver % block_size = block_size
-    config % solver % in_cluster = in_cluster
-    config % solver % debug      = debug
+    config % solver % simulation_type = simulation_type
+    config % solver % method          = method
+    config % solver % save_path       = save_path
+    config % solver % block_size      = block_size
+    config % solver % in_cluster      = in_cluster
+    config % solver % debug           = debug
 
 END SUBROUTINE read_solver_config
 

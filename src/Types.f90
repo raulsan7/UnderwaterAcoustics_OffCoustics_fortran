@@ -50,9 +50,22 @@ TYPE :: Config_WindTurbine_t
     INTEGER(I32)       :: skipf             ! [-] Skips frequency bins as freq(::skipf)
     LOGICAL            :: filter_freqs      ! [-] Whether to delete non useful frequencies
     REAL(WP)           :: freqs_over        ! [Hz] Frequencies smaller than freqs_over won't be filtered
-    LOGICAL            :: is_monopile       ! [-] Whether the turbine is a monopile or a floating platform
 
 END TYPE Config_WindTurbine_t
+
+
+TYPE :: Config_WindFarm_t
+    ! -------------------------------------------------------------------------
+    ! Holds the wind farm configuration read from WindFarm.nml: one
+    ! Config_WindTurbine_t per &turbine block, each one already completed
+    ! with the settings shared by the whole farm (&farm_config) and with the
+    ! water depth of Environment.nml.
+    ! -------------------------------------------------------------------------
+
+    INTEGER(I32)                            :: Nturbines      ! [-] Number of turbines in the farm
+    TYPE(Config_WindTurbine_t), ALLOCATABLE :: turbines(:)    ! [-] Per-turbine configuration (Nturbines)
+
+END TYPE Config_WindFarm_t
 
 
 TYPE :: Config_Environment_t
@@ -81,11 +94,12 @@ TYPE :: Config_Solver_t
     ! -------------------------------------------------------------------------
 
     ! --- Input parameters --- !
-    LOGICAL            :: debug         ! [-] More info for debugging
-    LOGICAL            :: in_cluster    ! [-] Whether we are working on a cluster
-    CHARACTER(len=200) :: save_path     ! [-] Where to save results
-    CHARACTER(len=50)  :: method        ! [-] Acoustic method to use
-    INTEGER(I32)       :: block_size    ! [-] Block size for each CPU in parallel computations
+    LOGICAL            :: debug             ! [-] More info for debugging
+    LOGICAL            :: in_cluster        ! [-] Whether we are working on a cluster
+    CHARACTER(len=200) :: save_path         ! [-] Where to save results
+    CHARACTER(len=50)  :: method            ! [-] Acoustic method to use
+    CHARACTER(len=20)  :: simulation_type   ! [-] turbine (Turbine.nml) or farm (WindFarm.nml)
+    INTEGER(I32)       :: block_size        ! [-] Block size for each CPU in parallel computations
 
 END TYPE Config_Solver_t
 
@@ -347,11 +361,12 @@ TYPE :: Config_t
     ! configuration (e.g. Config_ImageMethod_t) selected at run time.
     ! -------------------------------------------------------------------------
 
-    TYPE(Config_WindTurbine_t)              :: turbine       ! [-] Wind turbine configuration
-    TYPE(Config_Environment_t)              :: env           ! [-] Environment/fluid configuration
-    TYPE(Config_Solver_t)                   :: solver        ! [-] Acoustic solver configuration
-    TYPE(Config_Computation_t)              :: run_inputs    ! [-] Per-run_* post-processing step configuration
-    CLASS(Config_Method_t)    , ALLOCATABLE :: method        ! [-] Polymorphic, solver-method-specific configuration
+    TYPE(Config_WindTurbine_t)              :: turbine          ! [-] Wind turbine configuration
+    TYPE(Config_WindFarm_t)                 :: farm             ! [-] Wind farm configurattion
+    TYPE(Config_Environment_t)              :: env              ! [-] Environment/fluid configuration
+    TYPE(Config_Solver_t)                   :: solver           ! [-] Acoustic solver configuration
+    TYPE(Config_Computation_t)              :: run_inputs       ! [-] Per-run_* post-processing step configuration
+    CLASS(Config_Method_t)    , ALLOCATABLE :: method           ! [-] Polymorphic, solver-method-specific configuration
 
 END TYPE Config_t
 

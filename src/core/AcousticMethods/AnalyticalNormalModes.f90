@@ -22,6 +22,8 @@ MODULE AnalyticalNormalModes
 USE Kinds
 USE Types
 USE IOUtils
+USE omp_lib
+USE WindFarm, ONLY: WindFarm_t
 USE WindTurbine, ONLY: WindTurbine_t
 USE MathUtils, ONLY: compute_hankel_complex
 USE AcousticSolver, ONLY: AcousticSolver_t, save_emitter_params, write_emitter_txt
@@ -94,13 +96,17 @@ SUBROUTINE init_AnalyticalNormalModes(self, sources, config)
 
 
     ! Parent variables
-    self % sources    = sources
-    self % env        = config % env
-    self % run_inputs = config % run_inputs
-    self % save_path  = config % solver % save_path
-    self % block_size = config % solver % block_size
-    self % debug      = config % solver % debug
-    self % in_cluster = config % solver % in_cluster
+    ! Parent variables (sources are moved, not copied)
+    CALL MOVE_ALLOC(sources % xyz  , self % sources % xyz)
+    CALL MOVE_ALLOC(sources % Force, self % sources % Force)
+    CALL MOVE_ALLOC(sources % Freqs, self % sources % Freqs)
+    self % sources % geometry = sources % geometry
+    self % env                = config % env
+    self % run_inputs         = config % run_inputs
+    self % save_path          = config % solver % save_path
+    self % block_size         = config % solver % block_size
+    self % debug              = config % solver % debug
+    self % in_cluster         = config % solver % in_cluster
 
     ! Child-specific variables
     SELECT TYPE (m => config % method)
@@ -163,7 +169,8 @@ SUBROUTINE compute_pressure_AnalyticalNormalModes(self, observers, block_size, t
     ! observer points, for every source frequency. Observers are processed
     ! either one-by-one (serial) or split into chunks distributed over OpenMP
     ! threads (in_cluster = .true.), each chunk being handed to
-    ! dipolar_pressure_NM together with the real dipole sources.
+    ! dipolar_pressure_NM together with the real dipole sources, which are
+    ! passed directly (no local copies).
     ! -------------------------------------------------------------------------
 
     CLASS(AnalyticalNormalModes_t), INTENT(INOUT)            :: self                   ! [-] Solver instance
@@ -174,8 +181,6 @@ SUBROUTINE compute_pressure_AnalyticalNormalModes(self, observers, block_size, t
     ! Local variables
     INTEGER(I32)              :: nobs, nf, bs, n_chunks, ichunk
     INTEGER(I32)              :: istart, iend, nb, i
-    REAL(WP)    , ALLOCATABLE :: Freqs(:), xyz(:,:)
-    COMPLEX(WP) , ALLOCATABLE :: Force(:,:,:)
     COMPLEX(WP) , ALLOCATABLE :: p_block(:,:)
 
 
@@ -197,13 +202,15 @@ SUBROUTINE compute_pressure_AnalyticalNormalModes(self, observers, block_size, t
         error stop "compute_pressure_AnalyticalNormalModes(): no sources defined"
     end if
 
-    Freqs = self % sources % Freqs
-    Force = self % sources % Force
-    xyz   = self % sources % xyz
-    nf    = size(Freqs)
+    nf = size(self % sources % Freqs)
 
-    if (size(Force, 1) /= nf .or. size(Force, 2) /= size(xyz, 1) .or. size(Force, 3) /= 3) &
+    if (size(self % sources % Force, 1) /= nf .or. &
+        size(self % sources % Force, 2) /= size(self % sources % xyz, 1) .or. &
+        size(self % sources % Force, 3) /= 3) &
         error stop "compute_pressure_AnalyticalNormalModes(): sources % Force must have shape (NFreqs, Nsources, 3)"
+
+    ! Never fewer blocks than threads, so small observer sets still use every thread
+    bs = max(1_I32, min(bs, (nobs + omp_get_max_threads() - 1_I32) / omp_get_max_threads()))
 
     ALLOCATE(total_pressure(nf, nobs))
     total_pressure = (0.0_WP, 0.0_WP)
@@ -214,14 +221,15 @@ SUBROUTINE compute_pressure_AnalyticalNormalModes(self, observers, block_size, t
 
         !$OMP PARALLEL DO DEFAULT(SHARED) &
         !$OMP PRIVATE(ichunk, istart, iend, nb, p_block) &
-        !$OMP SHARED(xyz, Force, Freqs, n_chunks, nobs, total_pressure, self)
+        !$OMP SHARED(n_chunks, nobs, total_pressure, self)
         do ichunk = 0, n_chunks - 1
             istart = ichunk * bs + 1_I32
             iend   = min(istart + bs - 1_I32, nobs)
             nb     = iend - istart + 1_I32
 
             ! Call kernel for this chunk (p_block will be allocated in the routine)
-            CALL self % dipolar_pressure_NM(observers(istart:iend, :), Freqs, xyz, Force, p_block)
+            CALL self % dipolar_pressure_NM(observers(istart:iend, :), self % sources % Freqs, &
+                                            self % sources % xyz, self % sources % Force, p_block)
 
             ! Accumulate results into the global array (non-overlapping slices)
             total_pressure(:, istart:iend) = total_pressure(:, istart:iend) + p_block(:, 1:nb)
@@ -234,7 +242,9 @@ SUBROUTINE compute_pressure_AnalyticalNormalModes(self, observers, block_size, t
 
         ! Serial: loop observers (keep 2D slice for compatibility)
         do i = 1, nobs
-            CALL self % dipolar_pressure_NM(observers(i:i, :), Freqs, xyz, Force, p_block)
+            CALL self % dipolar_pressure_NM(observers(i:i, :), self % sources % Freqs, &
+                                            self % sources % xyz, self % sources % Force, p_block)
+
             total_pressure(:, i) = total_pressure(:, i) + p_block(:, 1)
 
             if (ALLOCATED(p_block)) DEALLOCATE(p_block)
@@ -251,7 +261,7 @@ SUBROUTINE compute_pressure_AnalyticalNormalModes(self, observers, block_size, t
 END SUBROUTINE compute_pressure_AnalyticalNormalModes
 
 
-SUBROUTINE save_parameters_AnalyticalNormalModes(self, turbine)
+SUBROUTINE save_parameters_AnalyticalNormalModes(self, turbine, farm)
     ! -------------------------------------------------------------------------
     ! Saves the solver, environment and generic turbine parameters to the
     ! HDF5 output file, delegates the turbine-specific parameters to
@@ -259,8 +269,9 @@ SUBROUTINE save_parameters_AnalyticalNormalModes(self, turbine)
     ! text summary via write_txt_summary.
     ! -------------------------------------------------------------------------
 
-    CLASS(AnalyticalNormalModes_t), INTENT(IN)                        :: self       ! [-] Solver instance
-    CLASS(WindTurbine_t)          , INTENT(IN), OPTIONAL, ALLOCATABLE :: turbine    ! [-] Turbine instance (optional)
+    CLASS(AnalyticalNormalModes_t), INTENT(IN)           :: self       ! [-] Solver instance
+    CLASS(WindTurbine_t)          , INTENT(IN), OPTIONAL :: turbine    ! [-] Turbine instance (optional)
+    TYPE(WindFarm_t)              , INTENT(IN), OPTIONAL :: farm       ! [-] Wind farm instance (optional)
 
 
     ! Solver / environment / generic turbine data -> HDF5
@@ -273,10 +284,10 @@ SUBROUTINE save_parameters_AnalyticalNormalModes(self, turbine)
     CALL save_variable(self % save_path, "p_ref"    , self % env % reference_pressure)
 
     ! Emitter data -> HDF5
-    CALL save_emitter_params(self % save_path, turbine)
+    CALL save_emitter_params(self % save_path, turbine, farm)
 
     ! Human-readable .dat summary, delegated to the solver-specific implementation
-    CALL self % write_txt_summary(turbine)
+    CALL self % write_txt_summary(turbine, farm)
 
 END SUBROUTINE save_parameters_AnalyticalNormalModes
 
@@ -324,7 +335,7 @@ SUBROUTINE build_save_path_AnalyticalNormalModes(self)
 END SUBROUTINE build_save_path_AnalyticalNormalModes
 
 
-SUBROUTINE write_txt_summary_AnalyticalNormalModes(self, turbine)
+SUBROUTINE write_txt_summary_AnalyticalNormalModes(self, turbine, farm)
     ! -------------------------------------------------------------------------
     ! Writes a plain-text (.dat) summary next to the HDF5 output, mirroring
     ! the saved turbine, environment and Analytical Normal Modes solver
@@ -332,8 +343,9 @@ SUBROUTINE write_txt_summary_AnalyticalNormalModes(self, turbine)
     ! opening the HDF5 file.
     ! -------------------------------------------------------------------------
 
-    CLASS(AnalyticalNormalModes_t), INTENT(IN)                        :: self       ! [-] Solver instance
-    CLASS(WindTurbine_t)          , INTENT(IN), OPTIONAL, ALLOCATABLE :: turbine    ! [-] Turbine instance (optional)
+    CLASS(AnalyticalNormalModes_t), INTENT(IN)           :: self       ! [-] Solver instance
+    CLASS(WindTurbine_t)          , INTENT(IN), OPTIONAL :: turbine    ! [-] Turbine instance (optional)
+    TYPE(WindFarm_t)              , INTENT(IN), OPTIONAL :: farm       ! [-] Wind farm instance (optional)
 
     ! Local variables
     CHARACTER(len=:), ALLOCATABLE :: dat_path
@@ -350,7 +362,7 @@ SUBROUTINE write_txt_summary_AnalyticalNormalModes(self, turbine)
     write(u, '(A)') 'HDF5 file: ' // trim(self % save_path)
     write(u, *)
 
-    CALL write_emitter_txt(u, turbine)
+    CALL write_emitter_txt(u, turbine, farm)
 
     write(u, '(A)') repeat('-', 70)
     write(u, '(A)') 'ENVIRONMENT'

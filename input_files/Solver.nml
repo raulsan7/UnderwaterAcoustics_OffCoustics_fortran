@@ -3,11 +3,12 @@
 ! =====================================================================
 
 &solver_config
+    simulation_type = 'turbine'         ! [-] 'turbine' (Turbine.nml) or 'farm' (WindFarm.nml) 
     method = 'AnalyticalNormalModes'    ! [-] Acoustic solver: 'ImageMethod' or 'AnalyticalNormalModes'
-    save_path = 'None'        ! [-] Output file base path/name; 'None'/'Default' builds it from the turbine/solver settings
-    block_size = 128          ! [-] Number of observers processed together per parallel block
-    in_cluster = .true.       ! [-] Whether to use multi-threaded/blocked pressure evaluation (cluster/HPC run)
-    debug = .true.            ! [-] Whether to print extra diagnostic info (e.g. pressure norms) during the run
+    save_path = 'None'                  ! [-] Output file base path/name; 'None'/'Default' builds it from the turbine/solver settings
+    block_size = 128                    ! [-] Number of observers processed together per parallel block
+    in_cluster = .true.                 ! [-] Whether to use multi-threaded/blocked pressure evaluation (cluster/HPC run)
+    debug = .true.                      ! [-] Whether to print extra diagnostic info (e.g. pressure norms) during the run
 /
 
 

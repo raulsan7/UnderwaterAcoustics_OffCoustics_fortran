@@ -1,0 +1,134 @@
+! =====================================================================
+! Post-processing configuration file
+! =====================================================================
+! Configures every observer-geometry post-processing step that run_all()
+! can execute (currently passed as optional arguments to each run_*
+! routine in src/core/AcousticSolver.f90 / run_sphere in
+! src/core/AcousticMethods/ImageMethod.f90).
+!
+! - do_config (below): one "do_<name>" logical per step, all together,
+!   deciding whether run_all() executes it at all (.false. skips it
+!   entirely). Kept separate from the per-step parameters so every
+!   on/off switch is visible in one place.
+! - Each step then has its own namelist group, named after the routine
+!   it configures, with the same optional parameters that routine
+!   already accepts today, using the exact same variable names.
+!
+! Auto-default convention: some parameters currently fall back to a
+! value computed at run time (e.g. z = -Depth/2, center = turbine
+! barycenter) rather than a fixed constant. For those, use the sentinel
+! value -999.0 (reals) or -999 (integers) to request that same automatic
+! behaviour; any other value overrides it explicitly.
+! =====================================================================
+
+
+! ---------------------------------------------------------------
+! Which post-processing steps to run
+! ---------------------------------------------------------------
+&do_config
+    do_all       = .true.       ! [-] Run all cases listed bellow
+    do_spectrums = .true.       ! [-] Spectrums at observer points (run_spectrums)
+    do_polar     = .false.       ! [-] Polar contour (run_polar)
+    do_cylinder  = .false.       ! [-] Cylinder surface (run_cylinder)
+    do_decay     = .false.       ! [-] Distance decay along wind direction (run_decay)
+    do_line      = .false.       ! [-] Line between two points (run_line)
+    do_sliceXY   = .false.       ! [-] Horizontal slice XY (run_sliceXY)
+    do_sliceXZ   = .false.       ! [-] Vertical slice XZ (run_sliceXZ)
+    do_sphere    = .false.       ! [-] Spherical radiation, free-field (run_sphere)
+/
+
+
+! ---------------------------------------------------------------
+! Spectrums at observer points (run_spectrums)
+! ---------------------------------------------------------------
+&spectrums_config
+    n_observers = -999                  ! [-] Number of observers that are going to be listed below
+    observers_x = 80.0    ! [m] x-coordinate of the observers
+    observers_y = 0.0         ! [m] y-coordinate of the observers
+    observers_z = -80.0   ! [m] z-coordinate of the observers
+/
+
+
+! ---------------------------------------------------------------
+! Polar contour (run_polar)
+! ---------------------------------------------------------------
+&polar_config
+    r_polar = 500.0                 ! [m] Radius of the polar circle around the turbine
+    z_polar = -999.0                ! [m] Depth of the polar circle (-999.0 = auto: -Depth/2)
+    n_polar = 72                    ! [-] Number of azimuthal observer points around the circle
+    center_polar = -999.0, -999.0   ! [m] Circle centre (x, y); -999.0, -999.0 = auto: turbine baricenter
+/
+
+
+! ---------------------------------------------------------------
+! Cylinder surface (run_cylinder)
+! ---------------------------------------------------------------
+&cylinder_config
+    r_cyl = 500.0                   ! [m] Radius of the cylindrical surface around the turbine
+    n_cyl = 72                      ! [-] Number of azimuthal observer points around the cylinder
+    nz_cyl = 20                     ! [-] Number of vertical observer levels along the cylinder
+    center_cyl = -999.0, -999.0     ! [m] Cylinder axis centre (x, y); -999.0, -999.0 = auto: turbine baricenter
+/
+
+
+! ---------------------------------------------------------------
+! Distance decay along wind direction (run_decay)
+! ---------------------------------------------------------------
+&decay_config
+    distance_decay = 10.0, 500.0    ! [m] Start and end distance from the turbine along the wind direction
+    n_decay = 200                   ! [-] Number of observer points along the decay line
+    z_decay = -999.0                ! [m] Depth of the decay line (-999.0 = auto: -Depth/2)
+    logspace_decay = .true.         ! [-] Whether to space the observer points logarithmically instead of linearly
+/
+
+
+! ---------------------------------------------------------------
+! Line between two points (run_line)
+! ---------------------------------------------------------------
+! n_line = -999 requests the automatic point count (distance/5 if the
+! line is longer than 200 m, otherwise one point per metre).
+&line_config
+    p1_line = 80.0, 0.0, 0.0       ! [m] Line start point (x, y, z)
+    p2_line = 80.0, 0.0, -999.0    ! [m] Line end point (x, y, z); z = -999.0 = auto: -Depth
+    n_line = -999                   ! [-] Number of observer points along the line (-999 = automatic)
+    logspace_line = .false.         ! [-] Whether to space the observer points logarithmically instead of linearly
+/
+
+
+! ---------------------------------------------------------------
+! Horizontal slice XY (run_sliceXY)
+! ---------------------------------------------------------------
+&sliceXY_config
+    z_xy = -999.0                   ! [m] Depth of the horizontal slice (-999.0 = auto: -Depth/2)
+    nx_xy = 26                      ! [-] Number of observer points along x
+    ny_xy = 26                      ! [-] Number of observer points along y
+    xlim_xy = -500.0, 500.0         ! [m] Slice extent along x (min, max)
+    ylim_xy = -500.0, 500.0         ! [m] Slice extent along y (min, max)
+    center_xy = -999.0, -999.0      ! [m] Slice centre (x, y); -999.0, -999.0 = auto: midpoint of xlim_xy/ylim_xy
+/
+
+
+! ---------------------------------------------------------------
+! Vertical slice XZ (run_sliceXZ)
+! ---------------------------------------------------------------
+&sliceXZ_config
+    y_xz = -999.0                   ! [m] y-position of the vertical slice (-999.0 = auto: turbine AxisPos(2))
+    nx_xz = 26                      ! [-] Number of observer points along x
+    nz_xz = 26                      ! [-] Number of observer points along z
+    xlim_xz = -500.0, 500.0         ! [m] Slice extent along x (min, max)
+    zlim_xz = 0.0, -999.0           ! [m] Slice extent along z (min, max); max = -999.0 = auto: -Depth
+/
+
+
+! ---------------------------------------------------------------
+! Spherical radiation, free-field (run_sphere)
+! ---------------------------------------------------------------
+&sphere_config
+    r_sphere = 30.0                             ! [m] Sphere radius (auto-enlarged if it would enclose a turbine node)
+    n_theta_sphere = 72                         ! [-] Number of azimuthal observer points around the sphere
+    nz_sphere = 20                              ! [-] Number of vertical observer levels along the sphere
+    center_sphere = -999.0, -999.0, -999.0      ! [m] Sphere centre (x, y, z); -999.0 = auto: (baricenter, -Depth/2)
+/
+
+
+! Mandatory: Leave blank space at the end of the file

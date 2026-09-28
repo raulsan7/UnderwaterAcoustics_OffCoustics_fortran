@@ -84,10 +84,11 @@ OBJS := \
     $(BUILD)/IOUtils.o \
     $(BUILD)/Args_parser.o \
     $(BUILD)/WindTurbine.o \
-    $(BUILD)/AcousticSolver.o \
     $(BUILD)/DTU10MWFloating.o \
     $(BUILD)/DTU10MWMonopile.o \
     $(BUILD)/SAITEC2MWFloating.o \
+    $(BUILD)/WindFarm.o \
+    $(BUILD)/AcousticSolver.o \
     $(BUILD)/ImageMethod.o \
     $(BUILD)/AnalyticalNormalModes.o
 
@@ -116,6 +117,9 @@ $(BUILD)/Args_parser.o: $(SRC_DIR)/Args_parser.f90 $(BUILD)/Kinds.o $(BUILD)/Typ
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/WindTurbine.o: $(SRC_DIR)/core/WindTurbine.f90 $(BUILD)/Kinds.o $(BUILD)/Types.o $(BUILD)/IOUtils.o | $(BUILD)
+	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
+
+$(BUILD)/WindFarm.o: $(SRC_DIR)/core/WindFarm.f90 $(BUILD)/Kinds.o $(BUILD)/Types.o $(BUILD)/IOUtils.o $(BUILD)/WindTurbine.o $(BUILD)/DTU10MWMonopile.o $(BUILD)/DTU10MWFloating.o $(BUILD)/SAITEC2MWFloating.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/AcousticSolver.o: $(SRC_DIR)/core/AcousticSolver.f90 $(BUILD)/Kinds.o $(BUILD)/Types.o $(BUILD)/IOUtils.o $(BUILD)/WindTurbine.o | $(BUILD)

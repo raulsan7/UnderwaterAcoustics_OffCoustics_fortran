@@ -78,10 +78,10 @@ SUBROUTINE init_DTU10MWFloating(self, config)
     ! -------------------------------------------------------------------------
 
     CLASS(DTU10MWFloating_t)  , INTENT(INOUT) :: self      ! [-] Turbine instance
-    TYPE(Config_WindTurbine_t), INTENT(INOUT) :: config    ! [-] Turbine configuration
+    TYPE(Config_WindTurbine_t), INTENT(IN)    :: config    ! [-] Turbine configuration
 
     ! Local variables
-    LOGICAL :: exists = .false.
+    LOGICAL :: exists
 
 
     ! Define path to rpm curve (hardcoded)
@@ -93,7 +93,6 @@ SUBROUTINE init_DTU10MWFloating(self, config)
 
     ! Set the case type
     self % is_monopile   = .false.
-    config % is_monopile = .false.
 
     CALL init(self, config)
 

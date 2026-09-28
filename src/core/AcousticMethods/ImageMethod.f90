@@ -21,6 +21,8 @@ MODULE ImageMethod
 USE Kinds
 USE Types
 USE IOUtils
+USE omp_lib
+USE WindFarm, ONLY: WindFarm_t
 USE WindTurbine, ONLY: WindTurbine_t
 USE AcousticSolver, ONLY: AcousticSolver_t, save_emitter_params, write_emitter_txt
 
@@ -92,14 +94,17 @@ SUBROUTINE init_ImageMethod(self, sources, config)
 
 
 
-    ! Parent variables
-    self % sources    = sources
-    self % env        = config % env
-    self % run_inputs = config % run_inputs
-    self % save_path  = config % solver % save_path
-    self % block_size = config % solver % block_size
-    self % debug      = config % solver % debug
-    self % in_cluster = config % solver % in_cluster
+    ! Parent variables (sources are moved, not copied)
+    CALL MOVE_ALLOC(sources % xyz  , self % sources % xyz)
+    CALL MOVE_ALLOC(sources % Force, self % sources % Force)
+    CALL MOVE_ALLOC(sources % Freqs, self % sources % Freqs)
+    self % sources % geometry = sources % geometry
+    self % env                = config % env
+    self % run_inputs         = config % run_inputs
+    self % save_path          = config % solver % save_path
+    self % block_size         = config % solver % block_size
+    self % debug              = config % solver % debug
+    self % in_cluster         = config % solver % in_cluster
 
     ! Child-specific variables
     SELECT TYPE (m => config % method)
@@ -164,20 +169,20 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
     ! Local variables
     INTEGER(I32)                     :: nobs, nf, bs, n_chunks, ichunk
     INTEGER(I32)                     :: istart, iend, nb, i
-    TYPE(ImageSystem_t)              :: img
     REAL(WP)           , ALLOCATABLE :: Freqs(:)
     COMPLEX(WP)        , ALLOCATABLE :: p_block(:,:)
 
 
     ! Defaults
     bs = 256_I32 ; if (present(block_size)) bs = block_size
-
+    
     ! Basic checks
     nobs = size(observers, 1)
     if (nobs <= 0_I32) then
         ALLOCATE(total_pressure(0, 0))
         return
     end if
+    bs = max(1_I32, min(bs, (nobs + omp_get_max_threads() - 1_I32) / omp_get_max_threads()))
 
     if (size(observers, 2) /= 3) error stop "compute_pressure_ImageMethod: observers must have shape (N,3)"
 
@@ -194,22 +199,21 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
     total_pressure = (0.0_WP, 0.0_WP)
 
     if (.not. self % in_cluster) bs = 1_I32
-    img = self % image_system
 
     if (self % in_cluster) then
         n_chunks = (nobs + bs - 1_I32) / bs
 
         !$OMP PARALLEL DO DEFAULT(SHARED) &
         !$OMP PRIVATE(ichunk, istart, iend, nb, p_block) &
-        !$OMP SHARED(img, Freqs, n_chunks, nobs, total_pressure, self)
+        !$OMP SHARED(Freqs, n_chunks, nobs, total_pressure, self)
         do ichunk = 0, n_chunks - 1
             istart = ichunk * bs + 1_I32
             iend   = min(istart + bs - 1_I32, nobs)
             nb     = iend - istart + 1_I32
 
             ! Call kernel for this chunk (p_block will be allocated by the routine)
-            CALL self % dipole_pressure_images(observers(istart:iend, :), Freqs, img % xyz, &
-                                               img % Force, img % BC_all, p_block)
+            CALL self % dipole_pressure_images(observers(istart:iend, :), Freqs, self % image_system % xyz, &
+                                               self % image_system % Force, self % image_system % BC_all, p_block)
 
             ! Accumulate results into the global array (non-overlapping slices -> no race)
             total_pressure(:, istart:iend) = total_pressure(:, istart:iend) + p_block(:, 1:nb)
@@ -222,8 +226,8 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
 
         ! Serial: loop observers (keep 2D slice for compatibility)
         do i = 1, nobs
-            CALL self % dipole_pressure_images(observers(i:i, :), Freqs, img % xyz, &
-                                               img % Force, img % BC_all, p_block)
+            CALL self % dipole_pressure_images(observers(i:i, :), Freqs, self % image_system % xyz, &
+                                               self % image_system % Force, self % image_system % BC_all, p_block)
             total_pressure(:, i) = total_pressure(:, i) + p_block(:, 1)
 
             if (ALLOCATED(p_block)) DEALLOCATE(p_block)
@@ -240,7 +244,7 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
 END SUBROUTINE compute_pressure_ImageMethod
 
 
-SUBROUTINE save_parameters_ImageMethod(self, turbine)
+SUBROUTINE save_parameters_ImageMethod(self, turbine, farm)
     ! -------------------------------------------------------------------------
     ! Saves the solver, environment and generic turbine parameters to the
     ! HDF5 output file, delegates the turbine-specific parameters to
@@ -248,8 +252,9 @@ SUBROUTINE save_parameters_ImageMethod(self, turbine)
     ! text summary via write_txt_summary.
     ! -------------------------------------------------------------------------
 
-    CLASS(ImageMethod_t), INTENT(IN)                        :: self       ! [-] Solver instance
-    CLASS(WindTurbine_t), INTENT(IN), OPTIONAL, ALLOCATABLE :: turbine    ! [-] Turbine instance (optional)
+    CLASS(ImageMethod_t), INTENT(IN)           :: self          ! [-] Solver instance
+    CLASS(WindTurbine_t), INTENT(IN), OPTIONAL :: turbine       ! [-] Turbine instance (optional)
+    TYPE(WindFarm_t)    , INTENT(IN), OPTIONAL :: farm          ! [-] Farm instance (optional)
 
 
     ! Solver / environment / generic turbine data -> HDF5
@@ -261,10 +266,10 @@ SUBROUTINE save_parameters_ImageMethod(self, turbine)
     CALL save_variable(self % save_path, "p_ref"    , self % env % reference_pressure)
 
     ! Emitter data -> HDF5
-    CALL save_emitter_params(self % save_path, turbine)
+    CALL save_emitter_params(self % save_path, turbine, farm)
 
     ! Human-readable .dat summary, delegated to the solver-specific implementation
-    CALL self % write_txt_summary(turbine)
+    CALL self % write_txt_summary(turbine, farm)
 
 END SUBROUTINE save_parameters_ImageMethod
 
@@ -312,15 +317,16 @@ SUBROUTINE build_save_path_ImageMethod(self)
 END SUBROUTINE build_save_path_ImageMethod
 
 
-SUBROUTINE write_txt_summary_ImageMethod(self, turbine)
+SUBROUTINE write_txt_summary_ImageMethod(self, turbine, farm)
     ! -------------------------------------------------------------------------
     ! Writes a plain-text (.dat) summary next to the HDF5 output, mirroring
     ! the saved turbine, environment and Image Method solver parameters in a
     ! human-readable form for quick inspection without opening the HDF5 file.
     ! -------------------------------------------------------------------------
 
-    CLASS(ImageMethod_t), INTENT(IN)                        :: self       ! [-] Solver instance
-    CLASS(WindTurbine_t), INTENT(IN), OPTIONAL, ALLOCATABLE :: turbine    ! [-] Turbine instance (optional)
+    CLASS(ImageMethod_t), INTENT(IN)           :: self       ! [-] Solver instance
+    CLASS(WindTurbine_t), INTENT(IN), OPTIONAL :: turbine    ! [-] Turbine instance (optional)
+    TYPE(WindFarm_t)    , INTENT(IN), OPTIONAL :: farm       ! [-] Wind farm instance (optional)
 
     ! Local variables
     CHARACTER(len=:), ALLOCATABLE :: dat_path
@@ -337,7 +343,7 @@ SUBROUTINE write_txt_summary_ImageMethod(self, turbine)
     write(u, '(A)') 'HDF5 file: ' // trim(self % save_path)
     write(u, *)
 
-    CALL write_emitter_txt(u, turbine)
+    CALL write_emitter_txt(u, turbine, farm)
 
     write(u, '(A)') repeat('-', 70)
     write(u, '(A)') 'ENVIRONMENT'
@@ -372,60 +378,49 @@ END SUBROUTINE write_txt_summary_ImageMethod
 ! ===============================================================================
 SUBROUTINE build_image_system(self)
     ! -------------------------------------------------------------------------
-    ! Builds (or rebuilds) self % image_system from the real sources: reshapes
-    ! the per-source force array to the standard (NFreqs, Nnodes, 3) layout,
-    ! calls method_of_images to generate the full chain of image z-positions,
-    ! forces and boundary-condition tags, and assembles the resulting (x,y,z)
-    ! coordinates by pairing each image with its parent source's horizontal
-    ! position.
+    ! Builds (or rebuilds) self % image_system from the real sources: calls
+    ! method_of_images directly on the source arrays to generate the full
+    ! chain of image z-positions, forces and boundary-condition tags, and
+    ! assembles the resulting (x,y,z) coordinates by pairing each image with
+    ! its parent source's horizontal position. The image forces and tags are
+    ! moved (not copied) into the image system, and any previous image system
+    ! is freed first, so that old and new never coexist in memory.
     ! -------------------------------------------------------------------------
 
     CLASS(ImageMethod_t), INTENT(INOUT) :: self    ! [-] Solver instance
 
     ! Local variables
-    REAL(WP)    , ALLOCATABLE :: zi(:), z_all(:)
-    COMPLEX(WP) , ALLOCATABLE :: Force(:,:,:), Force_prep(:,:,:), Force_out(:,:,:)
+    REAL(WP)    , ALLOCATABLE :: z_all(:)
+    COMPLEX(WP) , ALLOCATABLE :: Force_out(:,:,:)
     INTEGER(I32), ALLOCATABLE :: parent(:), BC_all(:)
-    INTEGER(I32)              :: Nnodes, NFreqs, total_nodes, j
+    INTEGER(I32)              :: total_nodes, j
 
 
-    Nnodes = size(self % sources % xyz, 1)
-    Force  = self % sources % Force
+    ! Sources are always stored as (NFreqs, Nsources, 3)
+    if (size(self % sources % Force, 2) /= size(self % sources % xyz, 1) .or. size(self % sources % Force, 3) /= 3) &
+        error stop "ImageMethod % build_image_system(): sources % Force must have shape (NFreqs, Nsources, 3)"
 
-    ! Ensure shape standard: (NFreqs, Nnodes, 3)
-    if (size(Force, 3) == 3 .and. size(Force, 2) == Nnodes) then
-        Force_prep = Force
-    else
-        NFreqs = size(self % sources % Freqs)
-        ALLOCATE(Force_prep(NFreqs, Nnodes, 3))
-        do j = 1, Nnodes
-            Force_prep(:, j, 1) = Force(:, 1, j)
-            Force_prep(:, j, 2) = Force(:, 2, j)
-            Force_prep(:, j, 3) = Force(:, 3, j)
-        end do
-    end if
-
-    zi = self % sources % xyz(:, 3)
-
-    CALL self % method_of_images(zi, Force_prep, z_all, Force_out, parent, BC_all)
-
-    total_nodes = size(z_all)
-    ! Deallocate if rebuilding
+    ! Rebuilding: free the previous image system first
     if (ALLOCATED(self % image_system % xyz))    DEALLOCATE(self % image_system % xyz)
     if (ALLOCATED(self % image_system % Force))  DEALLOCATE(self % image_system % Force)
     if (ALLOCATED(self % image_system % BC_all)) DEALLOCATE(self % image_system % BC_all)
-    ALLOCATE(self % image_system % xyz(total_nodes, 3))
-    ALLOCATE(self % image_system % Force(size(Force_out, 1), total_nodes, 3))
-    ALLOCATE(self % image_system % BC_all(total_nodes))
 
+    ! Source arrays passed directly (INTENT(IN) dummies), no local copies
+    CALL self % method_of_images(self % sources % xyz(:, 3), self % sources % Force, &
+                                 z_all, Force_out, parent, BC_all)
+
+    ! Image coordinates: horizontal position of the parent source, reflected z
+    total_nodes = size(z_all)
+    ALLOCATE(self % image_system % xyz(total_nodes, 3))
     do j = 1, total_nodes
         self % image_system % xyz(j, 1) = self % sources % xyz(parent(j), 1)
         self % image_system % xyz(j, 2) = self % sources % xyz(parent(j), 2)
         self % image_system % xyz(j, 3) = z_all(j)
     end do
 
-    self % image_system % Force  = Force_out
-    self % image_system % BC_all = BC_all
+    ! Image forces and boundary-condition tags are moved in, not copied
+    CALL MOVE_ALLOC(Force_out, self % image_system % Force)
+    CALL MOVE_ALLOC(BC_all   , self % image_system % BC_all)
 
 END SUBROUTINE build_image_system
 

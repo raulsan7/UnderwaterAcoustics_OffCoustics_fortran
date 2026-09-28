@@ -20,6 +20,7 @@ MODULE AcousticSolver
 USE Kinds
 USE Types
 USE IOUtils
+USE WindFarm, ONLY: WindFarm_t
 USE WindTurbine, ONLY: WindTurbine_t, save_turbine_params, write_turbine_txt
 
 IMPLICIT NONE
@@ -92,11 +93,6 @@ ABSTRACT INTERFACE
 
     END SUBROUTINE init_i
 
-END INTERFACE
-
-
-ABSTRACT INTERFACE
-
     FUNCTION get_name_i(self) RESULT(name)
         ! -------------------------------------------------------------------------
         ! Returns the human-readable solver name.
@@ -108,11 +104,6 @@ ABSTRACT INTERFACE
         CHARACTER(len=:)       , ALLOCATABLE   :: name    ! [-] Human-readable solver name
 
     END FUNCTION get_name_i
-
-END INTERFACE
-
-
-ABSTRACT INTERFACE
 
     SUBROUTINE compute_pressure_i(self, observers, block_size, total_pressure)
         ! -------------------------------------------------------------------------
@@ -129,28 +120,19 @@ ABSTRACT INTERFACE
 
     END SUBROUTINE compute_pressure_i
 
-END INTERFACE
-
-
-ABSTRACT INTERFACE
-
-    SUBROUTINE save_parameters_i(self, turbine)
+    SUBROUTINE save_parameters_i(self, turbine, farm)
         ! -------------------------------------------------------------------------
         ! Saves the solver, environment and turbine parameters to the HDF5
         ! output file and writes the .dat text summary.
         ! -------------------------------------------------------------------------
 
-        IMPORT :: AcousticSolver_t, WindTurbine_t
+        IMPORT :: AcousticSolver_t, WindTurbine_t, WindFarm_t
 
-        CLASS(AcousticSolver_t), INTENT(IN)                        :: self       ! [-] Solver instance
-        CLASS(WindTurbine_t)   , INTENT(IN), OPTIONAL, ALLOCATABLE :: turbine    ! [-] Turbine instance (optional)
+        CLASS(AcousticSolver_t), INTENT(IN)           :: self       ! [-] Solver instance
+        CLASS(WindTurbine_t)   , INTENT(IN), OPTIONAL :: turbine    ! [-] Turbine instance (optional)
+        TYPE(WindFarm_t)       , INTENT(IN), OPTIONAL :: farm       ! [-] Wind farm instance (optional)
 
     END SUBROUTINE save_parameters_i
-
-END INTERFACE
-
-
-ABSTRACT INTERFACE
 
     SUBROUTINE build_save_path_i(self)
         ! -------------------------------------------------------------------------
@@ -163,20 +145,16 @@ ABSTRACT INTERFACE
 
     END SUBROUTINE build_save_path_i
 
-END INTERFACE
-
-
-ABSTRACT INTERFACE
-
-    SUBROUTINE write_txt_summary_i(self, turbine)
+    SUBROUTINE write_txt_summary_i(self, turbine, farm)
         ! -------------------------------------------------------------------------
         ! Writes the human-readable .dat summary next to the HDF5 output file.
         ! -------------------------------------------------------------------------
 
-        IMPORT :: AcousticSolver_t, WindTurbine_t
+        IMPORT :: AcousticSolver_t, WindTurbine_t, WindFarm_t
 
-        CLASS(AcousticSolver_t), INTENT(IN)                        :: self       ! [-] Solver instance
-        CLASS(WindTurbine_t)   , INTENT(IN), OPTIONAL, ALLOCATABLE :: turbine    ! [-] Turbine instance (optional)
+        CLASS(AcousticSolver_t), INTENT(IN)           :: self       ! [-] Solver instance
+        CLASS(WindTurbine_t)   , INTENT(IN), OPTIONAL :: turbine    ! [-] Turbine instance (optional)
+        TYPE(WindFarm_t)       , INTENT(IN), OPTIONAL :: farm       ! [-] Wind farm instance (optional)
 
     END SUBROUTINE write_txt_summary_i
 
@@ -352,39 +330,40 @@ SUBROUTINE update_parameters(self)
 END SUBROUTINE update_parameters
 
 
-SUBROUTINE save_emitter_params(save_path, turbine)
+SUBROUTINE save_emitter_params(save_path, turbine, farm)
     ! -------------------------------------------------------------------------
     ! Saves the parameters of whatever produced the sources into the HDF5
     ! output file. Nothing is saved for hand-made sources.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*)    , INTENT(IN)                        :: save_path    ! [-] Path to the HDF5 output file
-    CLASS(WindTurbine_t), INTENT(IN), OPTIONAL, ALLOCATABLE :: turbine      ! [-] Turbine instance (optional)
+    CHARACTER(len=*)    , INTENT(IN)           :: save_path    ! [-] Path to the HDF5 output file
+    CLASS(WindTurbine_t), INTENT(IN), OPTIONAL :: turbine      ! [-] Turbine instance (optional)
+    TYPE(WindFarm_t)    , INTENT(IN), OPTIONAL :: farm         ! [-] Wind farm instance (optional)
 
 
     if (present(turbine)) then
-        if (ALLOCATED(turbine)) then
-            CALL save_turbine_params(turbine, save_path)
-            CALL turbine % save_specific_params(save_path)
-        end if
+        CALL save_turbine_params(turbine, save_path)
+        CALL turbine % save_specific_params(save_path)
     end if
+
+    if (present(farm)) CALL farm % save_params(save_path)
 
 END SUBROUTINE save_emitter_params
 
 
-SUBROUTINE write_emitter_txt(unit, turbine)
+SUBROUTINE write_emitter_txt(unit, turbine, farm)
     ! -------------------------------------------------------------------------
     ! Writes the block of whatever produced the sources into the .dat
     ! summary file. Nothing is written for hand-made sources.
     ! -------------------------------------------------------------------------
 
-    INTEGER(I32)        , INTENT(IN)                        :: unit       ! [-] Unit of the open .dat file
-    CLASS(WindTurbine_t), INTENT(IN), OPTIONAL, ALLOCATABLE :: turbine    ! [-] Turbine instance (optional)
+    INTEGER(I32)        , INTENT(IN)           :: unit       ! [-] Unit of the open .dat file
+    CLASS(WindTurbine_t), INTENT(IN), OPTIONAL :: turbine    ! [-] Turbine instance (optional)
+    TYPE(WindFarm_t)    , INTENT(IN), OPTIONAL :: farm       ! [-] Wind farm instance (optional)
 
 
-    if (present(turbine)) then
-        if (ALLOCATED(turbine)) CALL write_turbine_txt(turbine, unit)
-    end if
+    if (present(turbine)) CALL write_turbine_txt(turbine, unit)
+    if (present(farm)) CALL farm % write_txt(unit)
 
 END SUBROUTINE write_emitter_txt
 

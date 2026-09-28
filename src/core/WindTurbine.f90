@@ -102,11 +102,6 @@ ABSTRACT INTERFACE
 
     END SUBROUTINE compute_force_i
 
-END INTERFACE
-
-
-ABSTRACT INTERFACE
-
     SUBROUTINE compute_mass_i(self, mass, added_mass)
         ! -------------------------------------------------------------------------
         ! Computes the per-node dry (structural) and added (hydrodynamic) mass.
@@ -119,11 +114,6 @@ ABSTRACT INTERFACE
         REAL(WP)            , INTENT(OUT), ALLOCATABLE :: added_mass(:)    ! [kg] Added mass per node
 
     END SUBROUTINE compute_mass_i
-
-END INTERFACE
-
-
-ABSTRACT INTERFACE
 
     FUNCTION filter_frequencies_i(self, freqs_over) RESULT(mask)
         ! -------------------------------------------------------------------------
@@ -139,11 +129,6 @@ ABSTRACT INTERFACE
 
     END FUNCTION filter_frequencies_i
 
-END INTERFACE
-
-
-ABSTRACT INTERFACE
-
     SUBROUTINE save_specific_params_i(self, save_path, istr)
         ! -------------------------------------------------------------------------
         ! Saves the turbine-specific parameters into the HDF5 output file.
@@ -157,11 +142,6 @@ ABSTRACT INTERFACE
 
     END SUBROUTINE save_specific_params_i
 
-END INTERFACE
-
-
-ABSTRACT INTERFACE
-
     SUBROUTINE write_specific_params_txt_i(self, unit)
         ! -------------------------------------------------------------------------
         ! Writes the turbine-specific parameters as human-readable lines into
@@ -174,11 +154,6 @@ ABSTRACT INTERFACE
         INTEGER(I32)        , INTENT(IN) :: unit    ! [-] Unit of the open .dat file
 
     END SUBROUTINE write_specific_params_txt_i
-
-END INTERFACE
-
-
-ABSTRACT INTERFACE
 
     FUNCTION get_impedance_corrected_force_i(self, c) RESULT(corrected_force)
         ! -------------------------------------------------------------------------
@@ -207,11 +182,11 @@ SUBROUTINE init(self, config)
     ! -------------------------------------------------------------------------
 
     CLASS(WindTurbine_t)      , INTENT(INOUT) :: self      ! [-] Turbine instance
-    TYPE(Config_WindTurbine_t), INTENT(INOUT) :: config    ! [-] Turbine configuration
+    TYPE(Config_WindTurbine_t), INTENT(IN)    :: config    ! [-] Turbine configuration
 
     ! Local variables
     CHARACTER(len=5) :: ext
-    LOGICAL          :: exists = .false.
+    LOGICAL          :: exists
 
 
     self % rootname      = config % rootname
@@ -304,8 +279,6 @@ SUBROUTINE read_input(self, config, verbose)
         self % BariPos(1) = sum(self % xyz_all(:, :, 1)) / real(self % Nmembers * self % Nnodes, WP)
         self % BariPos(2) = sum(self % xyz_all(:, :, 2)) / real(self % Nmembers * self % Nnodes, WP)
     end if
-    config % BariPos = self % BariPos
-    config % AxisPos = self % AxisPos
 
     if (verbose) then
         dt = self % Time(2) - self % Time(1)
@@ -404,7 +377,7 @@ SUBROUTINE turbine_to_source(self, config, sources)
     ! requires it (currently the Image Method).
     ! -------------------------------------------------------------------------
 
-    CLASS(WindTurbine_t)  , INTENT(IN)               :: self       ! [-] Turbine instance
+    CLASS(WindTurbine_t)  , INTENT(INOUT)            :: self       ! [-] Turbine instance
     TYPE(Config_t)        , INTENT(IN)               :: config     ! [-] Global configuration
     TYPE(AcousticSource_t), INTENT(OUT), ALLOCATABLE :: sources    ! [-] Acoustic point-dipole sources
 
@@ -412,7 +385,7 @@ SUBROUTINE turbine_to_source(self, config, sources)
     CHARACTER(len=16) :: ws_str
 
 
-    if (.not. ALLOCATED(sources)) ALLOCATE(AcousticSource_t :: sources)
+    ALLOCATE(AcousticSource_t :: sources)
 
     if (.not. ALLOCATED(self % Force) .or. .not. ALLOCATED(self % xyz)) then
         error stop "turbine_to_source(): turbine forces not computed"
@@ -426,7 +399,7 @@ SUBROUTINE turbine_to_source(self, config, sources)
     if (config % solver % method == "ImageMethod") then
         sources % Force = self % get_impedance_corrected_force(config % env % speed_sound_base)
     else
-        sources % Force = self % Force
+        CALL MOVE_ALLOC(self % Force, sources % Force)
     end if
 
     ! Reference geometry and default file name labels read by the solver
@@ -443,23 +416,29 @@ SUBROUTINE turbine_to_source(self, config, sources)
 END SUBROUTINE turbine_to_source
 
 
-SUBROUTINE save_turbine_params(turbine, save_path)
+SUBROUTINE save_turbine_params(turbine, save_path, istr)
     ! -------------------------------------------------------------------------
     ! Saves the generic turbine parameters (shared by every turbine type) into
     ! the solver's HDF5 output file. Platform-specific parameters are handled
     ! separately by each concrete type's save_specific_params.
     ! -------------------------------------------------------------------------
 
-    CLASS(WindTurbine_t), INTENT(IN) :: turbine      ! [-] Turbine instance
-    CHARACTER(len=*)    , INTENT(IN) :: save_path    ! [-] Path to the HDF5 output file
+    CLASS(WindTurbine_t), INTENT(IN)           :: turbine       ! [-] Turbine instance
+    CHARACTER(len=*)    , INTENT(IN)           :: save_path     ! [-] Path to the HDF5 output file
+    CHARACTER(len=*)    , INTENT(IN), OPTIONAL :: istr          ! [-] Suffix appended to the variable names
 
+    ! Local variables
+    CHARACTER(len=:), ALLOCATABLE :: sfx
 
-    CALL save_variable(save_path, "case_type", turbine % case_type)
-    CALL save_variable(save_path, "WindSpeed", turbine % WindSpeed)
-    CALL save_variable(save_path, "WindDir"  , turbine % WindDir)
-    CALL save_variable(save_path, "Depth"    , turbine % Depth)
-    CALL save_variable(save_path, "AxisPos"  , turbine % AxisPos)
-    CALL save_variable(save_path, "BariPos"  , turbine % BariPos)
+    
+    sfx = ''; if (PRESENT(istr)) sfx = '_' // istr
+
+    CALL save_variable(save_path, "case_type" // sfx , turbine % case_type)
+    CALL save_variable(save_path, "WindSpeed" // sfx , turbine % WindSpeed)
+    CALL save_variable(save_path, "WindDir"   // sfx , turbine % WindDir)
+    CALL save_variable(save_path, "Depth"     // sfx , turbine % Depth)
+    CALL save_variable(save_path, "AxisPos"   // sfx , turbine % AxisPos)
+    CALL save_variable(save_path, "BariPos"   // sfx , turbine % BariPos)
 
 END SUBROUTINE save_turbine_params
 

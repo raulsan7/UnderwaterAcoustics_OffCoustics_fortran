@@ -97,12 +97,14 @@
  3.6 1 blank line before END SUBROUTINE / END FUNCTION / END TYPE /
      END PROGRAM.
  3.7 2 blank lines between procedures, between TYPE definitions, between
-     module-level INTERFACE blocks, and before a level-1 section separator.
+     separate module-level INTERFACE blocks, and before a level-1 section
+     separator.
  3.8 Module header: USE block, 1 blank, IMPLICIT NONE, 1 blank,
      PRIVATE/PUBLIC.
  3.9 EXACTLY 1 blank line before END MODULE.
- 3.10 INTERFACE blocks: 1 blank line after "INTERFACE", between interface
-      bodies and before "END INTERFACE".
+ 3.10 ABSTRACT INTERFACE blocks: group all deferred-procedure interface
+     bodies for a module in one block. Use 1 blank line after "INTERFACE",
+     between interface bodies and before "END INTERFACE".
 
 
 -------------------------------------------------------------------------------

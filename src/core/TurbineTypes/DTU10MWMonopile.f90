@@ -68,10 +68,10 @@ SUBROUTINE init_DTU10MWMonopile(self, config)
     ! -------------------------------------------------------------------------
 
     CLASS(DTU10MWMonopile_t)  , INTENT(INOUT) :: self      ! [-] Turbine instance
-    TYPE(Config_WindTurbine_t), INTENT(INOUT) :: config    ! [-] Turbine configuration
+    TYPE(Config_WindTurbine_t), INTENT(IN)    :: config    ! [-] Turbine configuration
 
     ! Local variables
-    LOGICAL :: exists = .false.
+    LOGICAL :: exists
 
 
     ! Path to the rpm curve file (hardcoded)
@@ -83,7 +83,6 @@ SUBROUTINE init_DTU10MWMonopile(self, config)
 
     ! Set the case type
     self % is_monopile   = .true.
-    config % is_monopile = .true.
 
     CALL init(self, config)
 
