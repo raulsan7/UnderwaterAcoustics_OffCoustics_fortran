@@ -17,7 +17,6 @@
     ! --- Operating point and placement --- !
     WindSpeed = 11.4                            ! [m/s] Wind speed of this operating point
     WindDir = 0.0                               ! [deg] Wind direction (0 deg points to +x, anticlockwise)
-    Depth = 30.0                                ! [m] Water depth at the turbine site
     AxisPos = 0.0, 0.0                          ! [m] Turbine axis (x, y) position in the global frame
     BariPos = 0.0, 0.0                          ! [m] Turbine baricenter (x, y) position; 0,0 triggers automatic computation
 
@@ -26,13 +25,13 @@
     Nnodes = 5                                  ! [-] Number of structural nodes per member
 
     ! --- Time-series reading window --- !
-    From = 0.0                                  ! [-] Fraction of the time series to start reading from
+    From = 0.9                                  ! [-] Fraction of the time series to start reading from
     Upto = 1.0                                  ! [-] Fraction of the time series to stop reading at
     skip = 1                                    ! [-] Keep 1 out of every "skip" time samples
     skipf = 1                                   ! [-] Keep 1 out of every "skipf" frequency bins
 
     ! --- Frequency filtering --- !
-    filter_freqs = .true.                       ! [-] Whether to discard frequencies far from the drivetrain excitation peaks
+    filter_freqs = .false.                       ! [-] Whether to discard frequencies far from the drivetrain excitation peaks
     freqs_over = 10.0                           ! [Hz] Frequencies below this value are never filtered out
 
 /

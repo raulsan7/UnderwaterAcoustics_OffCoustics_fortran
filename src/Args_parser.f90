@@ -63,10 +63,13 @@ SUBROUTINE read_input_files(files_path, config)
     AnalyticalNormalModes_config_path = files_path // "AnalyticalNormalModes.nml"
 
     ! Read principal files
-    CALL read_turbine_config(turbine_config_path, config)
     CALL read_solver_config(solver_config_path, config)
+    CALL read_turbine_config(turbine_config_path, config)
     CALL read_environment_config(environment_config_path, config)
     CALL read_computation_config(computation_config_path, config)
+
+    ! The environment is the single source of the water depth
+    config % turbine % Depth = config % env % depth_base
 
     ! Dispatch to the method-specific config reader based on which
     ! acoustic solver was selected in Solver.nml
@@ -112,7 +115,6 @@ SUBROUTINE read_turbine_config(path, config)
     INTEGER(I32)       :: skipf
     REAL(WP)           :: WindSpeed
     REAL(WP)           :: WindDir
-    REAL(WP)           :: Depth
     REAL(WP)           :: AxisPos(2)
     REAL(WP)           :: BariPos(2)
     REAL(WP)           :: From
@@ -131,7 +133,6 @@ SUBROUTINE read_turbine_config(path, config)
         Binary,               &
         WindSpeed,            &
         WindDir,              &
-        Depth,                &
         Nmembers,             &
         Nnodes,               &
         AxisPos,              &
@@ -153,7 +154,6 @@ SUBROUTINE read_turbine_config(path, config)
     Binary             = .true.
     WindSpeed          = 11.4_WP
     WindDir            = 0.0_WP
-    Depth              = 30.0_WP
     Nmembers           = 8_I32
     Nnodes             = 5_I32
     AxisPos            = [0.0_WP, 0.0_WP]
@@ -191,7 +191,6 @@ SUBROUTINE read_turbine_config(path, config)
     config % turbine % Binary         = Binary
     config % turbine % WindSpeed      = WindSpeed
     config % turbine % WindDir        = WindDir
-    config % turbine % Depth          = Depth
     config % turbine % Nmembers       = Nmembers
     config % turbine % Nnodes         = Nnodes
     config % turbine % AxisPos        = AxisPos
@@ -351,7 +350,6 @@ SUBROUTINE read_ImageMethod_config(path, config)
     INTEGER(I32) :: UpperBC
     INTEGER(I32) :: LowerBC
     REAL(WP)     :: UpperHBC
-    REAL(WP)     :: LowerHBC
     REAL(WP)     :: attenuation_surface
     REAL(WP)     :: attenuation_bottom
     REAL(WP)     :: epsilon
@@ -362,7 +360,6 @@ SUBROUTINE read_ImageMethod_config(path, config)
         UpperBC,                   &
         LowerBC,                   &
         UpperHBC,                  &
-        LowerHBC,                  &
         attenuation_surface,       &
         attenuation_bottom,        &
         epsilon
@@ -373,7 +370,6 @@ SUBROUTINE read_ImageMethod_config(path, config)
     UpperBC             = -1_I32
     LowerBC             = 1_I32
     UpperHBC            = 0.0_WP
-    LowerHBC            = -30.0_WP
     attenuation_surface = 1.0_WP
     attenuation_bottom  = 0.5_WP
     epsilon             = 1.0e-6_WP
@@ -402,7 +398,6 @@ SUBROUTINE read_ImageMethod_config(path, config)
         m % UpperBC             = UpperBC
         m % LowerBC             = LowerBC
         m % UpperHBC            = UpperHBC
-        m % LowerHBC            = LowerHBC
         m % attenuation_surface = attenuation_surface
         m % attenuation_bottom  = attenuation_bottom
         m % epsilon             = epsilon
@@ -430,21 +425,18 @@ SUBROUTINE read_AnalyticalNormalModes_config(path, config)
     ! Input variables
     INTEGER(I32) :: Nmodes
     REAL(WP)     :: UpperHBC
-    REAL(WP)     :: LowerHBC
     REAL(WP)     :: epsilon
 
     ! --- 1. Configuration namelist --- !
     NAMELIST /AnalyticalNormalModes_config/ &
         Nmodes,                             &
         UpperHBC,                           &
-        LowerHBC,                           &
         epsilon
 
 
     ! --- 2. Defaults --- !
     Nmodes   = DEFAULT_I
     UpperHBC = 0.0_WP
-    LowerHBC = -30.0_WP
     epsilon  = 1.0e-12_WP
 
     ! --- 3. Open and read namelist file --- !
@@ -469,7 +461,6 @@ SUBROUTINE read_AnalyticalNormalModes_config(path, config)
     TYPE IS (Config_AnalyticalNormalModes_t)
         m % Nmodes   = Nmodes
         m % UpperHBC = UpperHBC
-        m % LowerHBC = LowerHBC
         m % epsilon  = epsilon
     END SELECT
 

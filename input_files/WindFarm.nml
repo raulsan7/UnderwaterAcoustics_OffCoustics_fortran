@@ -1,0 +1,41 @@
+! input_files/WindFarm.nml
+&farm_config
+    ! --- Common spectral settings (define the shared frequency grid) --- !
+    From = 0.0
+    Upto = 1.0
+    skip = 1
+    skipf = 1
+    filter_freqs = .true.
+    freqs_over = 10.0
+    Depth = 30.0
+
+    ! --- Layout --- !
+    layout = 'list'                 ! [-] 'list': AxisPos from each block | 'grid': generated
+    grid_shape = 2, 3               ! [-] Rows, columns (layout = 'grid')
+    grid_spacing = 1000.0, 800.0    ! [m] Spacing along the grid axes
+    grid_origin = 0.0, 0.0          ! [m] Position of turbine (1, 1)
+    grid_angle = 0.0                ! [deg] Grid rotation (anticlockwise from +x)
+/
+
+! --- Turbine 1 --- !
+&turbine
+    case_type = 'DTU10MWMonopile'
+    rootname = 'DTU_DeltaWind_mn_ws11.4'
+    OP_output_dir = '../OP_output/'
+    WindSpeed = 11.4
+    WindDir = 0.0
+    AxisPos = 0.0, 0.0
+    Nmembers = 8
+    Nnodes = 5
+/
+
+! --- Turbine 2 --- !
+&turbine
+    case_type = 'DTU10MWFloating'
+    rootname = 'DTU_DeltaWind_fl_ws8.0'
+    WindSpeed = 8.0
+    WindDir = 15.0
+    AxisPos = 1500.0, 400.0
+    Nmembers = 9
+    Nnodes = 9
+/

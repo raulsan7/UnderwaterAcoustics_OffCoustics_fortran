@@ -22,9 +22,9 @@ MODULE AnalyticalNormalModes
 USE Kinds
 USE Types
 USE IOUtils
-USE AcousticSolver, ONLY: AcousticSolver_t
+USE WindTurbine, ONLY: WindTurbine_t
 USE MathUtils, ONLY: compute_hankel_complex
-USE WindTurbine, ONLY: WindTurbine_t, save_turbine_params
+USE AcousticSolver, ONLY: AcousticSolver_t, save_emitter_params, write_emitter_txt
 
 IMPLICIT NONE
 
@@ -94,33 +94,27 @@ SUBROUTINE init_AnalyticalNormalModes(self, sources, config)
 
 
     ! Parent variables
-    self % sources      = sources
-    self % env          = config % env
-    self % run_inputs   = config % run_inputs
-    self % save_path    = config % solver % save_path
-    self % block_size   = config % solver % block_size
-    self % debug        = config % solver % debug
-    self % in_cluster   = config % solver % in_cluster
-    self % turbine_data = config % turbine
+    self % sources    = sources
+    self % env        = config % env
+    self % run_inputs = config % run_inputs
+    self % save_path  = config % solver % save_path
+    self % block_size = config % solver % block_size
+    self % debug      = config % solver % debug
+    self % in_cluster = config % solver % in_cluster
 
     ! Child-specific variables
     SELECT TYPE (m => config % method)
     TYPE IS (Config_AnalyticalNormalModes_t)
         self % Nmodes    = m % Nmodes
         self % Upper_HBC = m % UpperHBC
-        self % Lower_HBC = m % LowerHBC
         self % eps       = m % epsilon
     END SELECT
 
-    ! Waveguide height and depth consistency
-    self % H = self % Upper_HBC - self % Lower_HBC
-    if (self % H <= 0.0_WP) &
-        error stop "AnalyticalNormalModes % init(): Upper_HBC must be strictly greater than Lower_HBC"
-    if (abs(self % H - self % env % depth_base) > 1.0e-6 .or. &
-        abs(self % H - self % turbine_data % Depth) > 1.0e-6 .or. &
-        abs(self % env % depth_base - self % turbine_data % Depth) > 1.0e-6) then
-        error stop "AnalyticalNormalModes % init(): turbine, environmental and solver depth must be equal"
-    end if
+    ! Waveguide built from the environment depth (single source of truth)
+    if (self % env % depth_base <= 0.0_WP) &
+        error stop "AnalyticalNormalModes % init(): depth_base must be strictly positive"
+    self % Lower_HBC = self % Upper_HBC - self % env % depth_base
+    self % H         = self % Upper_HBC - self % Lower_HBC
 
     ! Number of modes
     if (self % Nmodes == DEFAULT_I) then
@@ -278,13 +272,8 @@ SUBROUTINE save_parameters_AnalyticalNormalModes(self, turbine)
     CALL save_variable(self % save_path, "Lower_HBC", self % Lower_HBC)
     CALL save_variable(self % save_path, "p_ref"    , self % env % reference_pressure)
 
-    CALL save_turbine_params(self % turbine_data, self % save_path)
-
-    if (present(turbine)) then
-        if (ALLOCATED(turbine)) then
-            CALL turbine % save_specific_params(self % save_path)
-        end if
-    end if
+    ! Emitter data -> HDF5
+    CALL save_emitter_params(self % save_path, turbine)
 
     ! Human-readable .dat summary, delegated to the solver-specific implementation
     CALL self % write_txt_summary(turbine)
@@ -305,8 +294,7 @@ SUBROUTINE build_save_path_AnalyticalNormalModes(self)
 
     ! Local variables
     CHARACTER(len=512) :: path_upper, filename, default_parent_path
-    CHARACTER(len=16)  :: method_suffix, ws_str, modes_str
-    CHARACTER(len=2)   :: turb_tag
+    CHARACTER(len=16)  :: method_suffix, modes_str
 
 
     path_upper          = to_upper(trim(self % save_path))
@@ -317,19 +305,11 @@ SUBROUTINE build_save_path_AnalyticalNormalModes(self)
 
     if (path_upper == 'NONE' .or. path_upper == 'DEFAULT') then
 
-        if (self % turbine_data % is_monopile) then
-            turb_tag = 'mn'
-        else
-            turb_tag = 'fl'
-        end if
-
         write(modes_str, '(I0)') self % Nmodes
-        write(ws_str, '(F6.1)') self % turbine_data % WindSpeed
-        ws_str = adjustl(ws_str)
 
-        filename = "plot_"             // trim(turb_tag)  // &
-                   trim(method_suffix) // trim(modes_str) // &
-                   "_ws"               // trim(ws_str)
+        filename = "plot_"             // trim(self % sources % geometry % name_tag) // &
+                   trim(method_suffix) // trim(modes_str)                            // &
+                   trim(self % sources % geometry % name_suffix)
 
         self % save_path = trim(default_parent_path) // trim(filename) // ".hdf5"
 
@@ -370,29 +350,7 @@ SUBROUTINE write_txt_summary_AnalyticalNormalModes(self, turbine)
     write(u, '(A)') 'HDF5 file: ' // trim(self % save_path)
     write(u, *)
 
-    write(u, '(A)') repeat('-', 70)
-    write(u, '(A)') 'TURBINE'
-    write(u, '(A)') repeat('-', 70)
-    write(u, '(A,A)')      'Case type   : ', trim(self % turbine_data % case_type)
-    write(u, '(A,L1)')     'Is monopile : ', self % turbine_data % is_monopile
-    write(u, '(A,F8.2,A)') 'Wind speed  : ', self % turbine_data % WindSpeed, ' m/s'
-    write(u, '(A,F8.2,A)') 'Wind dir    : ', self % turbine_data % WindDir, ' deg'
-    write(u, '(A,F8.2,A)') 'Water depth : ', self % turbine_data % Depth, ' m'
-    write(u, '(A,2F10.3)') 'Axis pos    : ', self % turbine_data % AxisPos
-    write(u, '(A,2F10.3)') 'Bari pos    : ', self % turbine_data % BariPos
-    write(u, '(A,I0)')     'N members   : ', self % turbine_data % Nmembers
-    write(u, '(A,I0)')     'N nodes     : ', self % turbine_data % Nnodes
-    write(u, *)
-
-    if (present(turbine)) then
-        if (ALLOCATED(turbine)) then
-            write(u, '(A)') repeat('-', 70)
-            write(u, '(A)') 'TURBINE - SPECIFIC PARAMETERS'
-            write(u, '(A)') repeat('-', 70)
-            CALL turbine % write_specific_params_txt(u)
-            write(u, *)
-        end if
-    end if
+    CALL write_emitter_txt(u, turbine)
 
     write(u, '(A)') repeat('-', 70)
     write(u, '(A)') 'ENVIRONMENT'
@@ -520,10 +478,10 @@ END SUBROUTINE print_mode_summary
 ! ===============================================================================
 FUNCTION Psi_kzm(self, z, m, kzm) RESULT(psi)
     ! -------------------------------------------------------------------------
-    ! Evaluates the vertical modal shape Psi_m(z) = sqrt(2*rho/H) * sin(k_zm*z)
+    ! Evaluates the vertical modal shape Psi_m(z) = sqrt(2*rho/H) * sin(k_zm*(z - Upper_HBC))
     ! at the given depths. The vertical wavenumber is either given directly
     ! (kzm) or computed from the mode index m as k_zm = (2m-1)*pi/(2H). The
-    ! shape satisfies Psi_m(0) = 0 (pressure-release surface).
+    ! shape satisfies Psi_m(Upper_HBC) = 0 = 0 (pressure-release surface).
     ! -------------------------------------------------------------------------
 
     CLASS(AnalyticalNormalModes_t), INTENT(IN)           :: self      ! [-] Solver instance
@@ -537,9 +495,9 @@ FUNCTION Psi_kzm(self, z, m, kzm) RESULT(psi)
 
     if (present(m) .and. .not. present(kzm)) then
         psi = sqrt(2.0_WP * self % env % density_base / self % H) * &
-              sin((2.0_WP * real(m, WP) - 1.0_WP) * PI * z / (2.0_WP * self % H))
+              sin((2.0_WP * real(m, WP) - 1.0_WP) * PI * (z - self % Upper_HBC) / (2.0_WP * self % H))
     else if (present(kzm)) then
-        psi = sqrt(2.0_WP * self % env % density_base / self % H) * sin(kzm * z)
+        psi = sqrt(2.0_WP * self % env % density_base / self % H) * sin(kzm * (z - self % Upper_HBC))
     else
         error stop "Psi_kzm: Either m or kzm must be provided."
     end if
@@ -553,7 +511,7 @@ FUNCTION dPsi_kzm_dz(self, z, m, kzm) RESULT(dpsi)
     ! dPsi_m/dz = sqrt(2*rho/H) * k_zm * cos(k_zm*z), at the given depths. The
     ! vertical wavenumber is either given directly (kzm) or computed from the
     ! mode index m as k_zm = (2m-1)*pi/(2H). The derivative satisfies
-    ! dPsi_m/dz(-H) = 0 (rigid seabed).
+    ! dPsi_m/dz(Lower_HBC=-H) = 0 (rigid seabed).
     ! -------------------------------------------------------------------------
 
     CLASS(AnalyticalNormalModes_t), INTENT(IN)           :: self       ! [-] Solver instance
@@ -575,7 +533,7 @@ FUNCTION dPsi_kzm_dz(self, z, m, kzm) RESULT(dpsi)
     end if
 
     ALLOCATE(dpsi(size(z)))
-    dpsi = sqrt(2.0_WP * self % env % density_base / self % H) * k_zm * cos(k_zm * z)
+    dpsi = sqrt(2.0_WP * self % env % density_base / self % H) * k_zm * cos(k_zm * (z - self % Upper_HBC))
 
 END FUNCTION dPsi_kzm_dz
 

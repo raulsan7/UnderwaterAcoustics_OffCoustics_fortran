@@ -39,7 +39,7 @@ TYPE :: Config_WindTurbine_t
     LOGICAL            :: Binary            ! [-] Whether OpenFAST files are binary (.outb) or not (.out)
     REAL(WP)           :: WindSpeed         ! [m/s] Wind speed in norm
     REAL(WP)           :: WindDir           ! [deg] Wind direction, 0 deg points to +x axis (anticlockwise from +x)
-    REAL(WP)           :: Depth             ! [m] Water depth
+    REAL(WP)           :: Depth             ! [m] Water depth copied from Environment.nml
     INTEGER(I32)       :: Nmembers          ! [-] Number of structural members in the OpenFAST model
     INTEGER(I32)       :: Nnodes            ! [-] Number of structural nodes in the OpenFAST model
     REAL(WP)           :: AxisPos(2)        ! [m] Position of the turbine axis in xy plane
@@ -90,6 +90,22 @@ TYPE :: Config_Solver_t
 END TYPE Config_Solver_t
 
 
+TYPE :: GeometricData_t
+    ! -------------------------------------------------------------------------
+    ! Reference geometry and labels of whatever produced the acoustic sources
+    ! (a turbine, a wind farm or hand-made sources). Used by the automatic
+    ! defaults of the run_* routines and by the default output file name.
+    ! -------------------------------------------------------------------------
+
+    REAL(WP)          :: center(2)   = 0.0_WP       ! [m] Reference centre (auto centre of polar, cylinder, sphere)
+    REAL(WP)          :: origin(2)   = 0.0_WP       ! [m] Reference origin (auto start of decay, auto y of sliceXZ)
+    REAL(WP)          :: direction   = 0.0_WP       ! [deg] Reference direction, anticlockwise from +x (decay)
+    CHARACTER(len=64) :: name_tag    = 'sources'    ! [-] Default output file name tag ('mn', 'fl', 'farm', ...)
+    CHARACTER(len=64) :: name_suffix = ''           ! [-] Default output file name suffix ('_ws11.4', ...)
+
+END TYPE GeometricData_t
+
+
 TYPE :: AcousticSource_t
     ! -------------------------------------------------------------------------
     ! Abstract representation of the acoustic excitation produced by a wind
@@ -102,6 +118,7 @@ TYPE :: AcousticSource_t
     REAL(WP)   , ALLOCATABLE :: xyz(:,:)        ! [m] Acoustic source coordinates (Nsources, 3)
     COMPLEX(WP), ALLOCATABLE :: Force(:,:,:)    ! [N] Complex source forces (Nfreqs, Nsources, 3)
     REAL(WP)   , ALLOCATABLE :: Freqs(:)        ! [Hz] Frequency vector (Nfreqs)
+    TYPE(GeometricData_t)    :: geometry        ! [-] Reference geometry and labels of the emitter
 
 END TYPE AcousticSource_t
 
@@ -128,8 +145,7 @@ TYPE, EXTENDS(Config_Method_t) :: Config_ImageMethod_t
     INTEGER(I32) :: N_images               ! [-] Number of image source levels used to enforce boundary conditions
     INTEGER(I32) :: UpperBC                ! [-] Upper boundary condition flag (-1: pressure-release surface, p = 0)
     INTEGER(I32) :: LowerBC                ! [-] Lower boundary condition flag (+1: rigid boundary, dp/dn = 0)
-    REAL(WP)     :: UpperHBC               ! [m] z-coordinate of the upper reflecting plane (e.g. free surface)
-    REAL(WP)     :: LowerHBC               ! [m] z-coordinate of the lower reflecting plane (e.g. seabed)
+    REAL(WP)     :: UpperHBC               ! [m] z-coordinate of the upper plane; seabed = UpperHBC - depth_base
     REAL(WP)     :: attenuation_surface    ! [-] Attenuation coefficient applied to surface reflections
     REAL(WP)     :: attenuation_bottom     ! [-] Attenuation coefficient applied to bottom reflections
     REAL(WP)     :: epsilon                ! [-] Small numerical tolerance used to avoid singularities
@@ -161,8 +177,7 @@ TYPE, EXTENDS(Config_Method_t) :: Config_AnalyticalNormalModes_t
     ! -------------------------------------------------------------------------
 
     INTEGER(I32) :: Nmodes      ! [-] Number of retained modes
-    REAL(WP)     :: UpperHBC    ! [m] z-coordinate of the upper reflecting plane (e.g. free surface)
-    REAL(WP)     :: LowerHBC    ! [m] z-coordinate of the lower reflecting plane (e.g. seabed)
+    REAL(WP)     :: UpperHBC    ! [m] z-coordinate of the upper plane; seabed = UpperHBC - depth_base
     REAL(WP)     :: epsilon     ! [-] Small numerical tolerance used to avoid singularities
 
 END TYPE Config_AnalyticalNormalModes_t

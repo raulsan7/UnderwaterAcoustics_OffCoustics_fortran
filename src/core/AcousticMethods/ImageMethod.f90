@@ -21,8 +21,8 @@ MODULE ImageMethod
 USE Kinds
 USE Types
 USE IOUtils
-USE AcousticSolver, ONLY: AcousticSolver_t
-USE WindTurbine, ONLY: WindTurbine_t, save_turbine_params
+USE WindTurbine, ONLY: WindTurbine_t
+USE AcousticSolver, ONLY: AcousticSolver_t, save_emitter_params, write_emitter_txt
 
 IMPLICIT NONE
 
@@ -43,7 +43,7 @@ TYPE, EXTENDS(AcousticSolver_t) :: ImageMethod_t
     INTEGER(I32) :: Upper_BC         = -1_I32       ! [-] Upper boundary condition, -1 for p = 0
     INTEGER(I32) :: Lower_BC         = +1_I32       ! [-] Lower boundary condition, +1 for dp = 0
     REAL(WP)     :: Upper_HBC        = 0.0_WP       ! [m] z-coordinate of the upper reflecting plane (e.g. free surface)
-    REAL(WP)     :: Lower_HBC        = -30.0_WP     ! [m] z-coordinate of the lower reflecting plane (e.g. seabed)
+    REAL(WP)     :: Lower_HBC        = -30.0_WP     ! [m] z-coordinate of the lower reflecting plane, Upper_HBC - depth_base
     REAL(WP)     :: up_R             = 1.0_WP       ! [-] Attenuation coefficient for upper boundary reflections
     REAL(WP)     :: lw_R             = 0.5_WP       ! [-] Attenuation coefficient for lower boundary reflections
     REAL(WP)     :: eps              = 1.0e-6_WP    ! [m] Minimum source-observer distance used to floor r
@@ -90,19 +90,16 @@ SUBROUTINE init_ImageMethod(self, sources, config)
     TYPE(AcousticSource_t), INTENT(INOUT), ALLOCATABLE :: sources    ! [-] Acoustic sources (freed on exit)
     TYPE(Config_t)        , INTENT(INOUT), ALLOCATABLE :: config     ! [-] Global configuration (freed on exit)
 
-    ! Local variables
-    REAL(WP) :: H
 
 
     ! Parent variables
-    self % sources      = sources
-    self % env          = config % env
-    self % run_inputs   = config % run_inputs
-    self % save_path    = config % solver % save_path
-    self % block_size   = config % solver % block_size
-    self % debug        = config % solver % debug
-    self % in_cluster   = config % solver % in_cluster
-    self % turbine_data = config % turbine
+    self % sources    = sources
+    self % env        = config % env
+    self % run_inputs = config % run_inputs
+    self % save_path  = config % solver % save_path
+    self % block_size = config % solver % block_size
+    self % debug      = config % solver % debug
+    self % in_cluster = config % solver % in_cluster
 
     ! Child-specific variables
     SELECT TYPE (m => config % method)
@@ -112,22 +109,17 @@ SUBROUTINE init_ImageMethod(self, sources, config)
         self % Upper_BC         = m % UpperBC
         self % Lower_BC         = m % LowerBC
         self % Upper_HBC        = m % UpperHBC
-        self % Lower_HBC        = m % LowerHBC
         self % up_R             = m % attenuation_surface
         self % lw_R             = m % attenuation_bottom
         self % eps              = m % epsilon
     END SELECT
 
+    ! Seabed plane built from the environment depth (single source of truth)
+    if (self % env % depth_base <= 0.0_WP) error stop "ImageMethod % init(): depth_base must be strictly positive"
+    self % Lower_HBC = self % Upper_HBC - self % env % depth_base
+
     ! Build save_path
     CALL self % build_save_path()
-
-    H = self % Upper_HBC - self % Lower_HBC
-    if (H <= 0.0_WP) error stop "ImageMethod % init(): Upper_HBC must be strictly greater than Lower_HBC"
-    if (abs(H - self % env % depth_base) > 1.0e-6 .or. &
-        abs(H - self % turbine_data % Depth) > 1.0e-6 .or. &
-        abs(self % env % depth_base - self % turbine_data % Depth) > 1.0e-6) then
-        error stop "ImageMethod % init(): turbine, environmental and solver depth must be equal"
-    end if
 
     write(*,*) ''
     write(*,*) 'Selected method: ', self % get_name()
@@ -268,13 +260,8 @@ SUBROUTINE save_parameters_ImageMethod(self, turbine)
     CALL save_variable(self % save_path, "Lower_HBC", self % Lower_HBC)
     CALL save_variable(self % save_path, "p_ref"    , self % env % reference_pressure)
 
-    CALL save_turbine_params(self % turbine_data, self % save_path)
-
-    if (present(turbine)) then
-        if (ALLOCATED(turbine)) then
-            CALL turbine % save_specific_params(self % save_path)
-        end if
-    end if
+    ! Emitter data -> HDF5
+    CALL save_emitter_params(self % save_path, turbine)
 
     ! Human-readable .dat summary, delegated to the solver-specific implementation
     CALL self % write_txt_summary(turbine)
@@ -295,8 +282,7 @@ SUBROUTINE build_save_path_ImageMethod(self)
 
     ! Local variables
     CHARACTER(len=512) :: path_upper, filename, default_parent_path
-    CHARACTER(len=16)  :: method_suffix, ws_str, imag_str
-    CHARACTER(len=2)   :: turb_tag
+    CHARACTER(len=16)  :: method_suffix, imag_str
 
 
     path_upper          = to_upper(trim(self % save_path))
@@ -307,19 +293,11 @@ SUBROUTINE build_save_path_ImageMethod(self)
 
     if (path_upper == 'NONE' .or. path_upper == 'DEFAULT') then
 
-        if (self % turbine_data % is_monopile) then
-            turb_tag = 'mn'
-        else
-            turb_tag = 'fl'
-        end if
-
         write(imag_str, '(I0)') self % N_images
-        write(ws_str, '(F6.1)') self % turbine_data % WindSpeed
-        ws_str = adjustl(ws_str)
 
-        filename = "plot_"             // trim(turb_tag) // &
-                   trim(method_suffix) // trim(imag_str) // &
-                   "_ws"               // trim(ws_str)
+        filename = "plot_"             // trim(self % sources % geometry % name_tag) // &
+                   trim(method_suffix) // trim(imag_str)                             // &
+                   trim(self % sources % geometry % name_suffix)
 
         self % save_path = trim(default_parent_path) // trim(filename) // ".hdf5"
 
@@ -359,29 +337,7 @@ SUBROUTINE write_txt_summary_ImageMethod(self, turbine)
     write(u, '(A)') 'HDF5 file: ' // trim(self % save_path)
     write(u, *)
 
-    write(u, '(A)') repeat('-', 70)
-    write(u, '(A)') 'TURBINE'
-    write(u, '(A)') repeat('-', 70)
-    write(u, '(A,A)')      'Case type   : ', trim(self % turbine_data % case_type)
-    write(u, '(A,L1)')     'Is monopile : ', self % turbine_data % is_monopile
-    write(u, '(A,F8.2,A)') 'Wind speed  : ', self % turbine_data % WindSpeed, ' m/s'
-    write(u, '(A,F8.2,A)') 'Wind dir    : ', self % turbine_data % WindDir, ' deg'
-    write(u, '(A,F8.2,A)') 'Water depth : ', self % turbine_data % Depth, ' m'
-    write(u, '(A,2F10.3)') 'Axis pos    : ', self % turbine_data % AxisPos
-    write(u, '(A,2F10.3)') 'Bari pos    : ', self % turbine_data % BariPos
-    write(u, '(A,I0)')     'N members   : ', self % turbine_data % Nmembers
-    write(u, '(A,I0)')     'N nodes     : ', self % turbine_data % Nnodes
-    write(u, *)
-
-    if (present(turbine)) then
-        if (ALLOCATED(turbine)) then
-            write(u, '(A)') repeat('-', 70)
-            write(u, '(A)') 'TURBINE - SPECIFIC PARAMETERS'
-            write(u, '(A)') repeat('-', 70)
-            CALL turbine % write_specific_params_txt(u)
-            write(u, *)
-        end if
-    end if
+    CALL write_emitter_txt(u, turbine)
 
     write(u, '(A)') repeat('-', 70)
     write(u, '(A)') 'ENVIRONMENT'
@@ -732,8 +688,8 @@ SUBROUTINE run_sphere(self)
         if (pp % n_theta_sphere == DEFAULT_I) pp % n_theta_sphere = 72_I32
         if (pp % nz_sphere == DEFAULT_I)      pp % nz_sphere      = 20_I32
         if (any(pp % center_sphere == DEFAULT_R)) &
-            pp % center_sphere = [self % turbine_data % BariPos(1), self % turbine_data % BariPos(2), &
-                                  -self % turbine_data % Depth / 2.0_WP]
+            pp % center_sphere = [self % sources % geometry % center(1), self % sources % geometry % center(2), &
+                      -self % env % depth_base / 2.0_WP]
 
         r_       = pp % r_sphere
         n_theta_ = pp % n_theta_sphere

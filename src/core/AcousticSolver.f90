@@ -20,12 +20,12 @@ MODULE AcousticSolver
 USE Kinds
 USE Types
 USE IOUtils
-USE WindTurbine, ONLY: WindTurbine_t
+USE WindTurbine, ONLY: WindTurbine_t, save_turbine_params, write_turbine_txt
 
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: AcousticSolver_t, save_variable
+PUBLIC :: AcousticSolver_t, save_variable, save_emitter_params, write_emitter_txt
 
 
 TYPE, ABSTRACT :: AcousticSolver_t
@@ -37,9 +37,8 @@ TYPE, ABSTRACT :: AcousticSolver_t
     ! routines are deferred.
     ! -------------------------------------------------------------------------
 
-    TYPE(AcousticSource_t)     :: sources                 ! [-] Acoustic point-dipole sources (turbine nodes)
+    TYPE(AcousticSource_t)     :: sources                 ! [-] Acoustic point sources and their reference geometry
     TYPE(Config_Environment_t) :: env                     ! [-] Environment configuration (depth, sound speed, ...)
-    TYPE(Config_WindTurbine_t) :: turbine_data            ! [-] Generic turbine configuration (axis, wind, depth, ...)
     TYPE(Config_Computation_t) :: run_inputs              ! [-] Per-run_* post-processing step configuration
     INTEGER(I32)               :: block_size              ! [-] Number of observers processed simultaneously
     LOGICAL                    :: debug                   ! [-] Whether to print extra debug info (e.g. pressure norms)
@@ -353,6 +352,43 @@ SUBROUTINE update_parameters(self)
 END SUBROUTINE update_parameters
 
 
+SUBROUTINE save_emitter_params(save_path, turbine)
+    ! -------------------------------------------------------------------------
+    ! Saves the parameters of whatever produced the sources into the HDF5
+    ! output file. Nothing is saved for hand-made sources.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*)    , INTENT(IN)                        :: save_path    ! [-] Path to the HDF5 output file
+    CLASS(WindTurbine_t), INTENT(IN), OPTIONAL, ALLOCATABLE :: turbine      ! [-] Turbine instance (optional)
+
+
+    if (present(turbine)) then
+        if (ALLOCATED(turbine)) then
+            CALL save_turbine_params(turbine, save_path)
+            CALL turbine % save_specific_params(save_path)
+        end if
+    end if
+
+END SUBROUTINE save_emitter_params
+
+
+SUBROUTINE write_emitter_txt(unit, turbine)
+    ! -------------------------------------------------------------------------
+    ! Writes the block of whatever produced the sources into the .dat
+    ! summary file. Nothing is written for hand-made sources.
+    ! -------------------------------------------------------------------------
+
+    INTEGER(I32)        , INTENT(IN)                        :: unit       ! [-] Unit of the open .dat file
+    CLASS(WindTurbine_t), INTENT(IN), OPTIONAL, ALLOCATABLE :: turbine    ! [-] Turbine instance (optional)
+
+
+    if (present(turbine)) then
+        if (ALLOCATED(turbine)) CALL write_turbine_txt(turbine, unit)
+    end if
+
+END SUBROUTINE write_emitter_txt
+
+
 ! ===============================================================================
 ! RUN SUBROUTINES
 ! ===============================================================================
@@ -379,7 +415,7 @@ SUBROUTINE run_spectrums(self)
             ALLOCATE(observers_(3, 3))
             observers_(:, 1) = [10.0_WP, 250.0_WP, 500.0_WP]
             observers_(:, 2) = 0.0_WP
-            observers_(:, 3) = -self % turbine_data % Depth / 2.0_WP
+            observers_(:, 3) = -self % env % depth_base  / 2.0_WP
         else
             ALLOCATE(observers_(pp % n_observers, 3))
             observers_(:, 1) = pp % observers_x
@@ -435,7 +471,7 @@ SUBROUTINE run_polar(self)
         if (pp % z_polar == DEFAULT_R) pp % z_polar = -Depth / 2.0_WP
         if (pp % n_polar == DEFAULT_I) pp % n_polar = 72_I32
         if (all(pp % center_polar == DEFAULT_R)) &    ! Not a logical .and.
-            pp % center_polar = [self % turbine_data % BariPos(1), self % turbine_data % BariPos(2)]
+            pp % center_polar = self % sources % geometry % center
 
         r       = pp % r_polar
         z       = pp % z_polar
@@ -512,7 +548,7 @@ SUBROUTINE run_cylinder(self)
         if (pp % n_cyl == DEFAULT_I)  pp % n_cyl  = 72_I32
         if (pp % nz_cyl == DEFAULT_I) pp % nz_cyl = 20_I32
         if (any(pp % center_cyl == DEFAULT_R)) &
-            pp % center_cyl = [self % turbine_data % BariPos(1), self % turbine_data % BariPos(2)]
+            pp % center_cyl = self % sources % geometry % center
 
         r       = pp % r_cyl
         n_theta = pp % n_cyl
@@ -620,7 +656,7 @@ SUBROUTINE run_decay(self)
         logspace = pp % logspace_decay
     end associate
 
-    WindDir_rad = self % turbine_data % WindDir * PI / 180.0_WP
+    WindDir_rad = self % sources % geometry % direction * PI / 180.0_WP
     wind_unit   = [cos(WindDir_rad), sin(WindDir_rad)]
 
     ALLOCATE(observers(n_points, 3))
@@ -638,7 +674,7 @@ SUBROUTINE run_decay(self)
         do i = 1, n_points
             d_val             = 10.0_WP**(d_log1 + real(i - 1_I32, WP) * d_step)
             distances(i)      = d_val
-            observers(i, 1:2) = self % turbine_data % AxisPos(1:2) + d_val * wind_unit
+            observers(i, 1:2) = self % sources % geometry % origin + d_val * wind_unit
             observers(i, 3)   = z
         end do
     else
@@ -646,7 +682,7 @@ SUBROUTINE run_decay(self)
         do i = 1, n_points
             d_val             = distance(1) + real(i - 1_I32, WP) * linear_step
             distances(i)      = d_val
-            observers(i, 1:2) = self % turbine_data % AxisPos(1:2) + d_val * wind_unit
+            observers(i, 1:2) = self % sources % geometry % origin + d_val * wind_unit
             observers(i, 3)   = z
         end do
     end if
@@ -655,7 +691,7 @@ SUBROUTINE run_decay(self)
 
     write(*, '(A,I0,A,F8.2,A,F8.2,A)') &
         '>> [Decay]      points=', n_points, ' | direction=', &
-        self % turbine_data % WindDir, ' deg | z=', z, ' m'
+        self % sources % geometry % direction, ' deg | z=', z, ' m'
 
     CALL self % compute_pressure(observers, bs, p)
     if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
@@ -911,7 +947,7 @@ SUBROUTINE run_sliceXZ(self)
 
     ! Defaults (resolved once, persisted back into run_inputs)
     associate(pp => self % run_inputs % params_sliceXZ)
-        if (pp % y_xz == DEFAULT_R)         pp % y_xz    = self % turbine_data % AxisPos(2)
+        if (pp % y_xz  == DEFAULT_R)        pp % y_xz    = self % sources % geometry % origin(2)
         if (pp % nx_xz == DEFAULT_I)        pp % nx_xz   = 26_I32
         if (pp % nz_xz == DEFAULT_I)        pp % nz_xz   = 26_I32
         if (any(pp % xlim_xz == DEFAULT_R)) pp % xlim_xz = [-500.0_WP, 500.0_WP]

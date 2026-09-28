@@ -23,7 +23,8 @@ USE IOUtils
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: WindTurbine_t, drivetrain10MW_excitation_spectrum, init, save_turbine_params
+PUBLIC :: WindTurbine_t, drivetrain10MW_excitation_spectrum, init, save_turbine_params, &
+          write_turbine_txt
 
 
 TYPE, ABSTRACT :: WindTurbine_t
@@ -60,7 +61,8 @@ TYPE, ABSTRACT :: WindTurbine_t
     CHARACTER(len=:), ALLOCATABLE :: case_type         ! [-] Tag to distinguish turbine
 
     ! --- Derived variables --- !
-    LOGICAL :: is_monopile    ! [-] Whether turbine is monopile or floating
+    LOGICAL  :: is_monopile    ! [-] Whether turbine is monopile or floating
+    REAL(WP) :: df             ! [Hz] FFT bin width 1/(nt*dt), defines the shared frequency grid of a wind farm
 
     CONTAINS
 
@@ -291,9 +293,12 @@ SUBROUTINE read_input(self, config, verbose)
         error stop "WindTurbine % read_input: Nmembers and Nnodes must be positive integers to read SubDyn nodes"
     end if
 
+    ! FFT bin width of the time series, defines the shared frequency grid of a wind farm
+    self % df = 1.0_WP / (real(size(self % Time), WP) * (self % Time(2) - self % Time(1)))
+
     ! Align with wind direction and translate to axis position
     CALL self % translate_align_with_WindDir()
-    
+
     ! Compute barycenter if not provided (BariPos = (0, 0) is taken as not provided)
     if (all(self % BariPos == [0.0_WP, 0.0_WP])) then
         self % BariPos(1) = sum(self % xyz_all(:, :, 1)) / real(self % Nmembers * self % Nnodes, WP)
@@ -327,8 +332,8 @@ SUBROUTINE translate_align_with_WindDir(self)
     ! -------------------------------------------------------------------------
     ! Rotates the acceleration and node-coordinate arrays by the wind direction
     ! yaw angle and translates them to the turbine axis position, so that all
-    ! downstream computations work in the global reference frame. No-op if
-    ! WindDir is (numerically) zero.
+    ! downstream computations work in the global reference frame. If WindDir
+    ! is (numerically) zero, only the translation is applied.
     ! -------------------------------------------------------------------------
 
     CLASS(WindTurbine_t), INTENT(INOUT) :: self    ! [-] Turbine instance
@@ -403,6 +408,9 @@ SUBROUTINE turbine_to_source(self, config, sources)
     TYPE(Config_t)        , INTENT(IN)               :: config     ! [-] Global configuration
     TYPE(AcousticSource_t), INTENT(OUT), ALLOCATABLE :: sources    ! [-] Acoustic point-dipole sources
 
+    ! Local variables
+    CHARACTER(len=16) :: ws_str
+
 
     if (.not. ALLOCATED(sources)) ALLOCATE(AcousticSource_t :: sources)
 
@@ -421,30 +429,72 @@ SUBROUTINE turbine_to_source(self, config, sources)
         sources % Force = self % Force
     end if
 
+    ! Reference geometry and default file name labels read by the solver
+    write(ws_str, '(F6.1)') self % WindSpeed
+
+    sources % geometry % center      = self % BariPos
+    sources % geometry % origin      = self % AxisPos
+    sources % geometry % direction   = self % WindDir
+    sources % geometry % name_tag    = merge('mn', 'fl', self % is_monopile)
+    sources % geometry % name_suffix = "_ws" // trim(adjustl(ws_str))
+
     write(*,*) ">> [AcousticSource] Physical turbine forces translated into mathematical point dipoles"
 
 END SUBROUTINE turbine_to_source
 
 
-SUBROUTINE save_turbine_params(params, save_path)
+SUBROUTINE save_turbine_params(turbine, save_path)
     ! -------------------------------------------------------------------------
     ! Saves the generic turbine parameters (shared by every turbine type) into
     ! the solver's HDF5 output file. Platform-specific parameters are handled
     ! separately by each concrete type's save_specific_params.
     ! -------------------------------------------------------------------------
 
-    TYPE(Config_WindTurbine_t), INTENT(IN) :: params       ! [-] Generic turbine configuration
-    CHARACTER(len=200)        , INTENT(IN) :: save_path    ! [-] Path to the HDF5 output file
+    CLASS(WindTurbine_t), INTENT(IN) :: turbine      ! [-] Turbine instance
+    CHARACTER(len=*)    , INTENT(IN) :: save_path    ! [-] Path to the HDF5 output file
 
 
-    CALL save_variable(save_path, "case_type", params % case_type)
-    CALL save_variable(save_path, "WindSpeed", params % WindSpeed)
-    CALL save_variable(save_path, "WindDir"  , params % WindDir)
-    CALL save_variable(save_path, "Depth"    , params % Depth)
-    CALL save_variable(save_path, "AxisPos"  , params % AxisPos)
-    CALL save_variable(save_path, "BariPos"  , params % BariPos)
+    CALL save_variable(save_path, "case_type", turbine % case_type)
+    CALL save_variable(save_path, "WindSpeed", turbine % WindSpeed)
+    CALL save_variable(save_path, "WindDir"  , turbine % WindDir)
+    CALL save_variable(save_path, "Depth"    , turbine % Depth)
+    CALL save_variable(save_path, "AxisPos"  , turbine % AxisPos)
+    CALL save_variable(save_path, "BariPos"  , turbine % BariPos)
 
 END SUBROUTINE save_turbine_params
+
+
+SUBROUTINE write_turbine_txt(turbine, unit)
+    ! -------------------------------------------------------------------------
+    ! Writes the generic and the type-specific turbine blocks of the .dat
+    ! summary file.
+    ! -------------------------------------------------------------------------
+
+    CLASS(WindTurbine_t), INTENT(IN) :: turbine    ! [-] Turbine instance
+    INTEGER(I32)        , INTENT(IN) :: unit       ! [-] Unit of the open .dat file
+
+
+    write(unit, '(A)') repeat('-', 70)
+    write(unit, '(A)') 'TURBINE'
+    write(unit, '(A)') repeat('-', 70)
+    write(unit, '(A,A)')      'Case type   : ', trim(turbine % case_type)
+    write(unit, '(A,L1)')     'Is monopile : ', turbine % is_monopile
+    write(unit, '(A,F8.2,A)') 'Wind speed  : ', turbine % WindSpeed, ' m/s'
+    write(unit, '(A,F8.2,A)') 'Wind dir    : ', turbine % WindDir, ' deg'
+    write(unit, '(A,F8.2,A)') 'Water depth : ', turbine % Depth, ' m'
+    write(unit, '(A,2F10.3)') 'Axis pos    : ', turbine % AxisPos
+    write(unit, '(A,2F10.3)') 'Bari pos    : ', turbine % BariPos
+    write(unit, '(A,I0)')     'N members   : ', turbine % Nmembers
+    write(unit, '(A,I0)')     'N nodes     : ', turbine % Nnodes
+    write(unit, *)
+
+    write(unit, '(A)') repeat('-', 70)
+    write(unit, '(A)') 'TURBINE - SPECIFIC PARAMETERS'
+    write(unit, '(A)') repeat('-', 70)
+    CALL turbine % write_specific_params_txt(unit)
+    write(unit, *)
+
+END SUBROUTINE write_turbine_txt
 
 
 ! ===============================================================================
