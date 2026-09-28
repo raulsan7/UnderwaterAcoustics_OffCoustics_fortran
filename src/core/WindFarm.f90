@@ -45,9 +45,10 @@ TYPE :: WindFarm_t
     ! contribution of every turbine can still be told apart after merging.
     ! -------------------------------------------------------------------------
 
-    INTEGER(I32) :: Nturbines                               ! [-] Number of turbines in the farm
-    TYPE(TurbineSlot_t), ALLOCATABLE :: turbines(:)         ! Turbines (Nturbines)
-    INTEGER(I32)       , ALLOCATABLE :: src_offset(:)       ! [-] Source offset of every turbine (Nturbines + 1)
+    INTEGER(I32)                     :: Nturbines        ! [-] Number of turbines in the farm
+    CHARACTER(len=100)               :: farm_name        ! [-] Label replacing the automatic file name ('None': auto)
+    TYPE(TurbineSlot_t), ALLOCATABLE :: turbines(:)      ! [-] Turbines (Nturbines)
+    INTEGER(I32)       , ALLOCATABLE :: src_offset(:)    ! [-] Source offset of every turbine (Nturbines + 1)
 
     CONTAINS
 
@@ -105,6 +106,7 @@ SUBROUTINE init_WindFarm(self, config)
 
 
     self % Nturbines = config % Nturbines
+    self % farm_name = config % farm_name
     ALLOCATE(self % turbines(self % Nturbines))
 
     do i = 1, self % Nturbines
@@ -163,7 +165,6 @@ SUBROUTINE farm_to_source_WindFarm(self, config, sources)
     INTEGER(I32)          , ALLOCATABLE :: bin_pos(:), pos_i(:)
     INTEGER(I32)      :: i, j, k, k_max, nf, Ns, n_i, off, m, s
     REAL(WP)          :: df, sum_cos, sum_sin
-    CHARACTER(len=16) :: n_str
 
 
     ! --- 1. Common FFT grid: every turbine must share df = 1/(nt*dt) --- !
@@ -236,8 +237,7 @@ SUBROUTINE farm_to_source_WindFarm(self, config, sources)
         if (size(pos_i) < nf) write(*, '(A,I0,A,I0,A)') ' WARNING WindFarm % farm_to_source: turbine ', i, &
                                                          ' has zero force in ', nf - size(pos_i), ' frequency bins'
 
-        DEALLOCATE(src_i, pos_i)
-        DEALLOCATE(self % turbines(i) % wt % Force)
+        DEALLOCATE(src_i, pos_i)    ! The turbine forces were already consumed by turbine_to_source
     end do
 
     ! --- 5. Reference geometry and default file name labels --- !
@@ -258,9 +258,9 @@ SUBROUTINE farm_to_source_WindFarm(self, config, sources)
     sources % geometry % origin = sources % geometry % origin / real(self % Nturbines, WP)
     sources % geometry % direction =  atan2(sum_sin, sum_cos) * 180.0_WP / PI   ! Circular mean
 
-    write(n_str, '(I0)') self % Nturbines
-    sources % geometry % name_tag    = 'farm'
-    sources % geometry % name_suffix = '_' // trim(n_str) // 'WT'
+    ! Default output folder and file name labels (the solver inserts its method tag in between)
+    sources % geometry % out_dir = './farm_acoustic_data/'
+    CALL build_default_name(self, sources % geometry % name_tag, sources % geometry % name_suffix)
 
     write(*, '(A,I0,A,I0,A)') ' >> [WindFarm] ', Ns, ' sources merged over ', nf, ' frequencies'
 
@@ -326,5 +326,92 @@ SUBROUTINE write_txt_WindFarm(self, unit)
     end do
 
 END SUBROUTINE write_txt_WindFarm
+
+
+! ===============================================================================
+! DEFAULT OUTPUT FILE NAME
+! ===============================================================================
+SUBROUTINE build_default_name(self, name_tag, name_suffix)
+    ! -------------------------------------------------------------------------
+    ! Builds the labels of the default output file name. The head counts the
+    ! turbines of each type in order of first appearance, with the same
+    ! aliases as the Python WindFarm (e.g. Farm_2_DTU10MN_1_SAITEC2FL), or is
+    ! Farm_<farm_name> when a label is given in WindFarm.nml. The tail holds
+    ! the wind speed: a single value when every turbine shares it (_ws11.4),
+    ! otherwise its range (_ws8.0-11.4). The solver inserts its method tag in
+    ! between, e.g. Farm_2_DTU10MN_ANM24_ws8.0-11.4.hdf5.
+    ! -------------------------------------------------------------------------
+
+    CLASS(WindFarm_t), INTENT(IN)  :: self           ! [-] Farm instance
+    CHARACTER(len=*) , INTENT(OUT) :: name_tag       ! [-] File name head
+    CHARACTER(len=*) , INTENT(OUT) :: name_suffix    ! [-] File name tail
+
+    ! Local variables
+    INTEGER(I32)      :: i, j, n_same
+    LOGICAL           :: seen
+    CHARACTER(len=16) :: n_str, ws_min_str, ws_max_str
+
+
+    ! --- 1. Head: user label, or number of turbines of each type --- !
+    if (trim(self % farm_name) /= 'None') then
+        name_tag = 'Farm_' // trim(self % farm_name)
+    else
+        name_tag = 'Farm'
+        do i = 1, self % Nturbines
+            associate(type_i => self % turbines(i) % wt % case_type)
+                ! Every type is counted once, at its first appearance
+                seen = .false.
+                do j = 1, i - 1
+                    if (self % turbines(j) % wt % case_type == type_i) seen = .true.
+                end do
+
+                if (.not. seen) then
+                    n_same = 0_I32
+                    do j = i, self % Nturbines
+                        if (self % turbines(j) % wt % case_type == type_i) n_same = n_same + 1_I32
+                    end do
+
+                    write(n_str, '(I0)') n_same
+                    name_tag = trim(name_tag) // '_' // trim(n_str) // '_' // type_alias(type_i)
+                end if
+            end associate
+        end do
+    end if
+
+    ! --- 2. Tail: common wind speed, or its range across the farm --- !
+    write(ws_min_str, '(F6.1)') minval([(self % turbines(i) % wt % WindSpeed, i = 1, self % Nturbines)])
+    write(ws_max_str, '(F6.1)') maxval([(self % turbines(i) % wt % WindSpeed, i = 1, self % Nturbines)])
+
+    if (ws_min_str == ws_max_str) then
+        name_suffix = '_ws' // trim(adjustl(ws_min_str))
+    else
+        name_suffix = '_ws' // trim(adjustl(ws_min_str)) // '-' // trim(adjustl(ws_max_str))
+    end if
+
+END SUBROUTINE build_default_name
+
+
+FUNCTION type_alias(case_type) RESULT(alias)
+    ! -------------------------------------------------------------------------
+    ! Short turbine-type label used in the default farm file name, identical
+    ! to the aliases of the Python WindFarm. Unknown types keep their name.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)  :: case_type    ! [-] Turbine model tag
+    CHARACTER(len=:), ALLOCATABLE :: alias        ! [-] Short label for the file name
+
+
+    SELECT CASE (trim(case_type))
+    CASE ('DTU10MWMonopile')
+        alias = 'DTU10MN'
+    CASE ('DTU10MWFloating')
+        alias = 'DTU10FL'
+    CASE ('SAITEC2MWFloating')
+        alias = 'SAITEC2FL'
+    CASE DEFAULT
+        alias = trim(case_type)
+    END SELECT
+
+END FUNCTION type_alias
 
 END MODULE WindFarm

@@ -294,43 +294,20 @@ END SUBROUTINE save_parameters_AnalyticalNormalModes
 
 SUBROUTINE build_save_path_AnalyticalNormalModes(self)
     ! -------------------------------------------------------------------------
-    ! Resolves the final HDF5 output path. If the configured save_path is
-    ! "None"/"Default", it auto-generates a descriptive filename (turbine
-    ! type, number of modes, wind speed) under a default output folder;
-    ! otherwise it just appends the .hdf5 extension. Ensures the destination
-    ! folder exists.
+    ! Resolves the final HDF5 output path through the shared
+    ! resolve_save_path, with this solver's method tag ("_ANM" followed by the
+    ! number of modes, so it must run after Nmodes is resolved). Folder and
+    ! file name labels come from the emitter.
     ! -------------------------------------------------------------------------
 
     CLASS(AnalyticalNormalModes_t), INTENT(INOUT) :: self    ! [-] Solver instance
 
     ! Local variables
-    CHARACTER(len=512) :: path_upper, filename, default_parent_path
-    CHARACTER(len=16)  :: method_suffix, modes_str
+    CHARACTER(len=16) :: modes_str
 
 
-    path_upper          = to_upper(trim(self % save_path))
-    path_upper          = trim(path_upper)
-    default_parent_path = "./turbine_acoustic_data/"
-
-    method_suffix = "_ANM"
-
-    if (path_upper == 'NONE' .or. path_upper == 'DEFAULT') then
-
-        write(modes_str, '(I0)') self % Nmodes
-
-        filename = "plot_"             // trim(self % sources % geometry % name_tag) // &
-                   trim(method_suffix) // trim(modes_str)                            // &
-                   trim(self % sources % geometry % name_suffix)
-
-        self % save_path = trim(default_parent_path) // trim(filename) // ".hdf5"
-
-    else
-        self % save_path = trim(self % save_path) // ".hdf5"
-
-    end if
-
-    ! Make sure the destination folder exists before anything tries to write into it
-    CALL ensure_parent_dir(trim(self % save_path))
+    write(modes_str, '(I0)') self % Nmodes
+    CALL self % resolve_save_path("_ANM" // trim(modes_str))
 
 END SUBROUTINE build_save_path_AnalyticalNormalModes
 

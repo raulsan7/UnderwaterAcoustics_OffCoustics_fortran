@@ -374,7 +374,9 @@ SUBROUTINE turbine_to_source(self, config, sources)
     ! Translates the physical turbine (nodes + nodal forces) into the abstract
     ! AcousticSource_t representation consumed by the acoustic solvers, applying
     ! the impedance/scattering force correction when the selected solver method
-    ! requires it (currently the Image Method).
+    ! requires it (currently the Image Method). The turbine forces are consumed:
+    ! moved into the sources, or freed once the corrected copy exists, since
+    ! nothing needs them afterwards (no second copy of Force stays in memory).
     ! -------------------------------------------------------------------------
 
     CLASS(WindTurbine_t)  , INTENT(INOUT)            :: self       ! [-] Turbine instance
@@ -395,20 +397,22 @@ SUBROUTINE turbine_to_source(self, config, sources)
     sources % xyz   = self % xyz
     sources % Freqs = self % Freqs
 
-    ! Apply force correction
+    ! Apply force correction; in both branches the turbine forces are consumed
     if (config % solver % method == "ImageMethod") then
         sources % Force = self % get_impedance_corrected_force(config % env % speed_sound_base)
+        DEALLOCATE(self % Force)
     else
         CALL MOVE_ALLOC(self % Force, sources % Force)
     end if
 
-    ! Reference geometry and default file name labels read by the solver
+    ! Reference geometry and default output labels read by the solver (e.g. plot_mn_ANM24_ws11.4.hdf5)
     write(ws_str, '(F6.1)') self % WindSpeed
 
     sources % geometry % center      = self % BariPos
     sources % geometry % origin      = self % AxisPos
     sources % geometry % direction   = self % WindDir
-    sources % geometry % name_tag    = merge('mn', 'fl', self % is_monopile)
+    sources % geometry % out_dir     = "./turbine_acoustic_data/"
+    sources % geometry % name_tag    = "plot_" // merge('mn', 'fl', self % is_monopile)
     sources % geometry % name_suffix = "_ws" // trim(adjustl(ws_str))
 
     write(*,*) ">> [AcousticSource] Physical turbine forces translated into mathematical point dipoles"

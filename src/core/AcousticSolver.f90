@@ -3,11 +3,13 @@
 ! ===============================================================================
 ! Defines AcousticSolver_t, the abstract parent type for all acoustic
 ! propagation solvers (ImageMethod_t and AnalyticalNormalModes_t). It holds
-! the shared solver state (sources, environment, generic turbine
-! configuration, save path, block size, debug/cluster flags) and implements
+! the shared solver state (sources and their reference geometry,
+! environment, save path, block size, debug/cluster flags) and implements
 ! the generic observer-geometry post-processing routines (spectrums, polar,
-! cylinder, decay, line, sliceXY, sliceXZ, sphere) shared by every concrete
-! solver.
+! cylinder, decay, line, sliceXY, sliceXZ, sliceVertical, sphere) shared by
+! every concrete solver. The solver never knows what produced the sources
+! (a turbine, a wind farm or hand-made sources): which steps make sense for
+! each emitter is decided by the parser through the do_run flags.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -26,7 +28,13 @@ USE WindTurbine, ONLY: WindTurbine_t, save_turbine_params, write_turbine_txt
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: AcousticSolver_t, save_variable, save_emitter_params, write_emitter_txt
+PUBLIC :: AcousticSolver_t, save_variable, save_emitter_params, write_emitter_txt, pressure_norm
+
+
+! ===============================================================================
+! OBSERVER MASKING
+! ===============================================================================
+REAL(WP), PARAMETER :: MASK_DISTANCE = 5.0_WP    ! [m] Observers closer than this to a source node get NaN pressure
 
 
 TYPE, ABSTRACT :: AcousticSolver_t
@@ -50,9 +58,11 @@ TYPE, ABSTRACT :: AcousticSolver_t
     CONTAINS
 
     ! --- Public type-bound procedures --- !
-    PROCEDURE :: check_observers_distances    ! Helper for run subroutines
+    PROCEDURE :: check_observers_distances    ! Observer mask: .false. closer than MASK_DISTANCE to a source
+    PROCEDURE :: compute_pressure_masked      ! compute_pressure with NaN at the masked observers
+    PROCEDURE :: resolve_save_path            ! Output path shared by every solver (build_save_path helper)
     PROCEDURE :: update_parameters            ! Appends run_* parameters actually used to the .dat
-    PROCEDURE :: run                          ! Config-driven entry point (do_all / individual do_*)
+    PROCEDURE :: run                          ! Config-driven entry point: every enabled do_* step
     PROCEDURE :: run_spectrums                ! Subroutines to compute acoustic pressure
     PROCEDURE :: run_polar
     PROCEDURE :: run_cylinder
@@ -60,7 +70,7 @@ TYPE, ABSTRACT :: AcousticSolver_t
     PROCEDURE :: run_line
     PROCEDURE :: run_sliceXY
     PROCEDURE :: run_sliceXZ
-    PROCEDURE :: run_all
+    PROCEDURE :: run_sliceVertical
     PROCEDURE :: run_sphere => dummy_run_sphere
 
     ! --- Deferred (abstract) procedures --- !
@@ -167,56 +177,191 @@ CONTAINS
 ! ===============================================================================
 ! HELPERS
 ! ===============================================================================
-SUBROUTINE check_observers_distances(self, observers, min_distance)
+FUNCTION check_observers_distances(self, observers) RESULT(valid)
     ! -------------------------------------------------------------------------
-    ! Safety check that aborts execution if any observer point coincides with
-    ! (or sits closer than min_distance to) a turbine source node, which would
-    ! make the pressure field computation singular.
+    ! Flags the observers lying closer than MASK_DISTANCE to any source node.
+    ! At such distances the observer sits inside (or right on) the structure,
+    ! where the point-dipole field is meaningless and nearly singular. Returns
+    ! .true. for every valid observer; the run continues either way.
     ! -------------------------------------------------------------------------
 
-    CLASS(AcousticSolver_t), INTENT(IN)           :: self              ! [-] Solver instance
-    REAL(WP)               , INTENT(IN)           :: observers(:,:)    ! [m] Observers coords (Nobs, 3)
-    REAL(WP)               , INTENT(IN), OPTIONAL :: min_distance      ! [m] Minimum allowed observer-source distance
+    CLASS(AcousticSolver_t), INTENT(IN)  :: self              ! [-] Solver instance
+    REAL(WP)               , INTENT(IN)  :: observers(:,:)    ! [m] Observers coords (Nobs, 3)
+    LOGICAL                , ALLOCATABLE :: valid(:)          ! [-] Observer mask (Nobs), .true. if far enough
 
     ! Local variables
-    REAL(WP)     :: min_dist
     INTEGER(I32) :: i, j, n_nodes, n_obs
-    REAL(WP)     :: dx, dy, dz, dist
+    REAL(WP)     :: dx, dy, dz, d2_mask
 
-
-    ! Default min value
-    min_dist = 1.0_WP ; if (present(min_distance)) min_dist = min_distance
 
     n_nodes = size(self % sources % xyz, 1)
     n_obs   = size(observers, 1)
+    d2_mask = MASK_DISTANCE**2
 
+    ALLOCATE(valid(n_obs))
+    valid = .true.
+
+    !$OMP PARALLEL DO PRIVATE(i, j, dx, dy, dz)
     do i = 1, n_obs
         do j = 1, n_nodes
-            dx   = self % sources % xyz(j, 1) - observers(i, 1)
-            dy   = self % sources % xyz(j, 2) - observers(i, 2)
-            dz   = self % sources % xyz(j, 3) - observers(i, 3)
-            dist = sqrt(dx * dx + dy * dy + dz * dz)
+            dx = self % sources % xyz(j, 1) - observers(i, 1)
+            dy = self % sources % xyz(j, 2) - observers(i, 2)
+            dz = self % sources % xyz(j, 3) - observers(i, 3)
 
-            if (dist < min_dist) then
-                write(*, '(A,I0,A,3(F12.4,1X),A,F6.2,A)') &
-                    "Observer ", i, " at (", observers(i, :), ") is too close to a turbine node (min distance: ", &
-                    min_dist, " m)."
-                error stop
+            if (dx * dx + dy * dy + dz * dz < d2_mask) then
+                valid(i) = .false.
+                exit
             end if
         end do
     end do
+    !$OMP END PARALLEL DO
 
-END SUBROUTINE check_observers_distances
+END FUNCTION check_observers_distances
+
+
+SUBROUTINE compute_pressure_masked(self, label, observers, block_size, total_pressure)
+    ! -------------------------------------------------------------------------
+    ! Wrapper of compute_pressure used by every run_* routine. Observers lying
+    ! closer than MASK_DISTANCE to any source node are not computed: their
+    ! pressure is set to NaN (real and imaginary parts) and a warning reports
+    ! how many were masked. The observer grid keeps its regular shape, so the
+    ! masked points show up as holes when plotted. Without masked observers
+    ! it is a plain call to compute_pressure (identical results).
+    ! -------------------------------------------------------------------------
+
+    USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_value, IEEE_QUIET_NAN
+
+    CLASS(AcousticSolver_t), INTENT(INOUT)            :: self                   ! [-] Solver instance
+    CHARACTER(len=*)       , INTENT(IN)               :: label                  ! [-] Step name shown in the warning
+    REAL(WP)               , INTENT(IN)               :: observers(:,:)         ! [m] Observers coords (Nobs, 3)
+    INTEGER(I32)           , INTENT(IN)               :: block_size             ! [-] Observers per block
+    COMPLEX(WP)            , INTENT(OUT), ALLOCATABLE :: total_pressure(:,:)    ! [Pa] Pressure (Nf, Nobs); masked: NaN
+
+    ! Local variables
+    LOGICAL     , ALLOCATABLE :: valid(:)
+    REAL(WP)    , ALLOCATABLE :: obs_valid(:,:)
+    COMPLEX(WP) , ALLOCATABLE :: p_valid(:,:)
+    INTEGER(I32)              :: n_obs, n_valid, i, j
+    REAL(WP)                  :: nan
+
+
+    n_obs   = size(observers, 1)
+    valid   = self % check_observers_distances(observers)
+    n_valid = int(count(valid), I32)
+
+    ! No masked observer: plain call
+    if (n_valid == n_obs) then
+        CALL self % compute_pressure(observers, block_size, total_pressure)
+        return
+    end if
+
+    write(*, '(A,I0,A,I0,A,F4.1,A)') ' WARNING [' // label // '] ', n_obs - n_valid, ' of ', n_obs, &
+                                     ' observers closer than ', MASK_DISTANCE, ' m to a source node: masked (NaN)'
+
+    nan = ieee_value(1.0_WP, IEEE_QUIET_NAN)
+    ALLOCATE(total_pressure(size(self % sources % Freqs), n_obs))
+    total_pressure = cmplx(nan, nan, kind=WP)
+
+    if (n_valid == 0_I32) return
+
+    ! Compute only the valid observers, then scatter them back into the full grid
+    ALLOCATE(obs_valid(n_valid, 3))
+    j = 0_I32
+    do i = 1, n_obs
+        if (valid(i)) then
+            j               = j + 1_I32
+            obs_valid(j, :) = observers(i, :)
+        end if
+    end do
+
+    CALL self % compute_pressure(obs_valid, block_size, p_valid)
+
+    j = 0_I32
+    do i = 1, n_obs
+        if (valid(i)) then
+            j                    = j + 1_I32
+            total_pressure(:, i) = p_valid(:, j)
+        end if
+    end do
+
+END SUBROUTINE compute_pressure_masked
+
+
+FUNCTION pressure_norm(p) RESULT(pnorm)
+    ! -------------------------------------------------------------------------
+    ! Norm of |p| over the computed entries only (masked NaN observers are
+    ! left out), used by the debug output of the run_* routines. Without NaN
+    ! it is exactly norm2(abs(p)).
+    ! -------------------------------------------------------------------------
+
+    USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_is_nan
+
+    COMPLEX(WP), INTENT(IN) :: p(:,:)    ! [Pa] Pressure (Nfreqs, Nobs), possibly with NaN
+    REAL(WP)                :: pnorm     ! [Pa] Norm of the computed pressures
+
+
+    if (any(ieee_is_nan(real(p, WP)))) then
+        pnorm = norm2(abs(pack(p, .not. ieee_is_nan(real(p, WP)))))
+    else
+        pnorm = norm2(abs(p))
+    end if
+
+END FUNCTION pressure_norm
+
+
+SUBROUTINE resolve_save_path(self, method_tag)
+    ! -------------------------------------------------------------------------
+    ! Resolves the final HDF5 output path, shared by every solver's
+    ! build_save_path. If the configured save_path is "None"/"Default", the
+    ! name is built from the emitter labels carried by the sources around the
+    ! solver's method tag: out_dir // name_tag // method_tag // name_suffix,
+    ! e.g. ./turbine_acoustic_data/plot_mn_ANM24_ws11.4.hdf5 or
+    ! ./farm_acoustic_data/Farm_2_DTU10MN_ANM24_ws8.0-11.4.hdf5. Otherwise the
+    ! .hdf5 extension is appended to the given path. The destination folder
+    ! is created if needed and a previous file with the same name is deleted,
+    ! since save_variable only overwrites the datasets it writes and datasets
+    ! of an older run would otherwise survive in the new file.
+    ! -------------------------------------------------------------------------
+
+    CLASS(AcousticSolver_t), INTENT(INOUT) :: self          ! [-] Solver instance
+    CHARACTER(len=*)       , INTENT(IN)    :: method_tag    ! [-] Method and resolution tag, e.g. "_ANM24"
+
+    ! Local variables
+    CHARACTER(len=512) :: path_upper
+    INTEGER(I32)       :: u, ierr
+
+
+    path_upper = to_upper(trim(self % save_path))
+
+    if (trim(path_upper) == 'NONE' .or. trim(path_upper) == 'DEFAULT') then
+        associate(g => self % sources % geometry)
+            self % save_path = trim(g % out_dir) // trim(g % name_tag) // method_tag // trim(g % name_suffix) // ".hdf5"
+        end associate
+    else
+        self % save_path = trim(self % save_path) // ".hdf5"
+    end if
+
+    ! Make sure the destination folder exists before anything tries to write into it
+    CALL ensure_parent_dir(trim(self % save_path))
+
+    ! Start from an empty file, as the .dat summary does (status='replace')
+    open(newunit=u, file=trim(self % save_path), status='old', iostat=ierr)
+    if (ierr == 0_I32) then
+        close(u, status='delete')
+        write(*,*) '   ---> Previous output file replaced: ', trim(self % save_path)
+    end if
+
+END SUBROUTINE resolve_save_path
 
 
 SUBROUTINE update_parameters(self)
     ! -------------------------------------------------------------------------
     ! Appends to the .dat summary already written by save_parameters() one
     ! block per post-processing step that actually ran (per do_run), with the
-    ! resolved parameters run()/run_all() used for it, then closes the file
-    ! with its final separator. Must be called after run()/run_all(), since
-    ! every step only resolves its own DEFAULT_R/DEFAULT_I sentinels when it
-    ! actually executes.
+    ! resolved parameters run() used for it, then closes the file with its
+    ! final separator. Must be called after run(), since every step only
+    ! resolves its own DEFAULT_R/DEFAULT_I sentinels when it actually
+    ! executes.
     ! -------------------------------------------------------------------------
 
     CLASS(AcousticSolver_t), INTENT(IN) :: self    ! [-] Solver instance
@@ -307,6 +452,19 @@ SUBROUTINE update_parameters(self)
             write(u, '(A,I0)')     '   nz_xz      : ', pp % params_sliceXZ % nz_xz
             write(u, '(A,2F10.3)') '   xlim_xz    : ', pp % params_sliceXZ % xlim_xz
             write(u, '(A,2F10.3)') '   zlim_xz    : ', pp % params_sliceXZ % zlim_xz
+        end if
+
+        if (d % do_sliceVertical) then
+            write(u, '(A)') ''
+            write(u, '(A)')         'SliceVertical:'
+            write(u, '(A,F8.2,A)')  '   azimuth_sv : ', pp % params_sliceVertical % azimuth_sv, ' deg'
+            write(u, '(A,2F10.3)')  '   center_sv  : ', pp % params_sliceVertical % center_sv
+            write(u, '(A,F10.3,A)') '   width_sv   : ', pp % params_sliceVertical % width_sv, ' m'
+            write(u, '(A,2F10.3)')  '   ulim_sv    : ', pp % params_sliceVertical % ulim_sv
+            write(u, '(A,2F10.3)')  '   zlim_sv    : ', pp % params_sliceVertical % zlim_sv
+            write(u, '(A,I0)')      '   nu_sv      : ', pp % params_sliceVertical % nu_sv
+            write(u, '(A,I0)')      '   nz_sv      : ', pp % params_sliceVertical % nz_sv
+            write(u, '(A,F8.2,A)')  '   margin_sv  : ', pp % params_sliceVertical % margin_sv, ' m'
         end if
 
         if (d % do_sphere) then
@@ -409,10 +567,9 @@ SUBROUTINE run_spectrums(self)
         write(*,*) "WARNING AcousticSolver % run_spectrums: there are observers placed over z = 0 m"
 
     ! Compute pressure
-    CALL self % check_observers_distances(observers_)
-    CALL self % compute_pressure(observers_, bs, p)
+    CALL self % compute_pressure_masked('Spectrums', observers_, bs, p)
 
-    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
+    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', pressure_norm(p)
 
     ! Save data
     CALL save_variable(self % save_path, "P_spectrums", p)
@@ -471,15 +628,13 @@ SUBROUTINE run_polar(self)
         theta_deg_polar(i) = theta_deg
     end do
 
-    CALL self % check_observers_distances(observers)
-
     write(*, '(A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,I0)') &
         '>> [Polar]    r=', r, ' m | center=(', center(1), ',', center(2), &
         ') m | z=', z, ' m | observers=', n_theta
 
     ! Compute pressure
-    CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
+    CALL self % compute_pressure_masked('Polar', observers, bs, p)
+    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', pressure_norm(p)
 
     ! Save data
     CALL save_variable(self % save_path, "Freqs", self % sources % Freqs)
@@ -561,14 +716,12 @@ SUBROUTINE run_cylinder(self)
         end do
     end do
 
-    CALL self % check_observers_distances(observers)
-
     write(*, '(A,F8.2,A,F8.2,A,F8.2,A,I0,A,I0,A,I0)') &
         '>> [Cylinder]   r=', r, ' m | center=(', center(1), ',', center(2), &
         ') m | grid=', n_theta, ' x ', nz, ' = ', Nobs
 
-    CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
+    CALL self % compute_pressure_masked('Cylinder', observers, bs, p)
+    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', pressure_norm(p)
 
     ALLOCATE(p_reshaped(size(p, 1), n_theta, nz))
     ALLOCATE(obs_reshaped(n_theta, nz, 3))
@@ -666,14 +819,12 @@ SUBROUTINE run_decay(self)
         end do
     end if
 
-    CALL self % check_observers_distances(observers)
-
     write(*, '(A,I0,A,F8.2,A,F8.2,A)') &
         '>> [Decay]      points=', n_points, ' | direction=', &
         self % sources % geometry % direction, ' deg | z=', z, ' m'
 
-    CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
+    CALL self % compute_pressure_masked('Decay', observers, bs, p)
+    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', pressure_norm(p)
 
     logspace_int = merge(1_I32, 0_I32, logspace)
 
@@ -715,8 +866,9 @@ SUBROUTINE run_line(self)
 
     ! Defaults (resolved once, persisted back into run_inputs)
     associate(pp => self % run_inputs % params_line)
-        if (any(pp % p1_line == DEFAULT_R)) pp % p1_line = [100.0_WP, 0.0_WP, 0.0_WP]
-        if (any(pp % p2_line == DEFAULT_R)) pp % p2_line = [100.0_WP, 0.0_WP, -Depth]
+        ! Per coordinate: only the components left at -999 take the default point's value
+        WHERE (pp % p1_line == DEFAULT_R) pp % p1_line = [100.0_WP, 0.0_WP, 0.0_WP]
+        WHERE (pp % p2_line == DEFAULT_R) pp % p2_line = [100.0_WP, 0.0_WP, -Depth]
         ! logspace_line has no sentinel: it is read directly as a LOGICAL from the .nml
 
         p1       = pp % p1_line
@@ -759,14 +911,12 @@ SUBROUTINE run_line(self)
         end do
     end if
 
-    CALL self % check_observers_distances(observers)
-
     write(*, '(A,I0,A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,F8.2,A)') &
         '>> [Line]       points=', n_points, ' | p1=(', p1(1), ',', p1(2), ',', p1(3), &
         ') m | p2=(', p2(1), ',', p2(2), ',', p2(3), ') m'
 
-    CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
+    CALL self % compute_pressure_masked('Line', observers, bs, p)
+    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', pressure_norm(p)
 
     logspace_int = merge(1_I32, 0_I32, logspace)
 
@@ -866,14 +1016,12 @@ SUBROUTINE run_sliceXY(self)
         end do
     end do
 
-    CALL self % check_observers_distances(observers, 0.1_WP)
-
     write(*, '(A,I0,A,I0,A,F8.2,A,F8.2,A,F8.2,A)') &
         '>> [SliceXY]    nx=', nx, ' | ny=', ny, ' | z=', z, &
         ' m | center=(', center(1), ',', center(2), ') m'
 
-    CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
+    CALL self % compute_pressure_masked('SliceXY', observers, bs, p)
+    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', pressure_norm(p)
 
     ALLOCATE(p_reshaped(size(p, 1), nx, ny))
     ALLOCATE(obs_reshaped(nx, ny, 3))
@@ -930,7 +1078,7 @@ SUBROUTINE run_sliceXZ(self)
         if (pp % nx_xz == DEFAULT_I)        pp % nx_xz   = 26_I32
         if (pp % nz_xz == DEFAULT_I)        pp % nz_xz   = 26_I32
         if (any(pp % xlim_xz == DEFAULT_R)) pp % xlim_xz = [-500.0_WP, 500.0_WP]
-        if (any(pp % zlim_xz == DEFAULT_R)) pp % zlim_xz = [0.0_WP, -Depth]
+        WHERE (pp % zlim_xz == DEFAULT_R)   pp % zlim_xz = [0.0_WP, -Depth]    ! Per limit, as documented
 
         y    = pp % y_xz
         nx   = pp % nx_xz
@@ -963,14 +1111,12 @@ SUBROUTINE run_sliceXZ(self)
         end do
     end do
 
-    CALL self % check_observers_distances(observers, 0.1_WP)
-
     write(*, '(A,I0,A,I0,A,F8.2,A,F8.2,A,F8.2,A)') &
         '>> [SliceXZ]    nx=', nx, ' | nz=', nz, ' | y=', y, &
         ' m | z from ', zlim(1), ' to ', zlim(2), ' m'
 
-    CALL self % compute_pressure(observers, bs, p)
-    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
+    CALL self % compute_pressure_masked('SliceXZ', observers, bs, p)
+    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', pressure_norm(p)
 
     ALLOCATE(p_reshaped(size(p, 1), nx, nz))
     ALLOCATE(obs_reshaped(nx, nz, 3))
@@ -998,6 +1144,134 @@ SUBROUTINE run_sliceXZ(self)
 END SUBROUTINE run_sliceXZ
 
 
+SUBROUTINE run_sliceVertical(self)
+    ! -------------------------------------------------------------------------
+    ! Computes pressure on a vertical plane whose horizontal normal points
+    ! along azimuth_sv (0 deg: normal to +x, anticlockwise). The plane spans
+    ! the horizontal axis span = (-sin, cos)(azimuth) and the depth. With the
+    ! automatic width every source is projected onto the span axis and the
+    ! plane covers all of them plus margin_sv on both sides, so the same
+    ! routine is valid for a single turbine and for a wind farm. Observers
+    ! are ordered with z varying fastest, as in the Python implementation.
+    ! Saves the reshaped pressure/observer grids and the plane geometry
+    ! metadata to the solver's HDF5 file.
+    ! -------------------------------------------------------------------------
+
+    CLASS(AcousticSolver_t), INTENT(INOUT) :: self    ! [-] Solver instance
+
+    ! Local variables
+    COMPLEX(WP) , ALLOCATABLE :: p(:,:)
+    COMPLEX(WP) , ALLOCATABLE :: p_reshaped(:,:,:)
+    REAL(WP)    , ALLOCATABLE :: observers(:,:)
+    REAL(WP)    , ALLOCATABLE :: obs_reshaped(:,:,:)
+    REAL(WP)    , ALLOCATABLE :: us(:), zs(:), proj(:)
+    REAL(WP)                  :: azimuth, az_rad, normal(2), span(2), center(2), ulim(2), zlim(2)
+    REAL(WP)                  :: du, dz, Depth
+    INTEGER(I32)              :: nu, nz, i, j, idx, bs
+
+
+    Depth = self % env % depth_base
+    bs    = self % block_size
+
+    ! Defaults (resolved once, persisted back into run_inputs)
+    associate(pp => self % run_inputs % params_sliceVertical)
+
+        ! --- 1. Plane orientation: normal and in-plane horizontal (span) axis --- !
+        azimuth = pp % azimuth_sv
+        az_rad  = azimuth * PI / 180.0_WP
+        normal  = [ cos(az_rad), sin(az_rad)]
+        span    = [-sin(az_rad), cos(az_rad)]
+
+        ! --- 2. Centre: turbine axis, or mean turbine axis for a wind farm --- !
+        if (any(pp % center_sv == DEFAULT_R)) pp % center_sv = self % sources % geometry % origin
+
+        ! --- 3. Depth extent, clipped to the water column --- !
+        if (pp % zlim_sv(1) == DEFAULT_R) pp % zlim_sv(1) = -Depth
+        if (pp % zlim_sv(2) == DEFAULT_R) pp % zlim_sv(2) = 0.0_WP
+        pp % zlim_sv(1) = max(pp % zlim_sv(1), -Depth)
+        pp % zlim_sv(2) = min(pp % zlim_sv(2), 0.0_WP)
+
+        ! --- 4. Span: every source projected onto the span axis (auto), or symmetric width --- !
+        if (pp % width_sv == DEFAULT_R) then
+            proj          = (self % sources % xyz(:, 1) - pp % center_sv(1)) * span(1) + &
+                            (self % sources % xyz(:, 2) - pp % center_sv(2)) * span(2)
+            pp % ulim_sv  = [minval(proj) - pp % margin_sv, maxval(proj) + pp % margin_sv]
+            pp % width_sv = pp % ulim_sv(2) - pp % ulim_sv(1)
+        else
+            pp % ulim_sv = [-0.5_WP * pp % width_sv, 0.5_WP * pp % width_sv]
+        end if
+
+        ! --- 5. Grid sizing: ~5 m along the span, ~2 m along z, at least 30 points each --- !
+        if (pp % nu_sv == DEFAULT_I) &
+            pp % nu_sv = max(30_I32, ceiling((pp % ulim_sv(2) - pp % ulim_sv(1)) / 5.0_WP, I32))
+        if (pp % nz_sv == DEFAULT_I) &
+            pp % nz_sv = max(30_I32, ceiling((pp % zlim_sv(2) - pp % zlim_sv(1)) / 2.0_WP, I32))
+
+        center = pp % center_sv
+        ulim   = pp % ulim_sv
+        zlim   = pp % zlim_sv
+        nu     = pp % nu_sv
+        nz     = pp % nz_sv
+    end associate
+
+    ! --- 6. Observer grid: span outer, z inner (z varies fastest) --- !
+    ALLOCATE(us(nu), zs(nz), observers(nu*nz, 3))
+    du = (ulim(2) - ulim(1)) / max(real(nu - 1_I32, WP), 1.0_WP)
+    dz = (zlim(2) - zlim(1)) / max(real(nz - 1_I32, WP), 1.0_WP)
+
+    do i = 1, nu
+        us(i) = ulim(1) + real(i - 1_I32, WP) * du
+    end do
+    do j = 1, nz
+        zs(j) = zlim(1) + real(j - 1_I32, WP) * dz
+    end do
+
+    idx = 1_I32
+    do i = 1, nu
+        do j = 1, nz
+            observers(idx, 1) = center(1) + us(i) * span(1)
+            observers(idx, 2) = center(2) + us(i) * span(2)
+            observers(idx, 3) = zs(j)
+            idx               = idx + 1_I32
+        end do
+    end do
+
+    write(*, '(A,F7.2,A,I0,A,I0,A,I0,A,F9.2,A,F9.2,A)') &
+        '>> [SliceVert]  azimuth=', azimuth, ' deg | grid=', nu, ' x ', nz, ' = ', nu * nz, &
+        ' | center=(', center(1), ',', center(2), ') m'
+    write(*, '(A,F6.2,A,F6.2,A,F6.2,A,F6.2,A)') &
+        '   normal=(', normal(1), ', ', normal(2), ') | span=(', span(1), ', ', span(2), ')'
+
+    ! --- 7. Compute pressure (observers closer than MASK_DISTANCE to a node get NaN) --- !
+    CALL self % compute_pressure_masked('SliceVert', observers, bs, p)
+    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', pressure_norm(p)
+
+    ! --- 8. Reshape to (Nfreqs, nu, nz) and save --- !
+    ALLOCATE(p_reshaped(size(p, 1), nu, nz))
+    ALLOCATE(obs_reshaped(nu, nz, 3))
+
+    idx = 1_I32
+    do i = 1, nu
+        do j = 1, nz
+            obs_reshaped(i, j, :) = observers(idx, :)
+            p_reshaped(:, i, j)   = p(:, idx)
+            idx                   = idx + 1_I32
+        end do
+    end do
+
+    CALL save_variable(self % save_path, "Freqs"          , self % sources % Freqs)
+    CALL save_variable(self % save_path, "P_sliceVertical", p_reshaped)
+    CALL save_variable(self % save_path, "Coords_sliceV"  , obs_reshaped)
+    CALL save_variable(self % save_path, "U_sliceV"       , us)
+    CALL save_variable(self % save_path, "Z_sliceV"       , zs)
+    CALL save_variable(self % save_path, "Azimuth_sliceV" , azimuth)
+    CALL save_variable(self % save_path, "Center_sliceV"  , center)
+
+    write(*, '(A)') '   Saved to: ' // trim(self % save_path)
+
+END SUBROUTINE run_sliceVertical
+
+
 SUBROUTINE dummy_run_sphere(self)
     ! -------------------------------------------------------------------------
     ! Default (no-op) implementation of run_sphere, used by solvers that do
@@ -1013,87 +1287,102 @@ SUBROUTINE dummy_run_sphere(self)
 END SUBROUTINE dummy_run_sphere
 
 
-SUBROUTINE run_all(self)
+SUBROUTINE run(self)
     ! -------------------------------------------------------------------------
-    ! Orchestrates the full acoustic post-processing pipeline: runs, in order,
-    ! spectrums, polar, decay, line, sphere, sliceXY, sliceXZ and cylinder,
-    ! forwarding each routine's optional arguments and saving every result to
-    ! the solver's HDF5 output file.
+    ! Config-driven entry point for the post-processing pipeline: runs, in a
+    ! fixed order, every step whose do_<name> flag is enabled. The parser has
+    ! already resolved do_all and switched off the steps that make no sense
+    ! for the emitter (sphere and decay for a wind farm), so the same routine
+    ! serves a single turbine, a wind farm or hand-made sources.
     ! -------------------------------------------------------------------------
 
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self    ! [-] Solver instance
 
+    ! Local variables
+    INTEGER(I32) :: k, n_steps
 
-    write(*, '(A)') ''
-    write(*, '(A)') repeat('=', 70)
-    write(*, '(A)') ' RUNNING ALL ACOUSTIC POST-PROCESSING (8 steps)'
-    write(*, '(A)') repeat('=', 70)
 
-    write(*, '(A)') ''
-    write(*, '(A)') '[1/8] Spectrums at observer points'
-    CALL self % run_spectrums()
+    k = 0_I32
 
-    write(*, '(A)') ''
-    write(*, '(A)') '[2/8] Polar contour'
-    CALL self % run_polar()
+    associate(d => self % run_inputs % do_run)
+        n_steps = int(count([d % do_spectrums, d % do_polar, d % do_decay, d % do_line, d % do_sphere, &
+                             d % do_sliceXY, d % do_sliceXZ, d % do_sliceVertical, d % do_cylinder]), I32)
 
-    write(*, '(A)') ''
-    write(*, '(A)') '[3/8] Distance decay along wind'
-    CALL self % run_decay()
+        write(*, '(A)') ''
+        write(*, '(A)') repeat('=', 70)
+        write(*, '(A,I0,A)') ' RUNNING ACOUSTIC POST-PROCESSING (', n_steps, ' steps)'
+        write(*, '(A)') repeat('=', 70)
 
-    write(*, '(A)') ''
-    write(*, '(A)') '[4/8] Line between two points'
-    CALL self % run_line()
+        if (d % do_spectrums) then
+            CALL print_step_header(k, n_steps, 'Spectrums at observer points')
+            CALL self % run_spectrums()
+        end if
 
-    write(*, '(A)') ''
-    write(*, '(A)') '[5/8] Spherical radiation (free-field)'
-    CALL self % run_sphere()
+        if (d % do_polar) then
+            CALL print_step_header(k, n_steps, 'Polar contour')
+            CALL self % run_polar()
+        end if
 
-    write(*, '(A)') ''
-    write(*, '(A)') '[6/8] Horizontal slice XY'
-    CALL self % run_sliceXY()
+        if (d % do_decay) then
+            CALL print_step_header(k, n_steps, 'Distance decay along wind')
+            CALL self % run_decay()
+        end if
 
-    write(*, '(A)') ''
-    write(*, '(A)') '[7/8] Vertical slice XZ'
-    CALL self % run_sliceXZ()
+        if (d % do_line) then
+            CALL print_step_header(k, n_steps, 'Line between two points')
+            CALL self % run_line()
+        end if
 
-    write(*, '(A)') ''
-    write(*, '(A)') '[8/8] Cylinder surface'
-    CALL self % run_cylinder()
+        if (d % do_sphere) then
+            CALL print_step_header(k, n_steps, 'Spherical radiation (free-field)')
+            CALL self % run_sphere()
+        end if
+
+        if (d % do_sliceXY) then
+            CALL print_step_header(k, n_steps, 'Horizontal slice XY')
+            CALL self % run_sliceXY()
+        end if
+
+        if (d % do_sliceXZ) then
+            CALL print_step_header(k, n_steps, 'Vertical slice XZ')
+            CALL self % run_sliceXZ()
+        end if
+
+        if (d % do_sliceVertical) then
+            CALL print_step_header(k, n_steps, 'Vertical slice at any azimuth')
+            CALL self % run_sliceVertical()
+        end if
+
+        if (d % do_cylinder) then
+            CALL print_step_header(k, n_steps, 'Cylinder surface')
+            CALL self % run_cylinder()
+        end if
+    end associate
 
     write(*, '(A)') ''
     write(*, '(A)') repeat('=', 70)
     write(*, '(A)') ' ALL ACOUSTIC COMPUTATIONS FINISHED'
     write(*, '(A)') repeat('=', 70)
 
-END SUBROUTINE run_all
-
-
-SUBROUTINE run(self)
-    ! -------------------------------------------------------------------------
-    ! Config-driven entry point for the post-processing pipeline. Calls
-    ! run_all() when do_run % do_all is enabled; otherwise runs only the
-    ! individual steps whose own do_<name> flag is enabled.
-    ! -------------------------------------------------------------------------
-
-    CLASS(AcousticSolver_t), INTENT(INOUT) :: self    ! [-] Solver instance
-
-
-    associate(d => self % run_inputs % do_run)
-        if (d % do_all) then
-            CALL self % run_all()
-        else
-            if (d % do_spectrums) CALL self % run_spectrums()
-            if (d % do_polar)     CALL self % run_polar()
-            if (d % do_cylinder)  CALL self % run_cylinder()
-            if (d % do_decay)     CALL self % run_decay()
-            if (d % do_line)      CALL self % run_line()
-            if (d % do_sliceXY)   CALL self % run_sliceXY()
-            if (d % do_sliceXZ)   CALL self % run_sliceXZ()
-            if (d % do_sphere)    CALL self % run_sphere()
-        end if
-    end associate
-
 END SUBROUTINE run
+
+
+SUBROUTINE print_step_header(k, n_steps, title)
+    ! -------------------------------------------------------------------------
+    ! Advances the post-processing step counter and prints its "[k/N] title"
+    ! header line.
+    ! -------------------------------------------------------------------------
+
+    INTEGER(I32)    , INTENT(INOUT) :: k          ! [-] Step counter, incremented on exit
+    INTEGER(I32)    , INTENT(IN)    :: n_steps    ! [-] Number of enabled steps
+    CHARACTER(len=*), INTENT(IN)    :: title      ! [-] Step title
+
+
+    k = k + 1_I32
+
+    write(*, '(A)') ''
+    write(*, '(A,I0,A,I0,A)') '[', k, '/', n_steps, '] ' // title
+
+END SUBROUTINE print_step_header
 
 END MODULE AcousticSolver

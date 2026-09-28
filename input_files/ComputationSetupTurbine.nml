@@ -1,13 +1,13 @@
 ! =====================================================================
 ! Post-processing configuration file
 ! =====================================================================
-! Configures every observer-geometry post-processing step that run_all()
+! Configures every observer-geometry post-processing step that run()
 ! can execute (currently passed as optional arguments to each run_*
 ! routine in src/core/AcousticSolver.f90 / run_sphere in
 ! src/core/AcousticMethods/ImageMethod.f90).
 !
 ! - do_config (below): one "do_<name>" logical per step, all together,
-!   deciding whether run_all() executes it at all (.false. skips it
+!   deciding whether run() executes it at all (.false. skips it
 !   entirely). Kept separate from the per-step parameters so every
 !   on/off switch is visible in one place.
 ! - Each step then has its own namelist group, named after the routine
@@ -34,6 +34,7 @@
     do_line      = .false.       ! [-] Line between two points (run_line)
     do_sliceXY   = .false.       ! [-] Horizontal slice XY (run_sliceXY)
     do_sliceXZ   = .false.       ! [-] Vertical slice XZ (run_sliceXZ)
+    do_sliceVertical = .false.   ! [-] Vertical slice at any azimuth (run_sliceVertical)
     do_sphere    = .false.       ! [-] Spherical radiation, free-field (run_sphere)
 /
 
@@ -117,6 +118,24 @@
     nz_xz = 26                      ! [-] Number of observer points along z
     xlim_xz = -500.0, 500.0         ! [m] Slice extent along x (min, max)
     zlim_xz = 0.0, -999.0           ! [m] Slice extent along z (min, max); max = -999.0 = auto: -Depth
+/
+
+
+! ---------------------------------------------------------------
+! Vertical slice at any azimuth (run_sliceVertical)
+! ---------------------------------------------------------------
+! The plane normal points along azimuth_sv (0 deg: normal to +x,
+! anticlockwise); the plane spans the horizontal axis (-sin, cos) of
+! that azimuth and the depth. azimuth_sv = -90.0 gives the XZ plane
+! with the span axis along +x.
+&sliceVertical_config
+    azimuth_sv = 0.0                ! [deg] Azimuth of the plane normal (0 deg: normal to +x, anticlockwise)
+    center_sv = -999.0, -999.0      ! [m] Plane centre (x, y); -999.0 = auto: turbine axis position
+    width_sv = -999.0               ! [m] Full horizontal span; -999.0 = auto: every source projected + margin_sv
+    zlim_sv = -999.0, 0.0           ! [m] Depth extent (min, max); -999.0 = auto: -Depth (min) or 0 (max)
+    nu_sv = -999                    ! [-] Points along the span; -999 = auto: max(30, span / 5 m)
+    nz_sv = -999                    ! [-] Points along z; -999 = auto: max(30, depth / 2 m)
+    margin_sv = 10.0                ! [m] Margin added on both sides to the automatic width
 /
 
 

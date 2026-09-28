@@ -63,6 +63,7 @@ TYPE :: Config_WindFarm_t
     ! -------------------------------------------------------------------------
 
     INTEGER(I32)                            :: Nturbines      ! [-] Number of turbines in the farm
+    CHARACTER(len=100)                      :: farm_name      ! [-] File name label ('None': automatic)
     TYPE(Config_WindTurbine_t), ALLOCATABLE :: turbines(:)    ! [-] Per-turbine configuration (Nturbines)
 
 END TYPE Config_WindFarm_t
@@ -108,14 +109,16 @@ TYPE :: GeometricData_t
     ! -------------------------------------------------------------------------
     ! Reference geometry and labels of whatever produced the acoustic sources
     ! (a turbine, a wind farm or hand-made sources). Used by the automatic
-    ! defaults of the run_* routines and by the default output file name.
+    ! defaults of the run_* routines and by the default output file, built as
+    ! out_dir // name_tag // <solver method tag> // name_suffix // ".hdf5".
     ! -------------------------------------------------------------------------
 
-    REAL(WP)          :: center(2)   = 0.0_WP       ! [m] Reference centre (auto centre of polar, cylinder, sphere)
-    REAL(WP)          :: origin(2)   = 0.0_WP       ! [m] Reference origin (auto start of decay, auto y of sliceXZ)
-    REAL(WP)          :: direction   = 0.0_WP       ! [deg] Reference direction, anticlockwise from +x (decay)
-    CHARACTER(len=64) :: name_tag    = 'sources'    ! [-] Default output file name tag ('mn', 'fl', 'farm', ...)
-    CHARACTER(len=64) :: name_suffix = ''           ! [-] Default output file name suffix ('_ws11.4', ...)
+    REAL(WP)           :: center(2)   = 0.0_WP                ! [m] Reference centre (auto: polar, cylinder, sphere)
+    REAL(WP)           :: origin(2)   = 0.0_WP                ! [m] Reference origin (auto start of decay, y of sliceXZ)
+    REAL(WP)           :: direction   = 0.0_WP                ! [deg] Reference direction, anticlockwise from +x
+    CHARACTER(len=200) :: out_dir     = './acoustic_data/'    ! [-] Default output folder ('./farm_acoustic_data/')
+    CHARACTER(len=128) :: name_tag    = 'plot_sources'        ! [-] File name head ('plot_mn', 'Farm_2_DTU10MN')
+    CHARACTER(len=64)  :: name_suffix = ''                    ! [-] File name tail ('_ws11.4', '_ws8.0-11.4')
 
 END TYPE GeometricData_t
 
@@ -199,20 +202,23 @@ END TYPE Config_AnalyticalNormalModes_t
 
 TYPE :: Config_DoRun_t
     ! -------------------------------------------------------------------------
-    ! Which post-processing steps run_all() executes. do_all is a master
-    ! switch: when .true. every step runs regardless of its individual flag;
-    ! when .false., only the steps whose own do_<name> is .true. run.
+    ! Which post-processing steps run() executes. do_all is a master switch
+    ! resolved by the parser: when .true. every step that makes sense for the
+    ! emitter (turbine or farm) is switched on; when .false., only the steps
+    ! whose own do_<name> is .true. run. Steps without meaning for a wind farm
+    ! (sphere, decay) are always switched off by the parser in farm mode.
     ! -------------------------------------------------------------------------
 
-    LOGICAL :: do_all          ! [-] Master switch: run every step regardless of the flags below
-    LOGICAL :: do_spectrums    ! [-] Spectrums at observer points (run_spectrums)
-    LOGICAL :: do_polar        ! [-] Polar contour (run_polar)
-    LOGICAL :: do_cylinder     ! [-] Cylinder surface (run_cylinder)
-    LOGICAL :: do_decay        ! [-] Distance decay along wind direction (run_decay)
-    LOGICAL :: do_line         ! [-] Line between two points (run_line)
-    LOGICAL :: do_sliceXY      ! [-] Horizontal slice XY (run_sliceXY)
-    LOGICAL :: do_sliceXZ      ! [-] Vertical slice XZ (run_sliceXZ)
-    LOGICAL :: do_sphere       ! [-] Spherical radiation, free-field (run_sphere)
+    LOGICAL :: do_all              ! [-] Master switch: run every step valid for the emitter
+    LOGICAL :: do_spectrums        ! [-] Spectrums at observer points (run_spectrums)
+    LOGICAL :: do_polar            ! [-] Polar contour (run_polar)
+    LOGICAL :: do_cylinder         ! [-] Cylinder surface (run_cylinder)
+    LOGICAL :: do_decay            ! [-] Distance decay along wind direction (run_decay), turbine only
+    LOGICAL :: do_line             ! [-] Line between two points (run_line)
+    LOGICAL :: do_sliceXY          ! [-] Horizontal slice XY (run_sliceXY)
+    LOGICAL :: do_sliceXZ          ! [-] Vertical slice XZ (run_sliceXZ)
+    LOGICAL :: do_sliceVertical    ! [-] Vertical slice at any azimuth (run_sliceVertical)
+    LOGICAL :: do_sphere           ! [-] Spherical radiation, free-field (run_sphere), turbine only
 
 END TYPE Config_DoRun_t
 
@@ -319,6 +325,26 @@ TYPE :: Config_SliceXZ_t
 END TYPE Config_SliceXZ_t
 
 
+TYPE :: Config_SliceVertical_t
+    ! -------------------------------------------------------------------------
+    ! Configuration for run_sliceVertical(): pressure on a vertical plane of
+    ! observers whose horizontal normal points along an arbitrary azimuth.
+    ! The plane spans the horizontal axis (-sin, cos)(azimuth) and the depth.
+    ! Valid for a single turbine and for a wind farm alike.
+    ! -------------------------------------------------------------------------
+
+    REAL(WP)     :: azimuth_sv      ! [deg] Azimuth of the plane normal (0 deg: normal to +x, anticlockwise)
+    REAL(WP)     :: center_sv(2)    ! [m] Plane centre (x, y)
+    REAL(WP)     :: width_sv        ! [m] Full horizontal span of the plane
+    REAL(WP)     :: zlim_sv(2)      ! [m] Depth extent (min, max)
+    INTEGER(I32) :: nu_sv           ! [-] Number of observer points along the span
+    INTEGER(I32) :: nz_sv           ! [-] Number of observer points along z
+    REAL(WP)     :: margin_sv       ! [m] Margin added on both sides to the automatic width
+    REAL(WP)     :: ulim_sv(2)      ! [m] Span limits actually used (u_min, u_max), resolved at run time
+
+END TYPE Config_SliceVertical_t
+
+
 TYPE :: Config_Sphere_t
     ! -------------------------------------------------------------------------
     ! Configuration for run_sphere(): free-field pressure on a spherical
@@ -337,18 +363,20 @@ END TYPE Config_Sphere_t
 TYPE :: Config_Computation_t
     ! -------------------------------------------------------------------------
     ! Aggregates the per-step configuration for every run_* post-processing
-    ! routine that run_all() can execute, read from ComputationSetupTurbine.nml.
+    ! routine that run() can execute, read from ComputationSetupTurbine.nml
+    ! (single turbine) or ComputationSetupFarm.nml (wind farm).
     ! -------------------------------------------------------------------------
 
-    TYPE(Config_DoRun_t)     :: do_run              ! [-] Which steps to run
-    TYPE(Config_Spectrums_t) :: params_spectrums    ! [-] run_spectrums() configuration
-    TYPE(Config_Polar_t)     :: params_polar        ! [-] run_polar() configuration
-    TYPE(Config_Cylinder_t)  :: params_cylinder     ! [-] run_cylinder() configuration
-    TYPE(Config_Decay_t)     :: params_decay        ! [-] run_decay() configuration
-    TYPE(Config_Line_t)      :: params_line         ! [-] run_line() configuration
-    TYPE(Config_SliceXY_t)   :: params_sliceXY      ! [-] run_sliceXY() configuration
-    TYPE(Config_SliceXZ_t)   :: params_sliceXZ      ! [-] run_sliceXZ() configuration
-    TYPE(Config_Sphere_t)    :: params_sphere       ! [-] run_sphere() configuration
+    TYPE(Config_DoRun_t)         :: do_run                  ! [-] Which steps to run
+    TYPE(Config_Spectrums_t)     :: params_spectrums        ! [-] run_spectrums() configuration
+    TYPE(Config_Polar_t)         :: params_polar            ! [-] run_polar() configuration
+    TYPE(Config_Cylinder_t)      :: params_cylinder         ! [-] run_cylinder() configuration
+    TYPE(Config_Decay_t)         :: params_decay            ! [-] run_decay() configuration
+    TYPE(Config_Line_t)          :: params_line             ! [-] run_line() configuration
+    TYPE(Config_SliceXY_t)       :: params_sliceXY          ! [-] run_sliceXY() configuration
+    TYPE(Config_SliceXZ_t)       :: params_sliceXZ          ! [-] run_sliceXZ() configuration
+    TYPE(Config_SliceVertical_t) :: params_sliceVertical    ! [-] run_sliceVertical() configuration
+    TYPE(Config_Sphere_t)        :: params_sphere           ! [-] run_sphere() configuration
 
 END TYPE Config_Computation_t
 

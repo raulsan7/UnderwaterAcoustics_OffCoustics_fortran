@@ -238,12 +238,13 @@ SUBROUTINE read_farm_config(path, config)
     CHARACTER(len=200) :: iomsg
 
     ! Input variables: shared by the whole farm
-    REAL(WP)     :: From
-    REAL(WP)     :: Upto
-    INTEGER(I32) :: skip
-    INTEGER(I32) :: skipf
-    LOGICAL      :: filter_freqs
-    REAL(WP)     :: freqs_over
+    CHARACTER(len=100) :: farm_name
+    REAL(WP)           :: From
+    REAL(WP)           :: Upto
+    INTEGER(I32)       :: skip
+    INTEGER(I32)       :: skipf
+    LOGICAL            :: filter_freqs
+    REAL(WP)           :: freqs_over
 
     ! Input variables: one set per turbine
     CHARACTER(len=200) :: case_type
@@ -261,6 +262,7 @@ SUBROUTINE read_farm_config(path, config)
 
     ! --- 1. Configuration namelists --- !
     NAMELIST /farm_config/ &
+        farm_name,         &
         From,              &
         Upto,              &
         skip,              &
@@ -284,6 +286,7 @@ SUBROUTINE read_farm_config(path, config)
 
 
     ! --- 2. Shared defaults and &farm_config block --- !
+    farm_name    = 'None'
     From         = 0.0_WP
     Upto         = 1.0_WP
     skip         = 1_I32
@@ -326,6 +329,7 @@ SUBROUTINE read_farm_config(path, config)
     end if
 
     config % farm % Nturbines = n
+    config % farm % farm_name = trim(farm_name)
     ALLOCATE(config % farm % turbines(n))
 
     ! --- 4. Read every &turbine block, resetting the per-turbine defaults each time --- !
@@ -658,38 +662,42 @@ END SUBROUTINE read_AnalyticalNormalModes_config
 
 SUBROUTINE read_computation_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads every namelist group in ComputationSetupTurbine.nml (do_config
-    ! plus one group per run_* post-processing step) and packs the values
-    ! into config % run_inputs.
+    ! Reads every namelist group in ComputationSetupTurbine.nml or
+    ! ComputationSetupFarm.nml (do_config plus one group per run_*
+    ! post-processing step) and packs the values into config % run_inputs.
+    ! Only the groups of the steps that will actually run are read.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
 
     CALL read_do_config(path, config)
-    if (config % run_inputs % do_run % do_spectrums) CALL read_spectrums_config(path, config)
-    if (config % run_inputs % do_run % do_polar)     CALL read_polar_config(path, config)
-    if (config % run_inputs % do_run % do_cylinder)  CALL read_cylinder_config(path, config)
-    if (config % run_inputs % do_run % do_decay)     CALL read_decay_config(path, config)
-    if (config % run_inputs % do_run % do_line)      CALL read_line_config(path, config)
-    if (config % run_inputs % do_run % do_sliceXY)   CALL read_sliceXY_config(path, config)
-    if (config % run_inputs % do_run % do_sliceXZ)   CALL read_sliceXZ_config(path, config)
-    if (config % run_inputs % do_run % do_sphere)    CALL read_sphere_config(path, config)
+    if (config % run_inputs % do_run % do_spectrums)     CALL read_spectrums_config(path, config)
+    if (config % run_inputs % do_run % do_polar)         CALL read_polar_config(path, config)
+    if (config % run_inputs % do_run % do_cylinder)      CALL read_cylinder_config(path, config)
+    if (config % run_inputs % do_run % do_decay)         CALL read_decay_config(path, config)
+    if (config % run_inputs % do_run % do_line)          CALL read_line_config(path, config)
+    if (config % run_inputs % do_run % do_sliceXY)       CALL read_sliceXY_config(path, config)
+    if (config % run_inputs % do_run % do_sliceXZ)       CALL read_sliceXZ_config(path, config)
+    if (config % run_inputs % do_run % do_sliceVertical) CALL read_sliceVertical_config(path, config)
+    if (config % run_inputs % do_run % do_sphere)        CALL read_sphere_config(path, config)
 
 END SUBROUTINE read_computation_config
 
 
 SUBROUTINE read_do_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads the "do_config" namelist from ComputationSetupTurbine.nml and
-    ! packs the post-processing execution switches into config % run_inputs.
-    ! When do_all is enabled, all individual post-processing switches are
-    ! forced to true.
+    ! Reads the "do_config" namelist from ComputationSetupTurbine.nml or
+    ! ComputationSetupFarm.nml and packs the post-processing execution
+    ! switches into config % run_inputs. When do_all is enabled, every
+    ! post-processing switch is forced to true. In farm mode the steps that
+    ! make no sense for a wind farm (sphere, decay) are then switched off,
+    ! so run() never needs to know what produced the sources.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
-    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration (solver settings already read)
 
     ! Local variables
     INTEGER(I32)       :: unit_num, ierr
@@ -697,31 +705,33 @@ SUBROUTINE read_do_config(path, config)
 
     ! Input variables
     LOGICAL :: do_all, do_spectrums, do_polar, do_cylinder, do_decay
-    LOGICAL :: do_line, do_sliceXY, do_sliceXZ, do_sphere
+    LOGICAL :: do_line, do_sliceXY, do_sliceXZ, do_sliceVertical, do_sphere
 
     ! --- 1. Configuration namelist --- !
-    NAMELIST /do_config/ &
-        do_all,          &
-        do_spectrums,    &
-        do_polar,        &
-        do_cylinder,     &
-        do_decay,        &
-        do_line,         &
-        do_sliceXY,      &
-        do_sliceXZ,      &
+    NAMELIST /do_config/  &
+        do_all,           &
+        do_spectrums,     &
+        do_polar,         &
+        do_cylinder,      &
+        do_decay,         &
+        do_line,          &
+        do_sliceXY,       &
+        do_sliceXZ,       &
+        do_sliceVertical, &
         do_sphere
 
 
     ! --- 2. Defaults --- !
-    do_all       = .true.
-    do_spectrums = .true.
-    do_polar     = .true.
-    do_cylinder  = .true.
-    do_decay     = .true.
-    do_line      = .true.
-    do_sliceXY   = .true.
-    do_sliceXZ   = .true.
-    do_sphere    = .true.
+    do_all           = .true.
+    do_spectrums     = .true.
+    do_polar         = .true.
+    do_cylinder      = .true.
+    do_decay         = .true.
+    do_line          = .true.
+    do_sliceXY       = .true.
+    do_sliceXZ       = .true.
+    do_sliceVertical = .false.    ! New step: off unless requested, so older files keep their behaviour
+    do_sphere        = .true.
 
     ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
@@ -744,23 +754,33 @@ SUBROUTINE read_do_config(path, config)
     config % run_inputs % do_run % do_all = do_all
 
     if (do_all) then
-        config % run_inputs % do_run % do_spectrums = .true.
-        config % run_inputs % do_run % do_polar     = .true.
-        config % run_inputs % do_run % do_cylinder  = .true.
-        config % run_inputs % do_run % do_decay     = .true.
-        config % run_inputs % do_run % do_line      = .true.
-        config % run_inputs % do_run % do_sliceXY   = .true.
-        config % run_inputs % do_run % do_sliceXZ   = .true.
-        config % run_inputs % do_run % do_sphere    = .true.
+        config % run_inputs % do_run % do_spectrums     = .true.
+        config % run_inputs % do_run % do_polar         = .true.
+        config % run_inputs % do_run % do_cylinder      = .true.
+        config % run_inputs % do_run % do_decay         = .true.
+        config % run_inputs % do_run % do_line          = .true.
+        config % run_inputs % do_run % do_sliceXY       = .true.
+        config % run_inputs % do_run % do_sliceXZ       = .true.
+        config % run_inputs % do_run % do_sliceVertical = .true.
+        config % run_inputs % do_run % do_sphere        = .true.
     else
-        config % run_inputs % do_run % do_spectrums = do_spectrums
-        config % run_inputs % do_run % do_polar     = do_polar
-        config % run_inputs % do_run % do_cylinder  = do_cylinder
-        config % run_inputs % do_run % do_decay     = do_decay
-        config % run_inputs % do_run % do_line      = do_line
-        config % run_inputs % do_run % do_sliceXY   = do_sliceXY
-        config % run_inputs % do_run % do_sliceXZ   = do_sliceXZ
-        config % run_inputs % do_run % do_sphere    = do_sphere
+        config % run_inputs % do_run % do_spectrums     = do_spectrums
+        config % run_inputs % do_run % do_polar         = do_polar
+        config % run_inputs % do_run % do_cylinder      = do_cylinder
+        config % run_inputs % do_run % do_decay         = do_decay
+        config % run_inputs % do_run % do_line          = do_line
+        config % run_inputs % do_run % do_sliceXY       = do_sliceXY
+        config % run_inputs % do_run % do_sliceXZ       = do_sliceXZ
+        config % run_inputs % do_run % do_sliceVertical = do_sliceVertical
+        config % run_inputs % do_run % do_sphere        = do_sphere
+    end if
+
+    ! --- 5. Steps without meaning for a wind farm: no single turbine to enclose or to follow downstream --- !
+    if (trim(config % solver % simulation_type) == 'farm') then
+        if (.not. do_all .and. (do_sphere .or. do_decay)) &
+            write(*,*) "WARNING read_do_config: sphere and decay are not available for a wind farm, skipped"
+        config % run_inputs % do_run % do_sphere = .false.
+        config % run_inputs % do_run % do_decay  = .false.
     end if
 
 END SUBROUTINE read_do_config
@@ -1191,6 +1211,80 @@ SUBROUTINE read_sliceXZ_config(path, config)
     config % run_inputs % params_sliceXZ % zlim_xz = zlim_xz
 
 END SUBROUTINE read_sliceXZ_config
+
+
+SUBROUTINE read_sliceVertical_config(path, config)
+    ! -------------------------------------------------------------------------
+    ! Reads the "sliceVertical_config" namelist from ComputationSetupTurbine.nml
+    ! or ComputationSetupFarm.nml (plane azimuth, centre, width, depth extent,
+    ! grid dimensions and automatic-width margin) and packs the values into
+    ! config % run_inputs. Since do_all also switches this newer step on, a
+    ! file without the group is accepted and every value stays automatic.
+    ! -------------------------------------------------------------------------
+
+    USE, INTRINSIC :: iso_fortran_env, ONLY: IOSTAT_END
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
+
+    ! Local variables
+    INTEGER(I32)       :: unit_num, ierr
+    CHARACTER(len=200) :: iomsg
+
+    ! Input variables
+    REAL(WP)     :: azimuth_sv, center_sv(2), width_sv, zlim_sv(2), margin_sv
+    INTEGER(I32) :: nu_sv, nz_sv
+
+    ! --- 1. Configuration namelist --- !
+    NAMELIST /sliceVertical_config/ &
+        azimuth_sv,                 &
+        center_sv,                  &
+        width_sv,                   &
+        zlim_sv,                    &
+        nu_sv,                      &
+        nz_sv,                      &
+        margin_sv
+
+
+    ! --- 2. Defaults --- !
+    azimuth_sv = 0.0_WP
+    center_sv  = DEFAULT_R
+    width_sv   = DEFAULT_R
+    zlim_sv    = DEFAULT_R
+    nu_sv      = DEFAULT_I
+    nz_sv      = DEFAULT_I
+    margin_sv  = 10.0_WP
+
+    ! --- 3. Open and read namelist file --- !
+    open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
+    if (ierr /= 0_I32) then
+        write(*,*) "ERROR: Could not open input file: ", path
+        stop
+    end if
+
+    rewind(unit_num)
+    read(unit_num, nml=sliceVertical_config, iostat=ierr, iomsg=iomsg)
+    if (ierr == IOSTAT_END) then
+        write(*,*) "WARNING read_sliceVertical_config: no &sliceVertical_config group, automatic values used"
+    else if (ierr /= 0_I32) then
+        write(*,*) "ERROR: Failed to read &sliceVertical_config: ", trim(iomsg)
+        close(unit_num)
+        stop
+    end if
+
+    close(unit_num)
+
+    ! --- 4. Pack values into Config_t --- !
+    config % run_inputs % params_sliceVertical % azimuth_sv = azimuth_sv
+    config % run_inputs % params_sliceVertical % center_sv  = center_sv
+    config % run_inputs % params_sliceVertical % width_sv   = width_sv
+    config % run_inputs % params_sliceVertical % zlim_sv    = zlim_sv
+    config % run_inputs % params_sliceVertical % nu_sv      = nu_sv
+    config % run_inputs % params_sliceVertical % nz_sv      = nz_sv
+    config % run_inputs % params_sliceVertical % margin_sv  = margin_sv
+    config % run_inputs % params_sliceVertical % ulim_sv    = DEFAULT_R    ! Resolved by run_sliceVertical
+
+END SUBROUTINE read_sliceVertical_config
 
 
 SUBROUTINE read_sphere_config(path, config)

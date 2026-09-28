@@ -24,7 +24,7 @@ USE IOUtils
 USE omp_lib
 USE WindFarm, ONLY: WindFarm_t
 USE WindTurbine, ONLY: WindTurbine_t
-USE AcousticSolver, ONLY: AcousticSolver_t, save_emitter_params, write_emitter_txt
+USE AcousticSolver, ONLY: AcousticSolver_t, save_emitter_params, write_emitter_txt, pressure_norm
 
 IMPLICIT NONE
 
@@ -276,43 +276,19 @@ END SUBROUTINE save_parameters_ImageMethod
 
 SUBROUTINE build_save_path_ImageMethod(self)
     ! -------------------------------------------------------------------------
-    ! Resolves the final HDF5 output path. If the configured save_path is
-    ! "None"/"Default", it auto-generates a descriptive filename (turbine
-    ! type, number of images, wind speed) under a default output folder;
-    ! otherwise it just appends the .hdf5 extension. Ensures the destination
-    ! folder exists.
+    ! Resolves the final HDF5 output path through the shared
+    ! resolve_save_path, with this solver's method tag ("_IM" followed by the
+    ! number of images). Folder and file name labels come from the emitter.
     ! -------------------------------------------------------------------------
 
     CLASS(ImageMethod_t), INTENT(INOUT) :: self    ! [-] Solver instance
 
     ! Local variables
-    CHARACTER(len=512) :: path_upper, filename, default_parent_path
-    CHARACTER(len=16)  :: method_suffix, imag_str
+    CHARACTER(len=16) :: imag_str
 
 
-    path_upper          = to_upper(trim(self % save_path))
-    path_upper          = trim(path_upper)
-    default_parent_path = "./turbine_acoustic_data/"
-
-    method_suffix = "_IM"
-
-    if (path_upper == 'NONE' .or. path_upper == 'DEFAULT') then
-
-        write(imag_str, '(I0)') self % N_images
-
-        filename = "plot_"             // trim(self % sources % geometry % name_tag) // &
-                   trim(method_suffix) // trim(imag_str)                             // &
-                   trim(self % sources % geometry % name_suffix)
-
-        self % save_path = trim(default_parent_path) // trim(filename) // ".hdf5"
-
-    else
-        self % save_path = trim(self % save_path) // ".hdf5"
-
-    end if
-
-    ! Make sure the destination folder exists before anything tries to write into it
-    CALL ensure_parent_dir(trim(self % save_path))
+    write(imag_str, '(I0)') self % N_images
+    CALL self % resolve_save_path("_IM" // trim(imag_str))
 
 END SUBROUTINE build_save_path_ImageMethod
 
@@ -741,17 +717,15 @@ SUBROUTINE run_sphere(self)
         end do
     end do
 
-    CALL self % check_observers_distances(observers_, 0.1_WP)
-
     write(*, '(A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,I0,A,I0,A,I0)') &
         '>> [Sphere]     r=', r_, ' m | center=(', center_(1), ',', center_(2), ',', center_(3), &
         ') m | grid=', n_theta_, ' azim x ', nz_, ' z = ', Nobs
 
     CALL self % set_N_images(0_I32)
-    CALL self % compute_pressure(observers_, self % block_size, p)
+    CALL self % compute_pressure_masked('Sphere', observers_, self % block_size, p)
     CALL self % restore_default_images()
 
-    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', norm2(abs(p))
+    if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', pressure_norm(p)
 
     ALLOCATE(p_reshaped(size(p, 1), n_theta_, nz_))
     ALLOCATE(obs_reshaped(n_theta_, nz_, 3))

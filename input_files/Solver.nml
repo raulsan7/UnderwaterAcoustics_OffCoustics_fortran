@@ -3,7 +3,7 @@
 ! =====================================================================
 
 &solver_config
-    simulation_type = 'turbine'         ! [-] 'turbine' (Turbine.nml) or 'farm' (WindFarm.nml) 
+    simulation_type = 'farm'         ! [-] 'turbine' (Turbine.nml) or 'farm' (WindFarm.nml) 
     method = 'AnalyticalNormalModes'    ! [-] Acoustic solver: 'ImageMethod' or 'AnalyticalNormalModes'
     save_path = 'None'                  ! [-] Output file base path/name; 'None'/'Default' builds it from the turbine/solver settings
     block_size = 128                    ! [-] Number of observers processed together per parallel block
