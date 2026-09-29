@@ -55,7 +55,7 @@
 ! ---------------------------------------------------------------
 &polar_config
     r_polar = 500.0                 ! [m] Radius of the polar circle around the turbine
-    z_polar = -15.0.0               ! [m] Depth of the polar circle (-999.0 = auto: -Depth/2)
+    z_polar = -15.0               ! [m] Depth of the polar circle (-999.0 = auto: -Depth/2)
     n_polar = 72                    ! [-] Number of azimuthal observer points around the circle
     center_polar = -999.0, -999.0   ! [m] Circle centre (x, y); -999.0, -999.0 = auto: turbine baricenter
 /
