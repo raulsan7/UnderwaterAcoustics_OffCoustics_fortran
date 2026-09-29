@@ -977,8 +977,10 @@ SUBROUTINE run_sliceXY(self)
 
         if (pp % nx_xy == DEFAULT_I)        pp % nx_xy   = 26_I32
         if (pp % ny_xy == DEFAULT_I)        pp % ny_xy   = 26_I32
-        if (any(pp % xlim_xy == DEFAULT_R)) pp % xlim_xy = [-500.0_WP, 500.0_WP]
-        if (any(pp % ylim_xy == DEFAULT_R)) pp % ylim_xy = [-500.0_WP, 500.0_WP]
+        if (any(pp % xlim_xy == DEFAULT_R)) &
+            pp % xlim_xy = self % sources % geometry % center(1) + [-500.0_WP, 500.0_WP]
+        if (any(pp % ylim_xy == DEFAULT_R)) &
+            pp % ylim_xy = self % sources % geometry % center(2) + [-500.0_WP, 500.0_WP]
 
         z    = pp % z_xy
         nx   = pp % nx_xy
@@ -1086,7 +1088,8 @@ SUBROUTINE run_sliceXZ(self)
         if (pp % y_xz  == DEFAULT_R)        pp % y_xz    = self % sources % geometry % origin(2)
         if (pp % nx_xz == DEFAULT_I)        pp % nx_xz   = 26_I32
         if (pp % nz_xz == DEFAULT_I)        pp % nz_xz   = 26_I32
-        if (any(pp % xlim_xz == DEFAULT_R)) pp % xlim_xz = [-500.0_WP, 500.0_WP]
+        if (any(pp % xlim_xz == DEFAULT_R)) &
+            pp % xlim_xz = self % sources % geometry % center(1) + [-500.0_WP, 500.0_WP]
         WHERE (pp % zlim_xz == DEFAULT_R)   pp % zlim_xz = [0.0_WP, -Depth]    ! Per limit, as documented
 
         y    = pp % y_xz

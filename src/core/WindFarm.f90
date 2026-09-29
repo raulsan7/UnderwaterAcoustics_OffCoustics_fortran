@@ -75,11 +75,11 @@ SUBROUTINE new_turbine(case_type, wt)
     USE SAITEC2MWFloating, ONLY: SAITEC2MWFloating_t
 
     CHARACTER(len=*)    , INTENT(IN) :: case_type           ! [-] Turbine model tag
-    CLASS(WindTurbine_t), INTENT(OUT), ALLOCATABLE :: wt    ! [-] New turbine istance
+    CLASS(WindTurbine_t), INTENT(OUT), ALLOCATABLE :: wt    ! [-] New turbine instance
 
     SELECT CASE(trim(case_type))
     CASE('DTU10MWMonopile')
-        ALLOCATE(DTU10mwMonopile_t :: wt)
+        ALLOCATE(DTU10MWMonopile_t :: wt)
     CASE('DTU10MWFloating')
         ALLOCATE(DTU10MWFloating_t :: wt)
     CASE('SAITEC2MWFloating')
@@ -97,7 +97,6 @@ SUBROUTINE init_WindFarm(self, config)
     ! Allocates every turbine with the concrete type given by its case_type
     ! and runs its constructor (paths, rpm curve, shared parameters).
     ! -------------------------------------------------------------------------
-    
     CLASS(WindFarm_t)      , INTENT(INOUT) :: self      ! [-] Farm instance
     TYPE(Config_WindFarm_t), INTENT(INOUT) :: config    ! [-] farm configuration
 
@@ -156,7 +155,7 @@ SUBROUTINE farm_to_source_WindFarm(self, config, sources)
     ! -------------------------------------------------------------------------
 
     CLASS(WindFarm_t), INTENT(INOUT) :: self                        ! [-] Farm instance
-    TYPE(COnfig_t)   , INTENT(IN)    :: config                      ! [-] Global configuration
+    TYPE(Config_t)   , INTENT(IN)    :: config                      ! [-] Global configuration
     TYPE(AcousticSource_t), INTENT(OUT), ALLOCATABLE :: sources     ! [-] Farm acoustic point sources
 
     ! Local variables
@@ -210,7 +209,7 @@ SUBROUTINE farm_to_source_WindFarm(self, config, sources)
     Ns = self % src_offset(self % Nturbines + 1)
 
     ALLOCATE(sources)
-    ALLOCATE(sources % xyz (Ns, 3), sources % FOrce(nf, Ns, 3), sources % Freqs(nf))
+    ALLOCATE(sources % xyz (Ns, 3), sources % Force(nf, Ns, 3), sources % Freqs(nf))
     sources % Force = (0.0_WP, 0.0_WP)
 
     ! --- 4. Scatter every turbine into the farm arrays --- !
@@ -250,8 +249,8 @@ SUBROUTINE farm_to_source_WindFarm(self, config, sources)
         sources % geometry % center = sources % geometry % center + self % turbines(i) % wt % BariPos
         sources % geometry % origin = sources % geometry % origin + self % turbines(i) % wt % AxisPos
 
-        sum_cos = sum_cos + cos(self % turbines(i) % wt % WindDir * PI / 180_WP)
-        sum_sin = sum_sin + sin(self % turbines(i) % wt % WindDir * PI / 180_WP)
+        sum_cos = sum_cos + cos(self % turbines(i) % wt % WindDir * PI / 180.0_WP)
+        sum_sin = sum_sin + sin(self % turbines(i) % wt % WindDir * PI / 180.0_WP)
     end do
 
     sources % geometry % center = sources % geometry % center / real(self % Nturbines, WP)
@@ -291,7 +290,7 @@ SUBROUTINE save_params_WindFarm(self, save_path)
         CALL self % turbines(i) % wt % save_specific_params(save_path, istr = trim(istr))
     end do
 
-END SUBROUTINE save_params_WIndFarm
+END SUBROUTINE save_params_WindFarm
 
 
 SUBROUTINE write_txt_WindFarm(self, unit)
@@ -353,7 +352,7 @@ SUBROUTINE build_default_name(self, name_tag, name_suffix)
 
 
     ! --- 1. Head: user label, or number of turbines of each type --- !
-    if (trim(self % farm_name) /= 'None') then
+    if (to_upper(trim(self % farm_name)) /= 'NONE') then
         name_tag = 'Farm_' // trim(self % farm_name)
     else
         name_tag = 'Farm'

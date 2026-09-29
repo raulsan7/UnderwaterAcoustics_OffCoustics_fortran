@@ -168,10 +168,9 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
     COMPLEX(WP)         , INTENT(OUT), ALLOCATABLE :: total_pressure(:,:)    ! [Pa] Pressure (Nfreqs, Nobs)
 
     ! Local variables
-    INTEGER(I32)                     :: nobs, nf, bs, n_chunks, ichunk
-    INTEGER(I32)                     :: istart, iend, nb, i
-    REAL(WP)           , ALLOCATABLE :: Freqs(:)
-    COMPLEX(WP)        , ALLOCATABLE :: p_block(:,:)
+    INTEGER(I32)              :: nobs, nf, bs, n_chunks, ichunk
+    INTEGER(I32)              :: istart, iend, nb, i
+    COMPLEX(WP) , ALLOCATABLE :: p_block(:,:)
 
 
     ! Defaults
@@ -193,8 +192,7 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
         error stop "compute_pressure_ImageMethod: no sources defined"
     end if
 
-    Freqs = self % sources % Freqs
-    nf    = size(Freqs)
+    nf    = size(self % sources % Freqs)
 
     ALLOCATE(total_pressure(nf, nobs))
     total_pressure = (0.0_WP, 0.0_WP)
@@ -206,14 +204,14 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
 
         !$OMP PARALLEL DO DEFAULT(SHARED) &
         !$OMP PRIVATE(ichunk, istart, iend, nb, p_block) &
-        !$OMP SHARED(Freqs, n_chunks, nobs, total_pressure, self)
+        !$OMP SHARED(n_chunks, nobs, total_pressure, self)
         do ichunk = 0, n_chunks - 1
             istart = ichunk * bs + 1_I32
             iend   = min(istart + bs - 1_I32, nobs)
             nb     = iend - istart + 1_I32
 
             ! Call kernel for this chunk (p_block will be allocated by the routine)
-            CALL self % dipole_pressure_images(observers(istart:iend, :), Freqs, self % image_system % xyz, &
+            CALL self % dipole_pressure_images(observers(istart:iend, :), self % sources % Freqs, self % image_system % xyz, &
                                                self % image_system % Force, self % image_system % BC_all, p_block)
 
             ! Accumulate results into the global array (non-overlapping slices -> no race)
@@ -227,7 +225,7 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
 
         ! Serial: loop observers (keep 2D slice for compatibility)
         do i = 1, nobs
-            CALL self % dipole_pressure_images(observers(i:i, :), Freqs, self % image_system % xyz, &
+            CALL self % dipole_pressure_images(observers(i:i, :), self % sources % Freqs, self % image_system % xyz, &
                                                self % image_system % Force, self % image_system % BC_all, p_block)
             total_pressure(:, i) = total_pressure(:, i) + p_block(:, 1)
 

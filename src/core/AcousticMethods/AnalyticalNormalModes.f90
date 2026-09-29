@@ -95,7 +95,6 @@ SUBROUTINE init_AnalyticalNormalModes(self, sources, config)
     INTEGER(I32) :: m_prop, near_field_buffer
 
 
-    ! Parent variables
     ! Parent variables (sources are moved, not copied)
     CALL MOVE_ALLOC(sources % xyz  , self % sources % xyz)
     CALL MOVE_ALLOC(sources % Force, self % sources % Force)
@@ -131,7 +130,7 @@ SUBROUTINE init_AnalyticalNormalModes(self, sources, config)
         near_field_buffer  = 5_I32
         self % Nmodes      = max(1_I32, m_prop + near_field_buffer)
         self % auto_Nmodes = .true.
-    else if (self % Nmodes <= 0_I32 .and. self % Nmodes /= DEFAULT_I) then
+    else if (self % Nmodes <= 0_I32) then
         error stop "AnalyticalNormalModes % init(): Nmodes must be > 0 (or -999 for automatic)"
     end if
 
@@ -471,7 +470,7 @@ FUNCTION Psi_kzm(self, z, m, kzm) RESULT(psi)
     ! Evaluates the vertical modal shape Psi_m(z) = sqrt(2*rho/H) * sin(k_zm*(z - Upper_HBC))
     ! at the given depths. The vertical wavenumber is either given directly
     ! (kzm) or computed from the mode index m as k_zm = (2m-1)*pi/(2H). The
-    ! shape satisfies Psi_m(Upper_HBC) = 0 = 0 (pressure-release surface).
+    ! shape satisfies Psi_m(Upper_HBC) = 0 (pressure-release surface).
     ! -------------------------------------------------------------------------
 
     CLASS(AnalyticalNormalModes_t), INTENT(IN)           :: self      ! [-] Solver instance
@@ -498,7 +497,7 @@ END FUNCTION Psi_kzm
 FUNCTION dPsi_kzm_dz(self, z, m, kzm) RESULT(dpsi)
     ! -------------------------------------------------------------------------
     ! Evaluates the vertical derivative of the modal shape,
-    ! dPsi_m/dz = sqrt(2*rho/H) * k_zm * cos(k_zm*z), at the given depths. The
+    ! dPsi_m/dz = sqrt(2*rho/H) * k_zm * cos(k_zm*(z-Upper_HBC)), at the given depths. The
     ! vertical wavenumber is either given directly (kzm) or computed from the
     ! mode index m as k_zm = (2m-1)*pi/(2H). The derivative satisfies
     ! dPsi_m/dz(Lower_HBC=-H) = 0 (rigid seabed).
@@ -557,7 +556,7 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
     ! Local variables
     INTEGER(I32)              :: NFreqs, Nnodes, Nob, Nm
     INTEGER(I32)              :: j, f, k, im
-    REAL(WP)                  :: epsv, rho, A_norm, kappa
+    REAL(WP)                  :: epsv, rho, kappa
     COMPLEX(WP)               :: k_rm, H0, H1, fx, fy, fz, coef_z, coef_xy, F_dot_rhat
     REAL(WP)    , ALLOCATABLE :: dx(:,:), dy(:,:), r(:,:), r_inv(:,:)
     REAL(WP)    , ALLOCATABLE :: k_wave(:), k_zm(:)
@@ -572,7 +571,6 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
 
     epsv   = self % eps
     rho    = self % env % density_base
-    A_norm = sqrt(2.0_WP * rho / self % H)
 
     ALLOCATE(p_out(NFreqs, Nob))
     p_out  = (0.0_WP, 0.0_WP)

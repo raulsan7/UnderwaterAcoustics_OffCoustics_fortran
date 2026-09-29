@@ -391,7 +391,7 @@ TYPE :: Config_t
     ! -------------------------------------------------------------------------
 
     TYPE(Config_WindTurbine_t)              :: turbine          ! [-] Wind turbine configuration
-    TYPE(Config_WindFarm_t)                 :: farm             ! [-] Wind farm configurattion
+    TYPE(Config_WindFarm_t)                 :: farm             ! [-] Wind farm configuration
     TYPE(Config_Environment_t)              :: env              ! [-] Environment/fluid configuration
     TYPE(Config_Solver_t)                   :: solver           ! [-] Acoustic solver configuration
     TYPE(Config_Computation_t)              :: run_inputs       ! [-] Per-run_* post-processing step configuration
