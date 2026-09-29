@@ -606,8 +606,7 @@ SUBROUTINE run_polar(self)
         if (pp % r_polar == DEFAULT_R) pp % r_polar = 500.0_WP
         if (pp % z_polar == DEFAULT_R) pp % z_polar = -Depth / 2.0_WP
         if (pp % n_polar == DEFAULT_I) pp % n_polar = 72_I32
-        if (all(pp % center_polar == DEFAULT_R)) &    ! Not a logical .and.
-            pp % center_polar = self % sources % geometry % center
+        if (all(pp % center_polar == DEFAULT_R)) pp % center_polar = self % sources % geometry % center
 
         r       = pp % r_polar
         z       = pp % z_polar
