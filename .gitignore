@@ -8,7 +8,7 @@
 /turbine_acoustic_data
 /farm_acoustic_data
 *.hdf5
-SAITEC*
+/SAITEC*
 /figures
 __pycache__/
 

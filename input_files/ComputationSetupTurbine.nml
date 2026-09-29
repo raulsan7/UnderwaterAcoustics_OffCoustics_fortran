@@ -26,16 +26,16 @@
 ! Which post-processing steps to run
 ! ---------------------------------------------------------------
 &do_config
-    do_all       = .true.       ! [-] Run all cases listed bellow
-    do_spectrums = .true.       ! [-] Spectrums at observer points (run_spectrums)
-    do_polar     = .false.       ! [-] Polar contour (run_polar)
-    do_cylinder  = .false.       ! [-] Cylinder surface (run_cylinder)
-    do_decay     = .false.       ! [-] Distance decay along wind direction (run_decay)
-    do_line      = .false.       ! [-] Line between two points (run_line)
-    do_sliceXY   = .false.       ! [-] Horizontal slice XY (run_sliceXY)
-    do_sliceXZ   = .false.       ! [-] Vertical slice XZ (run_sliceXZ)
-    do_sliceVertical = .false.   ! [-] Vertical slice at any azimuth (run_sliceVertical)
-    do_sphere    = .false.       ! [-] Spherical radiation, free-field (run_sphere)
+    do_all           = .true.       ! [-] Run all cases listed bellow
+    do_spectrums     = .false.      ! [-] Spectrums at observer points (run_spectrums)
+    do_polar         = .false.      ! [-] Polar contour (run_polar)
+    do_cylinder      = .false.      ! [-] Cylinder surface (run_cylinder)
+    do_decay         = .false.      ! [-] Distance decay along wind direction (run_decay)
+    do_line          = .false.      ! [-] Line between two points (run_line)
+    do_sliceXY       = .false.      ! [-] Horizontal slice XY (run_sliceXY)
+    do_sliceXZ       = .false.      ! [-] Vertical slice XZ (run_sliceXZ)
+    do_sliceVertical = .false.      ! [-] Vertical slice at any azimuth (run_sliceVertical)
+    do_sphere        = .false.      ! [-] Spherical radiation, free-field (run_sphere)
 /
 
 
@@ -44,9 +44,9 @@
 ! ---------------------------------------------------------------
 &spectrums_config
     n_observers = -999                  ! [-] Number of observers that are going to be listed below
-    observers_x = 80.0    ! [m] x-coordinate of the observers
-    observers_y = 0.0         ! [m] y-coordinate of the observers
-    observers_z = -80.0   ! [m] z-coordinate of the observers
+    observers_x = 10.0, 250.0, 500.0    ! [m] x-coordinate of the observers
+    observers_y = 0.0, 0.0, 0.0         ! [m] y-coordinate of the observers
+    observers_z = -15.0, -15.0, -15.0   ! [m] z-coordinate of the observers
 /
 
 
@@ -55,7 +55,7 @@
 ! ---------------------------------------------------------------
 &polar_config
     r_polar = 500.0                 ! [m] Radius of the polar circle around the turbine
-    z_polar = -999.0                ! [m] Depth of the polar circle (-999.0 = auto: -Depth/2)
+    z_polar = -15.0.0               ! [m] Depth of the polar circle (-999.0 = auto: -Depth/2)
     n_polar = 72                    ! [-] Number of azimuthal observer points around the circle
     center_polar = -999.0, -999.0   ! [m] Circle centre (x, y); -999.0, -999.0 = auto: turbine baricenter
 /
@@ -78,7 +78,7 @@
 &decay_config
     distance_decay = 10.0, 500.0    ! [m] Start and end distance from the turbine along the wind direction
     n_decay = 200                   ! [-] Number of observer points along the decay line
-    z_decay = -999.0                ! [m] Depth of the decay line (-999.0 = auto: -Depth/2)
+    z_decay = -15.0                 ! [m] Depth of the decay line (-999.0 = auto: -Depth/2)
     logspace_decay = .true.         ! [-] Whether to space the observer points logarithmically instead of linearly
 /
 
@@ -100,7 +100,7 @@
 ! Horizontal slice XY (run_sliceXY)
 ! ---------------------------------------------------------------
 &sliceXY_config
-    z_xy = -999.0                   ! [m] Depth of the horizontal slice (-999.0 = auto: -Depth/2)
+    z_xy = -15.0                   ! [m] Depth of the horizontal slice (-999.0 = auto: -Depth/2)
     nx_xy = 26                      ! [-] Number of observer points along x
     ny_xy = 26                      ! [-] Number of observer points along y
     xlim_xy = -500.0, 500.0         ! [m] Slice extent along x (min, max)
@@ -129,7 +129,7 @@
 ! that azimuth and the depth. azimuth_sv = -90.0 gives the XZ plane
 ! with the span axis along +x.
 &sliceVertical_config
-    azimuth_sv = 0.0                ! [deg] Azimuth of the plane normal (0 deg: normal to +x, anticlockwise)
+    azimuth_sv = 90.0                ! [deg] Azimuth of the plane normal (0 deg: normal to +x, anticlockwise)
     center_sv = -999.0, -999.0      ! [m] Plane centre (x, y); -999.0 = auto: turbine axis position
     width_sv = -999.0               ! [m] Full horizontal span; -999.0 = auto: every source projected + margin_sv
     zlim_sv = -999.0, 0.0           ! [m] Depth extent (min, max); -999.0 = auto: -Depth (min) or 0 (max)
