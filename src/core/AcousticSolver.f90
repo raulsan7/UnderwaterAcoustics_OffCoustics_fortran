@@ -54,6 +54,7 @@ TYPE, ABSTRACT :: AcousticSolver_t
     LOGICAL                    :: in_cluster              ! [-] Whether the solver runs on a cluster
     CHARACTER(len=50)          :: solver_name = 'None'    ! [-] Solver name
     CHARACTER(len=512)         :: save_path   = 'None'    ! [-] Path to save acoustics
+    CHARACTER(len=100)         :: extra_label = 'None'    ! [-] Label appended to the file name ('None' or '': none)
 
     CONTAINS
 
@@ -317,28 +318,37 @@ SUBROUTINE resolve_save_path(self, method_tag)
     ! solver's method tag: out_dir // name_tag // method_tag // name_suffix,
     ! e.g. ./turbine_acoustic_data/plot_mn_ANM24_ws11.4.hdf5 or
     ! ./farm_acoustic_data/Farm_2_DTU10MN_ANM24_ws8.0-11.4.hdf5. Otherwise the
-    ! .hdf5 extension is appended to the given path. The destination folder
-    ! is created if needed and a previous file with the same name is deleted,
-    ! since save_variable only overwrites the datasets it writes and datasets
-    ! of an older run would otherwise survive in the new file.
+    ! .hdf5 extension is appended to the given path. In both cases, a set
+    ! extra_label (neither 'None' nor empty) is appended before the extension
+    ! as "_" // extra_label. The destination folder is created if needed and a
+    ! previous file with the same name is deleted, since save_variable only
+    ! overwrites the datasets it writes and datasets of an older run would
+    ! otherwise survive in the new file.
     ! -------------------------------------------------------------------------
 
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self          ! [-] Solver instance
     CHARACTER(len=*)       , INTENT(IN)    :: method_tag    ! [-] Method and resolution tag, e.g. "_ANM24"
 
     ! Local variables
-    CHARACTER(len=512) :: path_upper
-    INTEGER(I32)       :: u, ierr
+    CHARACTER(len=512)            :: path_upper
+    CHARACTER(len=:), ALLOCATABLE :: label_str
+    INTEGER(I32)                  :: u, ierr
 
+
+    ! Optional user label: 'None' (any case) or an empty string adds nothing
+    label_str = ''
+    if (len_trim(self % extra_label) > 0 .and. to_upper(trim(self % extra_label)) /= 'NONE') &
+        label_str = '_' // trim(self % extra_label)
 
     path_upper = to_upper(trim(self % save_path))
 
     if (trim(path_upper) == 'NONE' .or. trim(path_upper) == 'DEFAULT') then
         associate(g => self % sources % geometry)
-            self % save_path = trim(g % out_dir) // trim(g % name_tag) // method_tag // trim(g % name_suffix) // ".hdf5"
+            self % save_path = trim(g % out_dir) // trim(g % name_tag) // method_tag // trim(g % name_suffix) // &
+                               label_str // ".hdf5"
         end associate
     else
-        self % save_path = trim(self % save_path) // ".hdf5"
+        self % save_path = trim(self % save_path) // label_str // ".hdf5"
     end if
 
     ! Make sure the destination folder exists before anything tries to write into it
@@ -890,7 +900,7 @@ SUBROUTINE run_line(self)
 
     ALLOCATE(observers(n_points, 3))
     ALLOCATE(distances(n_points))
-    dir_vec = (p2 - p1) / dist_total
+    dir_vec = (p2 - p1) / dist_total    ! Unit vector from p1 to p2: observer i sits d_val metres from p1
 
     if (logspace) then
         d_log1 = log10(dist_total * 1.0e-6_WP)
@@ -899,14 +909,14 @@ SUBROUTINE run_line(self)
         do i = 1, n_points
             d_val           = 10.0_WP**(d_log1 + real(i - 1_I32, WP) * d_step)
             distances(i)    = d_val
-            observers(i, :) = p1 + (d_val / dist_total) * dir_vec
+            observers(i, :) = p1 + d_val * dir_vec
         end do
     else
         linear_step = dist_total / real(n_points - 1_I32, WP)
         do i = 1, n_points
             d_val           = real(i - 1_I32, WP) * linear_step
             distances(i)    = d_val
-            observers(i, :) = p1 + (d_val / dist_total) * dir_vec
+            observers(i, :) = p1 + d_val * dir_vec
         end do
     end if
 

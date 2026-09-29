@@ -98,6 +98,7 @@ TYPE :: Config_Solver_t
     LOGICAL            :: debug             ! [-] More info for debugging
     LOGICAL            :: in_cluster        ! [-] Whether we are working on a cluster
     CHARACTER(len=200) :: save_path         ! [-] Where to save results
+    CHARACTER(len=100) :: extra_label       ! [-] Label appended to the output file name ('None' or '': none)
     CHARACTER(len=50)  :: method            ! [-] Acoustic method to use
     CHARACTER(len=20)  :: simulation_type   ! [-] turbine (Turbine.nml) or farm (WindFarm.nml)
     INTEGER(I32)       :: block_size        ! [-] Block size for each CPU in parallel computations

@@ -102,6 +102,7 @@ SUBROUTINE init_ImageMethod(self, sources, config)
     self % env                = config % env
     self % run_inputs         = config % run_inputs
     self % save_path          = config % solver % save_path
+    self % extra_label        = config % solver % extra_label
     self % block_size         = config % solver % block_size
     self % debug              = config % solver % debug
     self % in_cluster         = config % solver % in_cluster

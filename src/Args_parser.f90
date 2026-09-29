@@ -396,9 +396,10 @@ END SUBROUTINE read_farm_config
 
 SUBROUTINE read_solver_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads the "solver_config" namelist from Solver.nml (which acoustic
-    ! solver method to use, output save path, block size, cluster/debug
-    ! flags) and packs the values into config % solver.
+    ! Reads the "solver_config" namelist from Solver.nml (simulation type,
+    ! which acoustic solver method to use, output save path and its optional
+    ! extra label, block size, cluster/debug flags) and packs the values into
+    ! config % solver.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to Solver.nml
@@ -412,6 +413,7 @@ SUBROUTINE read_solver_config(path, config)
     CHARACTER(len=200) :: simulation_type
     CHARACTER(len=200) :: method
     CHARACTER(len=200) :: save_path
+    CHARACTER(len=100) :: extra_label
     INTEGER(I32)       :: block_size
     LOGICAL            :: in_cluster
     LOGICAL            :: debug
@@ -421,6 +423,7 @@ SUBROUTINE read_solver_config(path, config)
         simulation_type,        &
         method,                 &
         save_path,              &
+        extra_label,            &
         block_size,             &
         in_cluster,             &
         debug
@@ -430,6 +433,7 @@ SUBROUTINE read_solver_config(path, config)
     simulation_type = "turbine"
     method          = "ImageMethod"
     save_path       = "None"
+    extra_label     = "None"
     block_size      = 128_I32
     in_cluster      = .true.
     debug           = .false.
@@ -455,6 +459,7 @@ SUBROUTINE read_solver_config(path, config)
     config % solver % simulation_type = simulation_type
     config % solver % method          = method
     config % solver % save_path       = save_path
+    config % solver % extra_label     = extra_label
     config % solver % block_size      = block_size
     config % solver % in_cluster      = in_cluster
     config % solver % debug           = debug
