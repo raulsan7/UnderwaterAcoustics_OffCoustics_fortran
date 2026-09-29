@@ -9,6 +9,8 @@
 /farm_acoustic_data
 *.hdf5
 SAITEC*
+/figures
+__pycache__/
 
 # 2. Permite explorar dentro de las carpetas (necesario para que
 #    Git entre en subdirectorios y aplique las reglas siguientes)
