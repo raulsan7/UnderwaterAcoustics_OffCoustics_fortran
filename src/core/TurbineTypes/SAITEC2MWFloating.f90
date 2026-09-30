@@ -80,14 +80,16 @@ SUBROUTINE init_SAITEC2MWFloating(self, config)
     ! Platform-specific constructor: resolves the (hardcoded) paths to the
     ! SAITEC 2 MW rpm-vs-wind-speed curve and drivetrain bar-chart amplitude
     ! data, flags this turbine as non-monopile, then delegates to the shared
-    ! base-class init for the common parameters.
+    ! base-class init for the common parameters and checks that the hardcoded
+    ! member IDs exist in the structural model.
     ! -------------------------------------------------------------------------
 
     CLASS(SAITEC2MWFloating_t), INTENT(INOUT) :: self      ! [-] Turbine instance
     TYPE(Config_WindTurbine_t), INTENT(IN)    :: config    ! [-] Turbine configuration
 
     ! Local variables
-    LOGICAL :: exists
+    LOGICAL      :: exists
+    INTEGER(I32) :: n_req
 
 
     ! Define paths to rpm curve and drivetrain bar-chart data (hardcoded)
@@ -103,10 +105,18 @@ SUBROUTINE init_SAITEC2MWFloating(self, config)
     inquire(file=self % path_barGB, exist=exists)
     if (.not. exists) error stop "SAITEC2MWFloating % init: Bar_GB123 data file not found: " // self % path_barGB
 
-    ! Set the case type
-    self % is_monopile   = .false.
+    ! Flag the turbine as floating
+    self % is_monopile = .false.
 
     CALL init(self, config)
+
+    ! The 0-based float_members/joint_members IDs must exist in the structural model
+    n_req = max(maxval(self % float_members), maxval(self % joint_members)) + 1_I32
+    if (n_req > self % Nmembers) then
+        write(*, '(A,I0,A,I0)') ' ERROR SAITEC2MWFloating % init: Nmembers = ', self % Nmembers, &
+                                ' but float_members/joint_members need Nmembers >= ', n_req
+        error stop
+    end if
 
     write(*,*) "SAITEC2MWFloating % init(): CHECK IF BARIPOS IS WELL COMPUTED, SHOULD BE (-8.9586, 0)"
 
@@ -129,9 +139,11 @@ SUBROUTINE read_input_SAITEC2MWFloating(self, config, verbose)
     ! the compact data back onto the full (Nmembers, Nnodes, 3) layout used by
     ! compute_mass/compute_force (joint members are left at exactly zero
     ! acceleration, which is harmless since they are excluded entirely by
-    ! compute_force's keep mask). It also guards the automatic barycenter
-    ! computation against the NaN padding that the rigid-link members (with
-    ! fewer than Nnodes real nodes) introduce into self % xyz_all.
+    ! compute_force's keep mask). Like the base implementation, it sets the
+    ! FFT bin width df and computes the automatic barycenter in the global
+    ! frame (after the rotation and translation), guarding it against the NaN
+    ! padding that the rigid-link members (with fewer than Nnodes real nodes)
+    ! introduce into self % xyz_all.
     ! -------------------------------------------------------------------------
 
     USE IOUtils, ONLY: get_SDsum_variables, read_input_SD
@@ -184,13 +196,22 @@ SUBROUTINE read_input_SAITEC2MWFloating(self, config, verbose)
     end do
     DEALLOCATE(acc_compact)
 
-    ! Compute barycenter if not provided. A plain node-count average (as the
-    ! base class would do) is wrong here: node spacing along each floater is
-    ! highly non-uniform (long vs. short segment) and the rigid-link members
-    ! contribute duplicated/NaN-padded nodes clustered at the central pivot.
-    ! Instead, use the actual structural (dry) mass distribution as weights,
-    ! which correctly reduces to the true mass centroid of the wetted
-    ! floaters and is exactly zero (by construction) at the excluded joints.
+    ! FFT bin width of the time series, defines the shared frequency grid of a wind farm
+    self % df = 1.0_WP / (real(size(self % Time), WP) * (self % Time(2) - self % Time(1)))
+
+    ! Align with wind direction and translate to axis position
+    CALL self % translate_align_with_WindDir()
+
+    ! Compute barycenter if not provided, in the global frame. A plain
+    ! node-count average (as the base class would do) is wrong here: node
+    ! spacing along each floater is highly non-uniform (long vs. short
+    ! segment) and the rigid-link members contribute duplicated/NaN-padded
+    ! nodes clustered at the central pivot. Instead, use the actual structural
+    ! (dry) mass distribution as weights, which correctly reduces to the true
+    ! mass centroid of the wetted floaters and is exactly zero (by
+    ! construction) at the excluded joints. The masses only depend on arc
+    ! lengths and on the draft, so they are not changed by the rotation and
+    ! translation applied above.
     if (all(self % BariPos == [0.0_WP, 0.0_WP])) then
         block
             REAL(WP)    , ALLOCATABLE :: mass(:), added_mass(:), x_flat(:), y_flat(:)
@@ -228,11 +249,6 @@ SUBROUTINE read_input_SAITEC2MWFloating(self, config, verbose)
             DEALLOCATE(mass, added_mass, x_flat, y_flat)
         end block
     end if
-
-    ! Align with wind direction and translate to axis position
-    CALL self % translate_align_with_WindDir()
-    config % BariPos = self % BariPos
-    config % AxisPos = self % AxisPos
 
     if (verbose) then
         dt = self % Time(2) - self % Time(1)
@@ -298,7 +314,7 @@ SUBROUTINE compute_force_SAITEC2MWFloating(self, config, verbose)
 
     ! Acceleration flatten
     ALLOCATE(acc_flat(nt, Nm*Nn, 3))
-    !$OMP PARALLEL DO COLLAPSE(2) PRIVATE(i)
+    !$OMP PARALLEL DO COLLAPSE(2) PRIVATE(i, global_idx)
     do j = 1, Nm
         do k = 1, Nn
             global_idx = (j - 1_I32) * Nn + k
@@ -337,7 +353,7 @@ SUBROUTINE compute_force_SAITEC2MWFloating(self, config, verbose)
 
     ! Convert the 1D arrays into a 2D matrix (Nm, Nn) matching C-order layout
     ALLOCATE(mass_eff(Nm, Nn))
-    !$OMP PARALLEL DO COLLAPSE(2) PRIVATE(i, j)
+    !$OMP PARALLEL DO COLLAPSE(2) PRIVATE(i, j, global_idx)
     do i = 1, Nm
         do j = 1, Nn
             global_idx     = (i - 1_I32) * Nn + j
@@ -640,7 +656,7 @@ END FUNCTION filter_frequencies_SAITEC2MWFloating
 SUBROUTINE save_specific_params_SAITEC2MWFloating(self, save_path, istr)
     ! -------------------------------------------------------------------------
     ! Persists the platform-specific geometry and material parameters
-    ! (elliptical diameters, wall thickness, densities, wetted area, member ID
+    ! (elliptical diameters, wall thickness, material density, wetted area, member ID
     ! maps) to the solver's HDF5 output, optionally suffixing each variable
     ! name with an instance tag (istr) when several turbines are saved.
     ! -------------------------------------------------------------------------
@@ -1041,8 +1057,11 @@ SUBROUTINE read_bar_csv(filename, ncols, data)
     ! Reads a comma-separated bar-chart amplitude file (one header line
     ! followed by ncols numeric columns, "Nan" marking a missing entry) into a
     ! (nrows, ncols) array, preserving IEEE NaN for missing entries so callers
-    ! can strip them with ieee_is_nan.
+    ! can strip them with ieee_is_nan. Blank lines are skipped in both passes,
+    ! and a data row that cannot be read stops the program.
     ! -------------------------------------------------------------------------
+
+    USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_value, IEEE_QUIET_NAN
 
     CHARACTER(len=*), INTENT(IN)               :: filename     ! [-] Path to the bar-chart CSV file
     INTEGER(I32)    , INTENT(IN)               :: ncols        ! [-] Number of numeric columns to read
@@ -1067,13 +1086,19 @@ SUBROUTINE read_bar_csv(filename, ncols, data)
     end do
 
     ALLOCATE(data(nrows, ncols))
+    data = ieee_value(1.0_WP, IEEE_QUIET_NAN)
 
     rewind(fu)
     read(fu, '(A)') line    ! Skip header again
 
-    do i = 1, nrows
+    i = 0_I32
+    do while (i < nrows)
         read(fu, '(A)', iostat=ios) line
-        read(line, *) data(i, 1:ncols)
+        if (ios /= 0_I32) exit
+        if (len_trim(line) == 0) cycle
+        i = i + 1_I32
+        read(line, *, iostat=ios) data(i, 1:ncols)
+        if (ios /= 0_I32) error stop "read_bar_csv: could not read a data row of " // trim(filename)
     end do
 
     close(fu)

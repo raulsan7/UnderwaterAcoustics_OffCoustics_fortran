@@ -317,13 +317,14 @@ SUBROUTINE compute_force_DTU10MWFloating(self, config, verbose)
 
     ! --- Verbose summary ---
     if (verbose_) then
-        F_memory_mb = real(storage_size(self % Force) * size(self % Force) / 8, WP) / 1024.0_WP / 1024.0_WP
+        F_memory_mb = real(storage_size(self % Force), WP) * real(size(self % Force, kind=I64), WP) &
+                      / 8.0_WP / 1024.0_WP / 1024.0_WP
         write(*, '(A)') repeat('=', 70)
         write(*, '(A)') 'FORCE COMPUTATION COMPLETED (FLOATING PLATFORM)'
         write(*, '(A)') repeat('-', 68)
         write(*, '(A, I6)') 'Nodes (wet): ', Nnodes_wet
         write(*, '(A, I6)') 'Frequencies: ', nf
-        write(*, '(A, F6.2, A)') 'Memory (F):  ', F_memory_mb, ' MB'
+        write(*, '(A, F10.2, A)') 'Memory (F):  ', F_memory_mb, ' MB'
         write(*, '(A)') repeat('=', 70)
     end if
 

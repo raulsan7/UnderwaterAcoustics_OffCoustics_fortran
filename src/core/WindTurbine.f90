@@ -289,9 +289,9 @@ SUBROUTINE read_input(self, config, verbose)
         write(*, '(A)') 'TURBINE: ' // trim(self % rootname)
         write(*, '(A)') repeat('-', 68)
         write(*, '(A, A)') 'Type: ', trim(self % case_type)
-        write(*, '(A, F5.1, A, F5.1, A)') 'Wind Speed: ', self % WindSpeed, ' m/s   | Wind Direction: ', &
+        write(*, '(A, F5.1, A, F6.1, A)') 'Wind Speed: ', self % WindSpeed, ' m/s   | Wind Direction: ', &
                                           self % WindDir, ' deg'
-        write(*, '(A, F5.1, A, F4.1, A, F4.1, A)') 'Water Depth: ', self % Depth, &
+        write(*, '(A, F5.1, A, F8.1, A, F8.1, A)') 'Water Depth: ', self % Depth, &
                                                    ' m   | Position: (', self % AxisPos(1), ', ', &
                                                    self % AxisPos(2), ') m'
         write(*, '(A, I6, A, F6.4, A)') 'Time Series: ', size(self % Time), ' samples @ ', dt, ' s/sample'
