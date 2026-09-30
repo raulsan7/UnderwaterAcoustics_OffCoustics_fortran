@@ -43,10 +43,10 @@
 ! Spectrums at observer points (run_spectrums)
 ! ---------------------------------------------------------------
 &spectrums_config
-    n_observers = -999                  ! [-] Number of observers that are going to be listed below
-    observers_x = 10.0, 250.0, 500.0    ! [m] x-coordinate of the observers
-    observers_y = 0.0, 0.0, 0.0         ! [m] y-coordinate of the observers
-    observers_z = -15.0, -15.0, -15.0   ! [m] z-coordinate of the observers
+    n_observers = 4                             ! [-] Number of observers that are going to be listed below
+    observers_x =  80.0,  00.0, -80.0,  00.0    ! [m] x-coordinate of the observers
+    observers_y =  00.0,  80.0,  00.0, -80.0    ! [m] y-coordinate of the observers
+    observers_z = -80.0, -80.0, -80.0, -80.0    ! [m] z-coordinate of the observers
 /
 
 
@@ -54,10 +54,10 @@
 ! Polar contour (run_polar)
 ! ---------------------------------------------------------------
 &polar_config
-    r_polar = 500.0                 ! [m] Radius of the polar circle around the turbine
-    z_polar = -15.0               ! [m] Depth of the polar circle (-999.0 = auto: -Depth/2)
+    r_polar = 80.0                 ! [m] Radius of the polar circle around the turbine
+    z_polar = -80.0               ! [m] Depth of the polar circle (-999.0 = auto: -Depth/2)
     n_polar = 72                    ! [-] Number of azimuthal observer points around the circle
-    center_polar = -999.0, -999.0   ! [m] Circle centre (x, y); -999.0, -999.0 = auto: turbine baricenter
+    center_polar = 0.0, 0.0   ! [m] Circle centre (x, y); -999.0, -999.0 = auto: turbine baricenter
 /
 
 
@@ -65,10 +65,10 @@
 ! Cylinder surface (run_cylinder)
 ! ---------------------------------------------------------------
 &cylinder_config
-    r_cyl = 500.0                   ! [m] Radius of the cylindrical surface around the turbine
+    r_cyl = 80.0                   ! [m] Radius of the cylindrical surface around the turbine
     n_cyl = 72                      ! [-] Number of azimuthal observer points around the cylinder
     nz_cyl = 20                     ! [-] Number of vertical observer levels along the cylinder
-    center_cyl = -999.0, -999.0     ! [m] Cylinder axis centre (x, y); -999.0, -999.0 = auto: turbine baricenter
+    center_cyl = 0.0, 0.0     ! [m] Cylinder axis centre (x, y); -999.0, -999.0 = auto: turbine baricenter
 /
 
 
@@ -89,8 +89,8 @@
 ! n_line = -999 requests the automatic point count (distance/5 if the
 ! line is longer than 200 m, otherwise one point per metre).
 &line_config
-    p1_line = 100.0, 0.0, 0.0       ! [m] Line start point (x, y, z)
-    p2_line = 100.0, 0.0, -999.0    ! [m] Line end point (x, y, z); z = -999.0 = auto: -Depth
+    p1_line = 80.0, 0.0, 0.0       ! [m] Line start point (x, y, z)
+    p2_line = 80.0, 0.0, -999.0    ! [m] Line end point (x, y, z); z = -999.0 = auto: -Depth
     n_line = -999                   ! [-] Number of observer points along the line (-999 = automatic)
     logspace_line = .false.         ! [-] Whether to space the observer points logarithmically instead of linearly
 /
