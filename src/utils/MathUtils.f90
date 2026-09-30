@@ -229,7 +229,12 @@ SUBROUTINE compute_rfft(array, nt, dt, skipf, remove_zero, array_out, freqs)
     ! Computes the Real Fast Fourier Transform (RFFT) of a 3D time-series array
     ! via FFTW. Optimized for HPC: eliminates all intermediate arrays, fuses
     ! the mean-removal and windowing passes, and performs direct-to-final-size
-    ! allocation to avoid memory thrashing.
+    ! allocation to avoid memory thrashing. The FFTW forward transform uses
+    ! exp(-i*w*t) (time factor exp(+i*w*t)), while the acoustic kernels of the
+    ! solvers (exp(+i*k*r), Hankel functions of the first kind) assume the
+    ! time factor exp(-i*w*t). The spectrum is therefore returned conjugated,
+    ! X(f) = sum x(t) exp(+i*w*t), so that every propagated wave is outgoing
+    ! (causal) and the relative phases between sources are kept.
     ! -------------------------------------------------------------------------
 
     REAL(WP)    , INTENT(IN)               :: array(:,:,:)        ! [-] Time series (nt, N2, N3)
@@ -342,7 +347,7 @@ SUBROUTINE compute_rfft(array, nt, dt, skipf, remove_zero, array_out, freqs)
         pos        = pos + 1_I32
     end do
 
-    ! Scale and map directly to 3D array_out
+    ! Scale, conjugate to the exp(-i*w*t) convention and map directly to 3D array_out
     scale_fact = 2.0_WP / (real(nt, WP) * win_norm)
 
     !$OMP PARALLEL DO PRIVATE(idx, j, k, pos, i)
@@ -353,7 +358,7 @@ SUBROUTINE compute_rfft(array, nt, dt, skipf, remove_zero, array_out, freqs)
         pos = 1_I32
         ! Inner loop over frequencies guarantees contiguous writes to array_out
         do i = start_idx, nfreq_raw, skipf_
-            array_out(pos, j, k) = out_flat(i, idx) * scale_fact
+            array_out(pos, j, k) = conjg(out_flat(i, idx)) * scale_fact
             pos                  = pos + 1_I32
         end do
     end do
