@@ -559,8 +559,12 @@ SUBROUTINE dipole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_all
     ! (floored at eps to avoid the 1/r singularity), then the far/near-field
     ! dipole pressure term F.r_hat * (1/r - i*k) * exp(i*k*r) / (4*pi*r),
     ! weighted by the source's boundary-condition sign (BC_all), and
-    ! accumulates it into p_out. Distances are precomputed once per source
-    ! and reused across all frequencies.
+    ! accumulates it into p_out. The frequency loop is the innermost one:
+    ! p_out(:, k), Force(:, j, :) and the wavenumbers are accessed with unit
+    ! stride, the frequency-independent factors of each pair are computed
+    ! once, and exp(i*k*r) is evaluated as cmplx(cos(k*r), sin(k*r)), so the
+    ! loop is vectorized with SIMD sin/cos. The sources are accumulated in the
+    ! same order as before (j ascending).
     ! -------------------------------------------------------------------------
 
     CLASS(ImageMethod_t), INTENT(IN)               :: self              ! [-] Solver instance
@@ -574,10 +578,9 @@ SUBROUTINE dipole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_all
     ! Local variables
     INTEGER(I32)              :: NFreqs, Ntotal, Nob
     INTEGER(I32)              :: j, f, k
-    REAL(WP)    , ALLOCATABLE :: dx(:), dy(:), dz(:), r(:), r_inv(:), k_wave(:), BC_real(:)
-    REAL(WP)                  :: sx, sy, sz, epsv
-    COMPLEX(WP)               :: F_dot_r, term1, green, fx, fy, fz
-    REAL(WP)                  :: fourpi
+    REAL(WP)    , ALLOCATABLE :: k_wave(:)
+    REAL(WP)                  :: dx, dy, dz, r, r_inv, scal, kr, epsv
+    COMPLEX(WP)               :: F_dot_r
 
 
     ! Dimensions
@@ -586,48 +589,32 @@ SUBROUTINE dipole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_all
     Nob    = size(obs_pos, 1)
 
     epsv   = self % eps
-    fourpi = 4.0_WP * PI
 
     ALLOCATE(p_out(NFreqs, Nob))
-    p_out   = (0.0_WP, 0.0_WP)
-    k_wave  = 2.0_WP * PI * Freqs / self % env % speed_sound_base
-    BC_real = real(BC_all, WP)
-
-    ! Temporary arrays to avoid recomputing distances for each frequency
-    ALLOCATE(dx(Nob), dy(Nob), dz(Nob), r(Nob), r_inv(Nob))
+    p_out  = (0.0_WP, 0.0_WP)
+    k_wave = 2.0_WP * PI * Freqs / self % env % speed_sound_base
 
     do j = 1, Ntotal
-        sx = nodes_pos(j, 1)
-        sy = nodes_pos(j, 2)
-        sz = nodes_pos(j, 3)
-
-        ! Compute relative vectors and distances for this source to all observers (vectorizable)
-        !$OMP SIMD
         do k = 1, Nob
-            dx(k) = obs_pos(k, 1) - sx
-            dy(k) = obs_pos(k, 2) - sy
-            dz(k) = obs_pos(k, 3) - sz
-            r(k)  = sqrt(dx(k) * dx(k) + dy(k) * dy(k) + dz(k) * dz(k))
-            if (r(k) < epsv) r(k) = epsv
-            r_inv(k) = 1.0_WP / r(k)
-        end do
+            ! Separation, distance (floored at eps) and frequency-independent factors of this pair
+            dx = obs_pos(k, 1) - nodes_pos(j, 1)
+            dy = obs_pos(k, 2) - nodes_pos(j, 2)
+            dz = obs_pos(k, 3) - nodes_pos(j, 3)
+            r  = sqrt(dx * dx + dy * dy + dz * dz)
+            if (r < epsv) r = epsv
+            r_inv = 1.0_WP / r
+            scal  = real(BC_all(j), WP) * r_inv * r_inv / (4.0_WP * PI)
 
-        ! Loop over frequencies and accumulate contributions (inner loop vectorized over observers)
-        do f = 1, NFreqs
-            fx = Force(f, j, 1)
-            fy = Force(f, j, 2)
-            fz = Force(f, j, 3)
-            !$OMP SIMD
-            do k = 1, Nob
-                F_dot_r     = (fx * dx(k) + fy * dy(k) + fz * dz(k)) * r_inv(k)
-                term1       = -I1 * k_wave(f) + r_inv(k)
-                green       = exp(I1 * k_wave(f) * r(k)) / (fourpi * r(k))
-                p_out(f, k) = p_out(f, k) + F_dot_r * term1 * green * BC_real(j)
+            ! Frequencies innermost: unit stride, vectorized (SIMD sin/cos)
+            !$OMP SIMD PRIVATE(F_dot_r, kr)
+            do f = 1, NFreqs
+                kr          = k_wave(f) * r
+                F_dot_r     = Force(f, j, 1) * dx + Force(f, j, 2) * dy + Force(f, j, 3) * dz
+                p_out(f, k) = p_out(f, k) + F_dot_r * cmplx(r_inv, -k_wave(f), kind=WP) * &
+                              cmplx(cos(kr), sin(kr), kind=WP) * scal
             end do
         end do
     end do
-
-    DEALLOCATE(dx, dy, dz, r, r_inv)
 
 END SUBROUTINE dipole_pressure_images
 
