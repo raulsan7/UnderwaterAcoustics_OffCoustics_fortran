@@ -444,12 +444,15 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
     ! reflection across the upper and lower horizontal planes, N_images times
     ! in each direction. Starting from the real source, the upper chain
     ! alternately reflects across the lower then upper plane (and vice versa
-    ! for the lower chain), each bounce flipping the sign of the vertical
-    ! force component, scaling the force by the corresponding reflection
-    ! coefficient (up_R/lw_R) and tagging the image with the boundary
-    ! condition (+-1) of the plane it was just reflected across. The result
-    ! is a flat list of z-positions, forces and BC tags (real source + all
-    ! images) later consumed by dipole_pressure_images.
+    ! for the lower chain). Each reflection flips the sign of the vertical
+    ! force component and multiplies the image by the reflection coefficient
+    ! of the plane just crossed: its boundary condition (+-1, Upper_BC or
+    ! Lower_BC) times its attenuation (up_R or lw_R). Both factors accumulate
+    ! along the chain, so an image reached after n_up upper and n_lw lower
+    ! reflections carries (Upper_BC*up_R)**n_up * (Lower_BC*lw_R)**n_lw: the
+    ! accumulated sign is stored in BC_all and the accumulated attenuation in
+    ! the image force. The result is a flat list of z-positions, forces and BC
+    ! signs (real source + all images) later consumed by dipole_pressure_images.
     ! -------------------------------------------------------------------------
 
     CLASS(ImageMethod_t), INTENT(IN)               :: self                ! [-] Solver instance
@@ -458,11 +461,11 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
     REAL(WP)            , INTENT(OUT), ALLOCATABLE :: z_all(:)            ! [m] z of the real + image sources (Ntotal)
     COMPLEX(WP)         , INTENT(OUT), ALLOCATABLE :: Force_out(:,:,:)    ! [N] Real + image forces (NFreqs, Ntotal, 3)
     INTEGER(I32)        , INTENT(OUT), ALLOCATABLE :: parent(:)           ! [-] Parent source of each entry (Ntotal)
-    INTEGER(I32)        , INTENT(OUT), ALLOCATABLE :: BC_all(:)           ! [-] BC sign of each entry (Ntotal)
+    INTEGER(I32)        , INTENT(OUT), ALLOCATABLE :: BC_all(:)           ! [-] Cumulative BC sign per entry (Ntotal)
 
     ! Local variables
     INTEGER(I32)                  :: Nnodes, NFreqs, total_nodes, idx, i_node, img_lvl
-    REAL(WP)                      :: z_upper, z_lower
+    REAL(WP)                      :: z_upper, z_lower, att_u, att_l
     COMPLEX(WP)     , ALLOCATABLE :: F_upper(:,:), F_lower(:,:)
     CHARACTER(len=5)              :: last_plane_upper, last_plane_lower
     INTEGER(I32)                  :: BC_u, BC_l
@@ -492,6 +495,8 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
         z_lower = zi(i_node)
         F_upper = Force(:, i_node, :)
         F_lower = Force(:, i_node, :)
+        BC_u    = 1_I32
+        BC_l    = 1_I32
 
         last_plane_upper = "upper"
         last_plane_lower = "lower"
@@ -500,16 +505,18 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
             ! --- 1. Upper reflection chain ---
             if (last_plane_upper == "upper") then
                 z_upper          = 2.0_WP * self % Lower_HBC - z_upper
-                BC_u             = self % Lower_BC
+                BC_u             = BC_u * self % Lower_BC
+                att_u            = self % lw_R
                 last_plane_upper = "lower"
             else
                 z_upper          = 2.0_WP * self % Upper_HBC - z_upper
-                BC_u             = self % Upper_BC
+                BC_u             = BC_u * self % Upper_BC
+                att_u            = self % up_R
                 last_plane_upper = "upper"
             end if
 
             F_upper(:, 3) = -1.0_WP * F_upper(:, 3)
-            F_upper       = F_upper * self % up_R
+            F_upper       = F_upper * att_u
 
             z_all(idx)           = z_upper
             Force_out(:, idx, :) = F_upper
@@ -520,16 +527,18 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
             ! --- 2. Lower reflection chain ---
             if (last_plane_lower == "lower") then
                 z_lower          = 2.0_WP * self % Upper_HBC - z_lower
-                BC_l             = self % Upper_BC
+                BC_l             = BC_l * self % Upper_BC
+                att_l            = self % up_R
                 last_plane_lower = "upper"
             else
                 z_lower          = 2.0_WP * self % Lower_HBC - z_lower
-                BC_l             = self % Lower_BC
+                BC_l             = BC_l * self % Lower_BC
+                att_l            = self % lw_R
                 last_plane_lower = "lower"
             end if
 
             F_lower(:, 3) = -1.0_WP * F_lower(:, 3)
-            F_lower       = F_lower * self % lw_R
+            F_lower       = F_lower * att_l
 
             z_all(idx)           = z_lower
             Force_out(:, idx, :) = F_lower

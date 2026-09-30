@@ -175,13 +175,15 @@ TYPE :: ImageSystem_t
     ! -------------------------------------------------------------------------
     ! Helper type used internally by the Method of Images to hold the full set
     ! of real and image sources built from the original AcousticSource_t: their
-    ! coordinates, complex forces, and which boundary condition each image was
-    ! generated from.
+    ! coordinates, complex forces (vertical component flipped and attenuation
+    ! applied once per reflection) and the accumulated boundary-condition sign
+    ! of each image (product of the BC signs of every plane it was reflected
+    ! across; +1 for the real sources).
     ! -------------------------------------------------------------------------
 
     REAL(WP)    , ALLOCATABLE :: xyz(:,:)        ! [m] Nodes coordinates (Nnodes, 3)
     COMPLEX(WP) , ALLOCATABLE :: Force(:,:,:)    ! [N] Force array (Nfreqs, Nnodes, 3)
-    INTEGER(I32), ALLOCATABLE :: BC_all(:)       ! [-] Boundary conditions array
+    INTEGER(I32), ALLOCATABLE :: BC_all(:)       ! [-] Accumulated boundary-condition sign of each node
 
 END TYPE ImageSystem_t
 
