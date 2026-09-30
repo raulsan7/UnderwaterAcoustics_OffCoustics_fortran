@@ -768,7 +768,10 @@ SUBROUTINE run_decay(self)
     ! Computes pressure along a straight line following the wind direction
     ! from the turbine axis, at fixed depth z_decay, with linear or log-spaced
     ! distances. Saves the pressure and the observer/distance geometry to the
-    ! solver's HDF5 file.
+    ! solver's HDF5 file. n_decay = 1 places a single observer at the start
+    ! distance; n_decay < 1, and an end distance <= 0 with log spacing, stop
+    ! the run. A start distance <= 0 is moved to 1 m and persisted, so the
+    ! .dat summary reports the distances actually used.
     ! -------------------------------------------------------------------------
 
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self    ! [-] Solver instance
@@ -794,11 +797,27 @@ SUBROUTINE run_decay(self)
         if (pp % n_decay == DEFAULT_I)             pp % n_decay        = 200_I32
         ! logspace_decay has no sentinel: it is read directly as a LOGICAL from the .nml
 
+        if (pp % distance_decay(1) <= 0.0_WP) then
+            write(*,*) "WARNING AcousticSolver % run_decay(): first point can't be placed at r = 0 m"
+            pp % distance_decay(1) = 1.0_WP
+        end if
+
         z        = pp % z_decay
         distance = pp % distance_decay
         n_points = pp % n_decay
         logspace = pp % logspace_decay
     end associate
+
+    if (n_points < 1_I32) then
+        write(*, '(A,I0)') " ERROR AcousticSolver % run_decay(): n_decay must be >= 1, got ", n_points
+        error stop
+    end if
+
+    if (logspace .and. distance(2) <= 0.0_WP) then
+        write(*, '(A,F0.3,A)') " ERROR AcousticSolver % run_decay(): log spacing needs distance_decay(2) > 0, got ", &
+                               distance(2), " m"
+        error stop
+    end if
 
     WindDir_rad = self % sources % geometry % direction * PI / 180.0_WP
     wind_unit   = [cos(WindDir_rad), sin(WindDir_rad)]
@@ -806,15 +825,11 @@ SUBROUTINE run_decay(self)
     ALLOCATE(observers(n_points, 3))
     ALLOCATE(distances(n_points))
 
-    if (distance(1) <= 0.0_WP) then
-        write(*,*) "WARNING AcousticSolver % run_decay(): first point can't be placed at r = 0 m"
-        distance(1) = 1.0_WP
-    end if
-
+    ! max(): a single point sits at the start distance instead of 0/0 = NaN
     if (logspace) then
         d_log1 = log10(distance(1))
         d_log2 = log10(distance(2))
-        d_step = (d_log2 - d_log1) / real(n_points - 1_I32, WP)
+        d_step = (d_log2 - d_log1) / max(real(n_points - 1_I32, WP), 1.0_WP)
         do i = 1, n_points
             d_val             = 10.0_WP**(d_log1 + real(i - 1_I32, WP) * d_step)
             distances(i)      = d_val
@@ -822,7 +837,7 @@ SUBROUTINE run_decay(self)
             observers(i, 3)   = z
         end do
     else
-        linear_step = (distance(2) - distance(1)) / real(n_points - 1_I32, WP)
+        linear_step = (distance(2) - distance(1)) / max(real(n_points - 1_I32, WP), 1.0_WP)
         do i = 1, n_points
             d_val             = distance(1) + real(i - 1_I32, WP) * linear_step
             distances(i)      = d_val
@@ -858,6 +873,9 @@ SUBROUTINE run_line(self)
     ! Computes pressure along an arbitrary straight line between two points
     ! p1_line and p2_line, with linear or log-spaced distances. Saves the
     ! pressure and the observer/distance geometry to the solver's HDF5 file.
+    ! The automatic n_line always keeps at least the two end points;
+    ! n_line = 1 places a single observer at the first spacing point, and
+    ! n_line < 1 stops the run.
     ! -------------------------------------------------------------------------
 
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self    ! [-] Solver instance
@@ -891,31 +909,37 @@ SUBROUTINE run_line(self)
     dist_total = norm2(p2 - p1)
     if (dist_total == 0.0_WP) error stop "AcousticSolver.run_line(): points p1 and p2 are coincident."
 
-    ! n_line depends on dist_total, so it is resolved separately
+    ! n_line depends on dist_total, so it is resolved separately (lines shorter than 2 m keep both end points)
     if (self % run_inputs % params_line % n_line == DEFAULT_I) then
         if (dist_total > 200.0_WP) then
             self % run_inputs % params_line % n_line = int(dist_total / 5.0_WP, I32)
         else
-            self % run_inputs % params_line % n_line = int(dist_total, I32)
+            self % run_inputs % params_line % n_line = max(2_I32, int(dist_total, I32))
         end if
     end if
     n_points = self % run_inputs % params_line % n_line
+
+    if (n_points < 1_I32) then
+        write(*, '(A,I0)') " ERROR AcousticSolver % run_line(): n_line must be >= 1, got ", n_points
+        error stop
+    end if
 
     ALLOCATE(observers(n_points, 3))
     ALLOCATE(distances(n_points))
     dir_vec = (p2 - p1) / dist_total    ! Unit vector from p1 to p2: observer i sits d_val metres from p1
 
+    ! max(): a single point sits at the first spacing point instead of 0/0 = NaN
     if (logspace) then
         d_log1 = log10(dist_total * 1.0e-6_WP)
         d_log2 = log10(dist_total)
-        d_step = (d_log2 - d_log1) / real(n_points - 1_I32, WP)
+        d_step = (d_log2 - d_log1) / max(real(n_points - 1_I32, WP), 1.0_WP)
         do i = 1, n_points
             d_val           = 10.0_WP**(d_log1 + real(i - 1_I32, WP) * d_step)
             distances(i)    = d_val
             observers(i, :) = p1 + d_val * dir_vec
         end do
     else
-        linear_step = dist_total / real(n_points - 1_I32, WP)
+        linear_step = dist_total / max(real(n_points - 1_I32, WP), 1.0_WP)
         do i = 1, n_points
             d_val           = real(i - 1_I32, WP) * linear_step
             distances(i)    = d_val

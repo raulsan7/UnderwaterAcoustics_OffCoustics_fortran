@@ -111,7 +111,9 @@ SUBROUTINE read_turbine_config(path, config)
     ! Reads the "turbine_config" namelist from WindTurbine.nml (rootname,
     ! OpenFAST output paths, wind conditions, placement, node counts, time
     ! window, frequency filtering, etc.) and packs the values into
-    ! config % turbine.
+    ! config % turbine. Strings are read into long buffers and rejected when
+    ! they do not fit in Config_WindTurbine_t (no silent truncation), and the
+    ! time window and decimation factors are checked before any file is read.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to WindTurbine.nml
@@ -122,24 +124,24 @@ SUBROUTINE read_turbine_config(path, config)
     CHARACTER(len=200) :: iomsg
 
     ! Input variables
-    CHARACTER(len=200) :: case_type
-    CHARACTER(len=200) :: rootname
-    CHARACTER(len=200) :: OP_output_dir
-    CHARACTER(len=200) :: OP_output_filename
-    CHARACTER(len=200) :: OP_SubDyn_filename
-    INTEGER(I32)       :: Nmembers
-    INTEGER(I32)       :: Nnodes
-    INTEGER(I32)       :: skip
-    INTEGER(I32)       :: skipf
-    REAL(WP)           :: WindSpeed
-    REAL(WP)           :: WindDir
-    REAL(WP)           :: AxisPos(2)
-    REAL(WP)           :: BariPos(2)
-    REAL(WP)           :: From
-    REAL(WP)           :: Upto
-    REAL(WP)           :: freqs_over
-    LOGICAL            :: Binary
-    LOGICAL            :: filter_freqs
+    CHARACTER(len=1024) :: case_type
+    CHARACTER(len=1024) :: rootname
+    CHARACTER(len=1024) :: OP_output_dir
+    CHARACTER(len=1024) :: OP_output_filename
+    CHARACTER(len=1024) :: OP_SubDyn_filename
+    INTEGER(I32)        :: Nmembers
+    INTEGER(I32)        :: Nnodes
+    INTEGER(I32)        :: skip
+    INTEGER(I32)        :: skipf
+    REAL(WP)            :: WindSpeed
+    REAL(WP)            :: WindDir
+    REAL(WP)            :: AxisPos(2)
+    REAL(WP)            :: BariPos(2)
+    REAL(WP)            :: From
+    REAL(WP)            :: Upto
+    REAL(WP)            :: freqs_over
+    LOGICAL             :: Binary
+    LOGICAL             :: filter_freqs
 
     ! --- 1. Configuration namelist --- !
     NAMELIST /turbine_config/ &
@@ -200,7 +202,15 @@ SUBROUTINE read_turbine_config(path, config)
 
     close(unit_num)
 
-    ! --- 4. Pack values into Config_t --- !
+    ! --- 4. Validate what Config_t cannot hold or the OpenFAST reader cannot use --- !
+    CALL check_fits(case_type, config % turbine % case_type, 'case_type')
+    CALL check_fits(rootname, config % turbine % rootname, 'rootname')
+    CALL check_fits(OP_output_dir, config % turbine % OP_output_dir, 'OP_output_dir')
+    CALL check_fits(OP_output_filename, config % turbine % OP_output_path, 'OP_output_filename')
+    CALL check_fits(OP_SubDyn_filename, config % turbine % OP_SubDyn_path, 'OP_SubDyn_filename')
+    CALL check_time_window(From, Upto, skip, skipf, 'turbine_config')
+
+    ! --- 5. Pack values into Config_t --- !
     config % turbine % case_type      = trim(case_type)
     config % turbine % rootname       = trim(rootname)
     config % turbine % OP_output_dir  = trim(OP_output_dir)
@@ -230,7 +240,9 @@ SUBROUTINE read_farm_config(path, config)
     ! block per turbine, in order. Blocks are first counted and then read one
     ! by one, resetting the per-turbine defaults before each block so that no
     ! value leaks from the previous turbine. Every turbine takes the water
-    ! depth from Environment.nml, which must therefore be read first.
+    ! depth from Environment.nml, which must therefore be read first. Strings
+    ! that do not fit in Config_t and invalid time windows or decimation
+    ! factors stop the run before any OpenFAST file is read.
     ! -------------------------------------------------------------------------
 
     USE, INTRINSIC :: iso_fortran_env, ONLY: IOSTAT_END
@@ -243,27 +255,27 @@ SUBROUTINE read_farm_config(path, config)
     CHARACTER(len=200) :: iomsg
 
     ! Input variables: shared by the whole farm
-    CHARACTER(len=100) :: farm_name
-    REAL(WP)           :: From
-    REAL(WP)           :: Upto
-    INTEGER(I32)       :: skip
-    INTEGER(I32)       :: skipf
-    LOGICAL            :: filter_freqs
-    REAL(WP)           :: freqs_over
+    CHARACTER(len=1024) :: farm_name
+    REAL(WP)            :: From
+    REAL(WP)            :: Upto
+    INTEGER(I32)        :: skip
+    INTEGER(I32)        :: skipf
+    LOGICAL             :: filter_freqs
+    REAL(WP)            :: freqs_over
 
     ! Input variables: one set per turbine
-    CHARACTER(len=200) :: case_type
-    CHARACTER(len=200) :: rootname
-    CHARACTER(len=200) :: OP_output_dir
-    CHARACTER(len=200) :: OP_output_filename
-    CHARACTER(len=200) :: OP_SubDyn_filename
-    LOGICAL            :: Binary
-    REAL(WP)           :: WindSpeed
-    REAL(WP)           :: WindDir
-    REAL(WP)           :: AxisPos(2)
-    REAL(WP)           :: BariPos(2)
-    INTEGER(I32)       :: Nmembers
-    INTEGER(I32)       :: Nnodes
+    CHARACTER(len=1024) :: case_type
+    CHARACTER(len=1024) :: rootname
+    CHARACTER(len=1024) :: OP_output_dir
+    CHARACTER(len=1024) :: OP_output_filename
+    CHARACTER(len=1024) :: OP_SubDyn_filename
+    LOGICAL             :: Binary
+    REAL(WP)            :: WindSpeed
+    REAL(WP)            :: WindDir
+    REAL(WP)            :: AxisPos(2)
+    REAL(WP)            :: BariPos(2)
+    INTEGER(I32)        :: Nmembers
+    INTEGER(I32)        :: Nnodes
 
     ! --- 1. Configuration namelists --- !
     NAMELIST /farm_config/ &
@@ -313,6 +325,9 @@ SUBROUTINE read_farm_config(path, config)
         error stop
     end if
 
+    CALL check_fits(farm_name, config % farm % farm_name, 'farm_name')
+    CALL check_time_window(From, Upto, skip, skipf, 'farm_config')
+
     ! --- 3. Count the &turbine blocks --- !
     rewind(unit_num)
     n = 0_I32
@@ -361,6 +376,12 @@ SUBROUTINE read_farm_config(path, config)
             error stop
         end if
 
+        CALL check_fits(case_type, config % farm % turbines(i) % case_type, 'case_type')
+        CALL check_fits(rootname, config % farm % turbines(i) % rootname, 'rootname')
+        CALL check_fits(OP_output_dir, config % farm % turbines(i) % OP_output_dir, 'OP_output_dir')
+        CALL check_fits(OP_output_filename, config % farm % turbines(i) % OP_output_path, 'OP_output_filename')
+        CALL check_fits(OP_SubDyn_filename, config % farm % turbines(i) % OP_SubDyn_path, 'OP_SubDyn_filename')
+
         ! --- 5. Pack values into Config_t: per-turbine, shared and environment depth --- !
         associate(t => config % farm % turbines(i))
             t % case_type      = trim(case_type)
@@ -404,7 +425,8 @@ SUBROUTINE read_solver_config(path, config)
     ! Reads the "solver_config" namelist from Solver.nml (simulation type,
     ! which acoustic solver method to use, output save path and its optional
     ! extra label, block size, cluster/debug flags) and packs the values into
-    ! config % solver.
+    ! config % solver. Strings are read into long buffers and rejected when
+    ! they do not fit in Config_Solver_t, so a long save_path is never cut.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to Solver.nml
@@ -415,13 +437,13 @@ SUBROUTINE read_solver_config(path, config)
     CHARACTER(len=200) :: iomsg
 
     ! Input variables
-    CHARACTER(len=200) :: simulation_type
-    CHARACTER(len=200) :: method
-    CHARACTER(len=200) :: save_path
-    CHARACTER(len=100) :: extra_label
-    INTEGER(I32)       :: block_size
-    LOGICAL            :: in_cluster
-    LOGICAL            :: debug
+    CHARACTER(len=1024) :: simulation_type
+    CHARACTER(len=1024) :: method
+    CHARACTER(len=1024) :: save_path
+    CHARACTER(len=1024) :: extra_label
+    INTEGER(I32)        :: block_size
+    LOGICAL             :: in_cluster
+    LOGICAL             :: debug
 
     ! --- 1. Configuration namelist --- !
     NAMELIST /solver_config/    &
@@ -460,11 +482,17 @@ SUBROUTINE read_solver_config(path, config)
 
     close(unit_num)
 
-    ! --- 4. Pack values into Config_t --- !
-    config % solver % simulation_type = simulation_type
-    config % solver % method          = method
-    config % solver % save_path       = save_path
-    config % solver % extra_label     = extra_label
+    ! --- 4. Validate what Config_t cannot hold --- !
+    CALL check_fits(simulation_type, config % solver % simulation_type, 'simulation_type')
+    CALL check_fits(method, config % solver % method, 'method')
+    CALL check_fits(save_path, config % solver % save_path, 'save_path')
+    CALL check_fits(extra_label, config % solver % extra_label, 'extra_label')
+
+    ! --- 5. Pack values into Config_t --- !
+    config % solver % simulation_type = trim(simulation_type)
+    config % solver % method          = trim(method)
+    config % solver % save_path       = trim(save_path)
+    config % solver % extra_label     = trim(extra_label)
     config % solver % block_size      = block_size
     config % solver % in_cluster      = in_cluster
     config % solver % debug           = debug
@@ -476,7 +504,9 @@ SUBROUTINE read_environment_config(path, config)
     ! -------------------------------------------------------------------------
     ! Reads the "environment_config" namelist from Environment.nml (base
     ! water depth, speed of sound, density and reference pressure) and packs
-    ! the values into config % env.
+    ! the values into config % env. Every value must be strictly positive:
+    ! a zero or negative depth, sound speed or density gives NaN pressures
+    ! or a late stop in the solvers, and p_ref <= 0 breaks every dB level.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to Environment.nml
@@ -523,7 +553,17 @@ SUBROUTINE read_environment_config(path, config)
 
     close(unit_num)
 
-    ! --- 4. Pack values into Config_t --- !
+    ! --- 4. Validate: every property must be strictly positive (written with .not. to reject NaN too) --- !
+    if (.not. (depth_base > 0.0_WP .and. speed_sound_base > 0.0_WP .and. density_base > 0.0_WP .and. &
+               reference_pressure > 0.0_WP)) then
+        write(*, '(A)') " ERROR: &environment_config: depth_base, speed_sound_base, density_base and " // &
+                        "reference_pressure must be > 0"
+        write(*, '(A,4ES14.6)') "        values read:", depth_base, speed_sound_base, density_base, &
+                                reference_pressure
+        error stop
+    end if
+
+    ! --- 5. Pack values into Config_t --- !
     config % env % depth_base         = depth_base
     config % env % speed_sound_base   = speed_sound_base
     config % env % density_base       = density_base
@@ -675,7 +715,11 @@ SUBROUTINE read_computation_config(path, config)
     ! Reads every namelist group in ComputationSetupTurbine.nml or
     ! ComputationSetupFarm.nml (do_config plus one group per run_*
     ! post-processing step) and packs the values into config % run_inputs.
-    ! Only the groups of the steps that will actually run are read.
+    ! Only the groups of the steps that will actually run are read. Every
+    ! observer count must be -999 (auto) or at least 1, and the vectors whose
+    ! -999.0 sentinel applies to the whole vector (centres, x/y limits, decay
+    ! distances) must be given in full or left at -999.0; p1_line, p2_line,
+    ! zlim_xz and zlim_sv resolve each component on its own.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
@@ -683,15 +727,62 @@ SUBROUTINE read_computation_config(path, config)
 
 
     CALL read_do_config(path, config)
-    if (config % run_inputs % do_run % do_spectrums)     CALL read_spectrums_config(path, config)
-    if (config % run_inputs % do_run % do_polar)         CALL read_polar_config(path, config)
-    if (config % run_inputs % do_run % do_cylinder)      CALL read_cylinder_config(path, config)
-    if (config % run_inputs % do_run % do_decay)         CALL read_decay_config(path, config)
-    if (config % run_inputs % do_run % do_line)          CALL read_line_config(path, config)
-    if (config % run_inputs % do_run % do_sliceXY)       CALL read_sliceXY_config(path, config)
-    if (config % run_inputs % do_run % do_sliceXZ)       CALL read_sliceXZ_config(path, config)
-    if (config % run_inputs % do_run % do_sliceVertical) CALL read_sliceVertical_config(path, config)
-    if (config % run_inputs % do_run % do_sphere)        CALL read_sphere_config(path, config)
+
+    if (config % run_inputs % do_run % do_spectrums) CALL read_spectrums_config(path, config)
+
+    if (config % run_inputs % do_run % do_polar) then
+        CALL read_polar_config(path, config)
+        CALL check_count(config % run_inputs % params_polar % n_polar, 'n_polar')
+        CALL check_all_or_none(config % run_inputs % params_polar % center_polar, 'center_polar')
+    end if
+
+    if (config % run_inputs % do_run % do_cylinder) then
+        CALL read_cylinder_config(path, config)
+        CALL check_count(config % run_inputs % params_cylinder % n_cyl, 'n_cyl')
+        CALL check_count(config % run_inputs % params_cylinder % nz_cyl, 'nz_cyl')
+        CALL check_all_or_none(config % run_inputs % params_cylinder % center_cyl, 'center_cyl')
+    end if
+
+    if (config % run_inputs % do_run % do_decay) then
+        CALL read_decay_config(path, config)
+        CALL check_count(config % run_inputs % params_decay % n_decay, 'n_decay')
+        CALL check_all_or_none(config % run_inputs % params_decay % distance_decay, 'distance_decay')
+    end if
+
+    if (config % run_inputs % do_run % do_line) then
+        CALL read_line_config(path, config)
+        CALL check_count(config % run_inputs % params_line % n_line, 'n_line')
+    end if
+
+    if (config % run_inputs % do_run % do_sliceXY) then
+        CALL read_sliceXY_config(path, config)
+        CALL check_count(config % run_inputs % params_sliceXY % nx_xy, 'nx_xy')
+        CALL check_count(config % run_inputs % params_sliceXY % ny_xy, 'ny_xy')
+        CALL check_all_or_none(config % run_inputs % params_sliceXY % xlim_xy, 'xlim_xy')
+        CALL check_all_or_none(config % run_inputs % params_sliceXY % ylim_xy, 'ylim_xy')
+        CALL check_all_or_none(config % run_inputs % params_sliceXY % center_xy, 'center_xy')
+    end if
+
+    if (config % run_inputs % do_run % do_sliceXZ) then
+        CALL read_sliceXZ_config(path, config)
+        CALL check_count(config % run_inputs % params_sliceXZ % nx_xz, 'nx_xz')
+        CALL check_count(config % run_inputs % params_sliceXZ % nz_xz, 'nz_xz')
+        CALL check_all_or_none(config % run_inputs % params_sliceXZ % xlim_xz, 'xlim_xz')
+    end if
+
+    if (config % run_inputs % do_run % do_sliceVertical) then
+        CALL read_sliceVertical_config(path, config)
+        CALL check_count(config % run_inputs % params_sliceVertical % nu_sv, 'nu_sv')
+        CALL check_count(config % run_inputs % params_sliceVertical % nz_sv, 'nz_sv')
+        CALL check_all_or_none(config % run_inputs % params_sliceVertical % center_sv, 'center_sv')
+    end if
+
+    if (config % run_inputs % do_run % do_sphere) then
+        CALL read_sphere_config(path, config)
+        CALL check_count(config % run_inputs % params_sphere % n_theta_sphere, 'n_theta_sphere')
+        CALL check_count(config % run_inputs % params_sphere % nz_sphere, 'nz_sphere')
+        CALL check_all_or_none(config % run_inputs % params_sphere % center_sphere, 'center_sphere')
+    end if
 
 END SUBROUTINE read_computation_config
 
@@ -702,8 +793,9 @@ SUBROUTINE read_do_config(path, config)
     ! ComputationSetupFarm.nml and packs the post-processing execution
     ! switches into config % run_inputs. When do_all is enabled, every
     ! post-processing switch is forced to true. In farm mode the steps that
-    ! make no sense for a wind farm (sphere, decay) are then switched off,
-    ! so run() never needs to know what produced the sources.
+    ! make no sense for a wind farm (sphere, decay) default to false and are
+    ! then always switched off, so run() never needs to know what produced
+    ! the sources; the warning is only printed when the file requests them.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
@@ -712,6 +804,7 @@ SUBROUTINE read_do_config(path, config)
     ! Local variables
     INTEGER(I32)       :: unit_num, ierr
     CHARACTER(len=200) :: iomsg
+    LOGICAL            :: is_farm
 
     ! Input variables
     LOGICAL :: do_all, do_spectrums, do_polar, do_cylinder, do_decay
@@ -731,17 +824,18 @@ SUBROUTINE read_do_config(path, config)
         do_sphere
 
 
-    ! --- 2. Defaults --- !
+    ! --- 2. Defaults (sphere and decay are only requested by default for a single turbine) --- !
+    is_farm          = (trim(config % solver % simulation_type) == 'farm')
     do_all           = .true.
     do_spectrums     = .true.
     do_polar         = .true.
     do_cylinder      = .true.
-    do_decay         = .true.
+    do_decay         = .not. is_farm
     do_line          = .true.
     do_sliceXY       = .true.
     do_sliceXZ       = .true.
     do_sliceVertical = .false.    ! Off unless requested: files without this switch do not run the step
-    do_sphere        = .true.
+    do_sphere        = .not. is_farm
 
     ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
@@ -786,7 +880,7 @@ SUBROUTINE read_do_config(path, config)
     end if
 
     ! --- 5. Steps without meaning for a wind farm: no single turbine to enclose or to follow downstream --- !
-    if (trim(config % solver % simulation_type) == 'farm') then
+    if (is_farm) then
         if (.not. do_all .and. (do_sphere .or. do_decay)) &
             write(*,*) "WARNING read_do_config: sphere and decay are not available for a wind farm, skipped"
         config % run_inputs % do_run % do_sphere = .false.
@@ -801,14 +895,22 @@ SUBROUTINE read_spectrums_config(path, config)
     ! Reads the "spectrums_config" namelist from ComputationSetupTurbine.nml
     ! or ComputationSetupFarm.nml (number of spectrum observer points and
     ! their coordinates) and packs the values into config % run_inputs.
+    ! n_observers = -999 selects the 3 automatic points; any other value must
+    ! lie in 1..MAX_PARSE_OBS and come with its n_observers (x, y, z)
+    ! triplets. The coordinate buffers start as NaN, so a missing coordinate
+    ! is detected without mistaking a real -999.0 m for the sentinel.
+    ! Coordinates listed beyond n_observers are ignored with a warning.
     ! -------------------------------------------------------------------------
+
+    USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_value, ieee_is_nan, IEEE_QUIET_NAN
 
     CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
-    INTEGER(I32)       :: unit_num, ierr
+    INTEGER(I32)       :: unit_num, ierr, n
     CHARACTER(len=200) :: iomsg
+    REAL(WP)           :: nan
 
     ! Input variables
     INTEGER(I32) :: n_observers
@@ -824,11 +926,12 @@ SUBROUTINE read_spectrums_config(path, config)
         observers_z
 
 
-    ! --- 2. Defaults --- !
+    ! --- 2. Defaults (NaN marks the coordinates not given in the file) --- !
+    nan         = ieee_value(1.0_WP, IEEE_QUIET_NAN)
     n_observers = DEFAULT_I
-    observers_x = DEFAULT_R
-    observers_y = DEFAULT_R
-    observers_z = DEFAULT_R
+    observers_x = nan
+    observers_y = nan
+    observers_z = nan
 
     ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
@@ -847,15 +950,37 @@ SUBROUTINE read_spectrums_config(path, config)
 
     close(unit_num)
 
+    ! --- 4. Validate: n_observers in range and one (x, y, z) triplet per observer --- !
     if (n_observers > MAX_PARSE_OBS) then
         write(*,*) "ERROR read_spectrums_config: n_observers exceeds the internal parsing cap of ", MAX_PARSE_OBS
         error stop
     end if
 
-    ! --- 4. Pack values into Config_t --- !
+    if (n_observers /= DEFAULT_I) then
+        if (n_observers < 1_I32) then
+            write(*, '(A,I0,A)') " ERROR read_spectrums_config: n_observers = ", n_observers, &
+                                 " (use -999 for the automatic points, or list at least one observer)"
+            error stop
+        end if
+
+        n = n_observers
+        if (any(ieee_is_nan(observers_x(1:n))) .or. any(ieee_is_nan(observers_y(1:n))) .or. &
+            any(ieee_is_nan(observers_z(1:n)))) then
+            write(*, '(A,I0,A)') " ERROR read_spectrums_config: n_observers = ", n, &
+                                 " but fewer x, y or z coordinates are listed"
+            error stop
+        end if
+
+        if (.not. (all(ieee_is_nan(observers_x(n+1:))) .and. all(ieee_is_nan(observers_y(n+1:))) .and. &
+                   all(ieee_is_nan(observers_z(n+1:))))) &
+            write(*, '(A,I0,A)') " WARNING read_spectrums_config: coordinates listed beyond n_observers = ", n, &
+                                 " are ignored"
+    end if
+
+    ! --- 5. Pack values into Config_t --- !
     config % run_inputs % params_spectrums % n_observers = n_observers
 
-    if (n_observers /= DEFAULT_I .and. n_observers > 0_I32) then
+    if (n_observers /= DEFAULT_I) then
         config % run_inputs % params_spectrums % observers_x = observers_x(1:n_observers)
         config % run_inputs % params_spectrums % observers_y = observers_y(1:n_observers)
         config % run_inputs % params_spectrums % observers_z = observers_z(1:n_observers)
@@ -1354,5 +1479,99 @@ SUBROUTINE read_sphere_config(path, config)
     config % run_inputs % params_sphere % center_sphere  = center_sphere
 
 END SUBROUTINE read_sphere_config
+
+
+SUBROUTINE check_time_window(From, Upto, skip, skipf, block_name)
+    ! -------------------------------------------------------------------------
+    ! Stops the run when the OpenFAST reading window or the decimation
+    ! factors cannot be used: 0 <= From < Upto <= 1 and skip, skipf >= 1 are
+    ! required. Otherwise the reader divides by zero (skip, skipf = 0), reads
+    ! an empty window (From >= Upto) or rows that do not exist (From < 0,
+    ! Upto > 1), or the FFT keeps no frequency at all (skipf < 0).
+    ! -------------------------------------------------------------------------
+
+    REAL(WP)        , INTENT(IN) :: From          ! [-] Fraction of the time series to start reading from
+    REAL(WP)        , INTENT(IN) :: Upto          ! [-] Fraction of the time series to stop reading at
+    INTEGER(I32)    , INTENT(IN) :: skip          ! [-] Keep 1 out of every skip time samples
+    INTEGER(I32)    , INTENT(IN) :: skipf         ! [-] Keep 1 out of every skipf frequency bins
+    CHARACTER(len=*), INTENT(IN) :: block_name    ! [-] Namelist group shown in the error message
+
+
+    ! Written with .not. so that a NaN value is rejected as well
+    if (.not. (From >= 0.0_WP .and. From < Upto .and. Upto <= 1.0_WP)) then
+        write(*, '(A,F0.4,A,F0.4,A)') " ERROR: &" // block_name // ": From = ", From, ", Upto = ", Upto, &
+                                      " (0 <= From < Upto <= 1 is required)"
+        error stop
+    end if
+
+    if (skip < 1_I32 .or. skipf < 1_I32) then
+        write(*, '(A,I0,A,I0,A)') " ERROR: &" // block_name // ": skip = ", skip, ", skipf = ", skipf, &
+                                  " (both must be >= 1)"
+        error stop
+    end if
+
+END SUBROUTINE check_time_window
+
+
+SUBROUTINE check_fits(value, component, name)
+    ! -------------------------------------------------------------------------
+    ! Stops the run when a string read from a namelist is longer than the
+    ! Config_t component that will store it, which would silently truncate
+    ! it (e.g. an output path cut at 200 characters). Only the length of
+    ! component is used, never its value.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN) :: value        ! [-] String as read from the namelist
+    CHARACTER(len=*), INTENT(IN) :: component    ! [-] Config_t component that will store it
+    CHARACTER(len=*), INTENT(IN) :: name         ! [-] Namelist variable shown in the error message
+
+
+    if (len_trim(value) > len(component)) then
+        write(*, '(A,I0,A,I0,A)') " ERROR: " // name // " has ", len_trim(value), &
+                                  " characters, the maximum is ", len(component), ": " // trim(value)
+        error stop
+    end if
+
+END SUBROUTINE check_fits
+
+
+SUBROUTINE check_all_or_none(values, name)
+    ! -------------------------------------------------------------------------
+    ! Stops the run when a vector parameter whose -999.0 sentinel applies to
+    ! the whole vector (a centre, x/y limits, decay distances) is only partly
+    ! given. The run_* routines would otherwise either use the missing
+    ! component literally as -999.0 m or silently drop the given ones.
+    ! -------------------------------------------------------------------------
+
+    REAL(WP)        , INTENT(IN) :: values(:)    ! [m] Components as read from the namelist
+    CHARACTER(len=*), INTENT(IN) :: name         ! [-] Namelist variable shown in the error message
+
+
+    if (any(values == DEFAULT_R) .and. .not. all(values == DEFAULT_R)) then
+        write(*, '(A)') " ERROR: " // name // " is only partly given: set every component, " // &
+                        "or leave all of them at -999.0 (auto)"
+        error stop
+    end if
+
+END SUBROUTINE check_all_or_none
+
+
+SUBROUTINE check_count(n, name)
+    ! -------------------------------------------------------------------------
+    ! Stops the run when an observer count is neither -999 (auto) nor at
+    ! least 1. A zero or negative count gives empty datasets (or a NaN
+    ! spacing) and a run that ends "successfully" without any observer.
+    ! -------------------------------------------------------------------------
+
+    INTEGER(I32)    , INTENT(IN) :: n       ! [-] Count as read from the namelist
+    CHARACTER(len=*), INTENT(IN) :: name    ! [-] Namelist variable shown in the error message
+
+
+    if (n /= DEFAULT_I .and. n < 1_I32) then
+        write(*, '(A,I0,A)') " ERROR: " // name // " = ", n, " (use -999 for the automatic value, or at least 1)"
+        error stop
+    end if
+
+END SUBROUTINE check_count
 
 END MODULE Args_parser
