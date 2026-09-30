@@ -651,7 +651,7 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
     end do
 
     ! Global coefficient
-    p_out = -0.25_WP * I1 * p_out
+    p_out = 0.25_WP * I1 * p_out
     DEALLOCATE(k_zm, psi_z, psi_zs, dpsi_zs, k_rm_tab, kappa_ref)
 
 END SUBROUTINE dipolar_pressure_NM

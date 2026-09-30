@@ -183,9 +183,9 @@ SUBROUTINE compute_force_DTU10MWMonopile(self, config, verbose)
     ! Vectorized force computation with OpenMP (implicit broadcast over frequencies)
     !$OMP PARALLEL DO PRIVATE(j)
     do j = 1, Nnodes_wet
-        self % Force(:, j, 1) = -A(:, j, 1) * mass_eff(j)
-        self % Force(:, j, 2) = -A(:, j, 2) * mass_eff(j)
-        self % Force(:, j, 3) = -A(:, j, 3) * mass_eff(j)
+        self % Force(:, j, 1) = A(:, j, 1) * mass_eff(j)
+        self % Force(:, j, 2) = A(:, j, 2) * mass_eff(j)
+        self % Force(:, j, 3) = A(:, j, 3) * mass_eff(j)
     end do
     !$OMP END PARALLEL DO
 

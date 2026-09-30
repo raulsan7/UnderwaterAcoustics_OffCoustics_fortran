@@ -362,7 +362,7 @@ SUBROUTINE compute_force_SAITEC2MWFloating(self, config, verbose)
 
     DEALLOCATE(mass, added_mass)
 
-    ! Compute force via F = -A * mass_eff
+    ! Compute force via F = A * mass_eff
     ALLOCATE(F_temp(nf, Nm, Nn, 3))
 
     ! Parallelized over space and coordinate directions
@@ -370,7 +370,7 @@ SUBROUTINE compute_force_SAITEC2MWFloating(self, config, verbose)
     do k = 1, 3
         do j = 1, Nn
             do i = 1, Nm
-                F_temp(:, i, j, k) = -A(:, i, j, k) * mass_eff(i, j)
+                F_temp(:, i, j, k) = A(:, i, j, k) * mass_eff(i, j)
             end do
         end do
     end do
