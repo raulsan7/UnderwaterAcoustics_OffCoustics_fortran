@@ -237,7 +237,9 @@ SUBROUTINE compute_mass_DTU10MWMonopile(self, mass, added_mass)
     ! along the monopile nodes. The outer diameter is constant with depth, but
     ! the inner diameter varies across three depth bands to represent the real
     ! wall-thickness profile: 8.70 m between +4 m and +10 m, 8.69 m between
-    ! -10 m and +4 m, and 8.80 m below -10 m.
+    ! -10 m and +4 m, and 8.80 m below -10 m. The nodal spans and the depth
+    ! bands are evaluated at the real heights of the wetted nodes (self % xyz),
+    ! so they do not depend on the water depth of Environment.nml.
     ! -------------------------------------------------------------------------
 
     USE MathUtils, ONLY: divide_span
@@ -247,7 +249,7 @@ SUBROUTINE compute_mass_DTU10MWMonopile(self, mass, added_mass)
     REAL(WP)                , INTENT(OUT), ALLOCATABLE :: added_mass(:)    ! [kg] Added mass per wetted node
 
     ! Local variables
-    REAL(WP)                  :: D, Depth, rho_mat, rho_wat
+    REAL(WP)                  :: D, rho_mat, rho_wat
     INTEGER(I32)              :: Nnodes, i
     REAL(WP)    , ALLOCATABLE :: z_nodes(:), ds(:), D_outer(:), D_inner(:)
     REAL(WP)    , ALLOCATABLE :: A_mass(:), A_added_mass(:)
@@ -255,16 +257,13 @@ SUBROUTINE compute_mass_DTU10MWMonopile(self, mass, added_mass)
 
     ! Retrieve parameters
     D       = self % D
-    Depth   = self % Depth
     rho_mat = self % rho_mat
     rho_wat = self % rho_wat
     Nnodes  = size(self % xyz, 1)
 
-    ! Generate vertical coordinate array linearly from -Depth to 0
+    ! Vertical coordinates of the wetted nodes, ordered along the monopile axis
     ALLOCATE(z_nodes(Nnodes))
-    do i = 1, Nnodes
-        z_nodes(i) = -Depth + real(i - 1_I32, WP) * Depth / real(Nnodes - 1_I32, WP)
-    end do
+    z_nodes = self % xyz(:, 3)
 
     ! Nodal spacings
     ds = divide_span(z_nodes)

@@ -129,7 +129,7 @@
 ! that azimuth and the depth. azimuth_sv = -90.0 gives the XZ plane
 ! with the span axis along +x.
 &sliceVertical_config
-    azimuth_sv = 90.0                ! [deg] Azimuth of the plane normal (0 deg: normal to +x, anticlockwise)
+    azimuth_sv = 0.0                ! [deg] Azimuth of the plane normal (0 deg: normal to +x, anticlockwise)
     center_sv = -999.0, -999.0      ! [m] Plane centre (x, y); -999.0 = auto: turbine axis position
     width_sv = -999.0               ! [m] Full horizontal span; -999.0 = auto: every source projected + margin_sv
     zlim_sv = -999.0, 0.0           ! [m] Depth extent (min, max); -999.0 = auto: -Depth (min) or 0 (max)

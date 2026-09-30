@@ -27,11 +27,11 @@ def main():
     if len(cases) == 1:
         case = cases[0]
         # p.plot_structure(case, mode="xz")
-        p.plot_spectrum(case, do_thresholds=False, absorption=False, filter_under=10.0, mode='PSD')
-        p.plot_spectrum(case, do_thresholds=False, absorption=False, filter_under=10.0, octave=False)
+        p.plot_spectrum(case, do_thresholds=False, absorption=False, filter_under=0.0, mode='PSD')
+        p.plot_spectrum(case, do_thresholds=False, absorption=False, filter_under=0.0, octave=False)
         p.plot_polar(case)
-        p.plot_cylinder(case, filter_under=12.50)
-        p.plot_distance_decay(case, filter_under=12.50, turbine_data=True)
+        p.plot_cylinder(case)
+        p.plot_distance_decay(case, turbine_data=True)
         p.plot_line(case)
         p.plot_sliceXY(case, filter_under=1.0)
         p.plot_sliceXZ(case, filter_under=1.0)

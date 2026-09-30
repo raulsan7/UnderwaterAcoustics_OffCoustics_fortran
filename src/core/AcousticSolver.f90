@@ -1205,7 +1205,7 @@ SUBROUTINE run_sliceVertical(self)
     REAL(WP)    , ALLOCATABLE :: obs_reshaped(:,:,:)
     REAL(WP)    , ALLOCATABLE :: us(:), zs(:), proj(:)
     REAL(WP)                  :: azimuth, az_rad, normal(2), span(2), center(2), ulim(2), zlim(2)
-    REAL(WP)                  :: du, dz, Depth
+    REAL(WP)                  :: du, dz, Depth, y_xz
     INTEGER(I32)              :: nu, nz, i, j, idx, bs
 
 
@@ -1223,6 +1223,16 @@ SUBROUTINE run_sliceVertical(self)
 
         ! --- 2. Centre: turbine axis, or mean turbine axis for a wind farm --- !
         if (any(pp % center_sv == DEFAULT_R)) pp % center_sv = self % sources % geometry % origin
+
+        if (self % run_inputs % do_run % do_sliceXZ .and. &
+            abs(cos(az_rad)) < sin(1.0e-3_WP * PI / 180.0_WP)) then
+            y_xz = self % run_inputs % params_sliceXZ % y_xz
+            if (y_xz == DEFAULT_R) y_xz = self % sources % geometry % origin(2)
+            if (abs(y_xz - pp % center_sv(2)) < 1.0e-3_WP) then
+                write(*, '(A)') '>> [SliceVert]  skipped: same XZ plane as SliceXZ'
+                return
+            end if
+        end if
 
         ! --- 3. Depth extent, clipped to the water column --- !
         if (pp % zlim_sv(1) == DEFAULT_R) pp % zlim_sv(1) = -Depth

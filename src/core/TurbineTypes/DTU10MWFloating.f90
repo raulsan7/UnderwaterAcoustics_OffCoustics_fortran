@@ -74,14 +74,16 @@ SUBROUTINE init_DTU10MWFloating(self, config)
     ! -------------------------------------------------------------------------
     ! Platform-specific constructor: resolves the (hardcoded) path to the DTU
     ! 10 MW rpm-vs-wind-speed curve, flags this turbine as non-monopile, then
-    ! delegates to the shared base-class init for the common parameters.
+    ! delegates to the shared base-class init for the common parameters and
+    ! checks that the hardcoded member IDs exist in the structural model.
     ! -------------------------------------------------------------------------
 
     CLASS(DTU10MWFloating_t)  , INTENT(INOUT) :: self      ! [-] Turbine instance
     TYPE(Config_WindTurbine_t), INTENT(IN)    :: config    ! [-] Turbine configuration
 
     ! Local variables
-    LOGICAL :: exists
+    LOGICAL      :: exists
+    INTEGER(I32) :: n_req
 
 
     ! Define path to rpm curve (hardcoded)
@@ -95,6 +97,14 @@ SUBROUTINE init_DTU10MWFloating(self, config)
     self % is_monopile = .false.
 
     CALL init(self, config)
+
+    ! The 0-based col_members/pon_members IDs must exist in the structural model
+    n_req = max(maxval(self % col_members), maxval(self % pon_members)) + 1_I32
+    if (n_req > self % Nmembers) then
+        write(*, '(A,I0,A,I0)') ' ERROR DTU10MWFloating % init: Nmembers = ', self % Nmembers, &
+                                ' but col_members/pon_members need Nmembers >= ', n_req
+        error stop
+    end if
 
 END SUBROUTINE init_DTU10MWFloating
 

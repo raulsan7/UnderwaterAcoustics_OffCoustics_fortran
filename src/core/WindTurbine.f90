@@ -205,15 +205,15 @@ SUBROUTINE init(self, config)
     ext = ".out" ; if (self % Binary) ext = ".outb"
 
     ! Set paths
-    if (index(config % OP_output_path, 'one') > 0 .or. &    ! "None" or "Default"
-        index(config % OP_output_path, 'efault') > 0) then
+    if (to_upper(trim(config % OP_output_path)) == 'NONE' .or. &    ! "None" or "Default", in any case
+        to_upper(trim(config % OP_output_path)) == 'DEFAULT') then
         self % OP_output_path = trim(self % OP_output_dir) // trim(self % rootname) // trim(ext)
     else
         self % OP_output_path = trim(config % OP_output_path)
     end if
 
-    if (index(config % OP_SubDyn_path, 'one') > 0 .or. &    ! "None" or "Default"
-        index(config % OP_SubDyn_path, 'efault') > 0) then
+    if (to_upper(trim(config % OP_SubDyn_path)) == 'NONE' .or. &    ! "None" or "Default", in any case
+        to_upper(trim(config % OP_SubDyn_path)) == 'DEFAULT') then
         self % OP_SubDyn_path = trim(self % OP_output_dir) // trim(self % rootname) // ".SD.sum.yaml"
     else
         self % OP_SubDyn_path = trim(config % OP_SubDyn_path)
