@@ -534,16 +534,20 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
     ! every frequency. The vertical modal shapes
     !     Psi_m(z)   = sqrt(2*rho/H) * sin(k_zm*(z - Upper_HBC))
     !     dPsi_m/dz  = sqrt(2*rho/H) * k_zm * cos(k_zm*(z - Upper_HBC))
-    ! (Psi_m(Upper_HBC) = 0, dPsi_m/dz(Lower_HBC) = 0) are frequency independent, so they
-    ! are tabulated once per block for observers and sources. Horizontal
-    ! distances are also precomputed (floored at eps). For each (f, m) the
-    ! horizontal wavenumber k_rm = sqrt(k^2 - k_zm^2) is either real
-    ! (propagating) or pure imaginary (evanescent), and each source-observer
-    ! pair contributes
+    ! (Psi_m(Upper_HBC) = 0, dPsi_m/dz(Lower_HBC) = 0) are frequency
+    ! independent, so they are tabulated once per block for observers and
+    ! sources, as are the horizontal wavenumbers k_rm = sqrt(k^2 - k_zm^2) of
+    ! every (mode, frequency), either real (propagating) or pure imaginary
+    ! (evanescent, k_rm = i*kappa). Each source-observer pair contributes
     !     Psi_m(z) * [ Fz*dPsi_m(zs)/rho * H0(k_rm*r)
     !                + Psi_m(zs)*k_rm/rho * H1(k_rm*r) * (Fx*dx + Fy*dy)/r ]
-    ! with H0/H1 Hankel functions of the first kind. The global -i/4
-    ! coefficient is applied at the end.
+    ! with H0/H1 Hankel functions of the first kind. The modes are summed
+    ! innermost, so p_out(:, k) is written with unit stride, and the sum
+    ! stops at the first evanescent mode whose decay exp(-kappa*r) is more
+    ! than exp(-EVAN_CUTOFF) below the dominant term of that frequency (a
+    ! propagating mode, or else the first evanescent mode): kappa grows with
+    ! m, so every later mode is smaller still. The global -i/4 coefficient is
+    ! applied at the end.
     ! -------------------------------------------------------------------------
 
     CLASS(AnalyticalNormalModes_t), INTENT(IN)               :: self              ! [-] Solver instance
@@ -554,13 +558,14 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
     COMPLEX(WP)                   , INTENT(OUT), ALLOCATABLE :: p_out(:,:)        ! [Pa] Pressure (NFreqs, Nob)
 
     ! Local variables
+    REAL(WP)    , PARAMETER   :: EVAN_CUTOFF = 40.0_WP    ! [-] Skip modes decaying exp(-40) below the dominant one
     INTEGER(I32)              :: NFreqs, Nnodes, Nob, Nm
     INTEGER(I32)              :: j, f, k, im
-    REAL(WP)                  :: epsv, rho, kappa
-    COMPLEX(WP)               :: k_rm, H0, H1, fx, fy, fz, coef_z, coef_xy, F_dot_rhat
-    REAL(WP)    , ALLOCATABLE :: dx(:,:), dy(:,:), r(:,:), r_inv(:,:)
-    REAL(WP)    , ALLOCATABLE :: k_wave(:), k_zm(:)
+    REAL(WP)                  :: epsv, rho, dx, dy, r, r_inv
+    COMPLEX(WP)               :: k_rm, H0, H1, fx, fy, fz, coef_z, coef_xy, F_dot_rhat, p_acc
+    REAL(WP)    , ALLOCATABLE :: k_wave(:), k_zm(:), kappa_ref(:)
     REAL(WP)    , ALLOCATABLE :: psi_z(:,:), psi_zs(:,:), dpsi_zs(:,:)
+    COMPLEX(WP) , ALLOCATABLE :: k_rm_tab(:,:)
 
 
     ! Dimensions
@@ -576,20 +581,6 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
     p_out  = (0.0_WP, 0.0_WP)
     k_wave = 2.0_WP * PI * Freqs / self % env % speed_sound_base
 
-    ! Horizontal source-observer geometry (frequency and node independent)
-    ALLOCATE(dx(Nob, Nnodes), dy(Nob, Nnodes), r(Nob, Nnodes), r_inv(Nob, Nnodes))
-    do j = 1, Nnodes
-        !$OMP SIMD
-        do k = 1, Nob
-            dx(k, j) = obs_pos(k, 1) - nodes_pos(j, 1)
-            dy(k, j) = obs_pos(k, 2) - nodes_pos(j, 2)
-            r(k, j)  = sqrt(dx(k, j) * dx(k, j) + dy(k, j) * dy(k, j))
-
-            if (r(k, j) < epsv) r(k, j) = epsv
-            r_inv(k, j) = 1.0_WP / r(k, j)
-        end do
-    end do
-
     ! Vertical modal shapes (frequency independent)
     ALLOCATE(k_zm(Nm), psi_z(Nob, Nm), psi_zs(Nnodes, Nm), dpsi_zs(Nnodes, Nm))
     do im = 1, Nm
@@ -599,42 +590,61 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
         dpsi_zs(:, im) = self % dPsi_kzm_dz(z=nodes_pos(:, 3), kzm=k_zm(im))
     end do
 
-    ! Loop over frequencies
+    ! Horizontal wavenumbers: real (propagating) or pure imaginary (evanescent), and the
+    ! decay rate of the dominant term of each frequency (0 when a mode propagates)
+    ALLOCATE(k_rm_tab(Nm, NFreqs), kappa_ref(NFreqs))
     do f = 1, NFreqs
-        ! Normal modes superposition
         do im = 1, Nm
-
-            ! Horizontal wavenumber: real (propagating) or pure imaginary (evanescent)
             if (k_wave(f) >= k_zm(im)) then
-                k_rm = cmplx(sqrt(k_wave(f)**2 - k_zm(im)**2), 0.0_WP, kind=WP)
+                k_rm_tab(im, f) = cmplx(sqrt(k_wave(f)**2 - k_zm(im)**2), 0.0_WP, kind=WP)
             else
-                kappa = sqrt(k_zm(im)**2 - k_wave(f)**2)
-                k_rm  = I1 * kappa
+                k_rm_tab(im, f) = I1 * sqrt(k_zm(im)**2 - k_wave(f)**2)
             end if
+        end do
+        kappa_ref(f) = aimag(k_rm_tab(1, f))
+    end do
 
-            ! Loop over sources and observers
-            do j = 1, Nnodes
+    ! Loop over observers and sources, then frequencies, modes innermost
+    do k = 1, Nob
+        do j = 1, Nnodes
+            ! Horizontal source-observer geometry (floored at eps)
+            dx = obs_pos(k, 1) - nodes_pos(j, 1)
+            dy = obs_pos(k, 2) - nodes_pos(j, 2)
+            r  = sqrt(dx * dx + dy * dy)
+            if (r < epsv) r = epsv
+            r_inv = 1.0_WP / r
+
+            do f = 1, NFreqs
                 fx = Force(f, j, 1)
                 fy = Force(f, j, 2)
                 fz = Force(f, j, 3)
 
-                coef_z  = fz * dpsi_zs(j, im) / rho     ! Vertical component (dipolar depth effect)
-                coef_xy = psi_zs(j, im) * k_rm / rho    ! Horizontal component (dipolar directivity)
+                F_dot_rhat = (fx * dx + fy * dy) * r_inv
+                p_acc      = (0.0_WP, 0.0_WP)
 
-                do k = 1, Nob
-                    CALL compute_hankel_complex(k_rm, r(k, j), H0, H1)
+                ! Normal modes superposition
+                do im = 1, Nm
+                    k_rm = k_rm_tab(im, f)
 
-                    F_dot_rhat  = (fx * dx(k, j) + fy * dy(k, j)) * r_inv(k, j)
-                    p_out(f, k) = p_out(f, k) + psi_z(k, im) * (coef_z * H0 + coef_xy * H1 * F_dot_rhat)
+                    ! Evanescent tail: this and every later mode are negligible
+                    if ((aimag(k_rm) - kappa_ref(f)) * r > EVAN_CUTOFF) exit
+
+                    coef_z  = fz * dpsi_zs(j, im) / rho     ! Vertical component (dipolar depth effect)
+                    coef_xy = psi_zs(j, im) * k_rm / rho    ! Horizontal component (dipolar directivity)
+
+                    CALL compute_hankel_complex(k_rm, r, H0, H1)
+
+                    p_acc = p_acc + psi_z(k, im) * (coef_z * H0 + coef_xy * H1 * F_dot_rhat)
                 end do
-            end do
 
+                p_out(f, k) = p_out(f, k) + p_acc
+            end do
         end do
     end do
 
     ! Global coefficient
     p_out = -0.25_WP * I1 * p_out
-    DEALLOCATE(dx, dy, r, r_inv, k_zm, psi_z, psi_zs, dpsi_zs)
+    DEALLOCATE(k_zm, psi_z, psi_zs, dpsi_zs, k_rm_tab, kappa_ref)
 
 END SUBROUTINE dipolar_pressure_NM
 
