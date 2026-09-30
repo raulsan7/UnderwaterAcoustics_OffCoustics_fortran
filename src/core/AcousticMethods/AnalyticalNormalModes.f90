@@ -559,9 +559,10 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
 
     ! Local variables
     REAL(WP)    , PARAMETER   :: EVAN_CUTOFF = 40.0_WP    ! [-] Skip modes decaying exp(-40) below the dominant one
+    REAL(WP)    , PARAMETER   :: CUTOFF_GAP  = 2.0e-6_WP  ! [-] Minimum |k^2 - k_zm^2| / k_zm^2 (|k/k_zm - 1| >= 1e-6)
     INTEGER(I32)              :: NFreqs, Nnodes, Nob, Nm
     INTEGER(I32)              :: j, f, k, im
-    REAL(WP)                  :: epsv, rho, dx, dy, r, r_inv
+    REAL(WP)                  :: epsv, rho, dx, dy, r, r_inv, kr_sq
     COMPLEX(WP)               :: k_rm, H0, H1, fx, fy, fz, coef_z, coef_xy, F_dot_rhat, p_acc
     REAL(WP)    , ALLOCATABLE :: k_wave(:), k_zm(:), kappa_ref(:)
     REAL(WP)    , ALLOCATABLE :: psi_z(:,:), psi_zs(:,:), dpsi_zs(:,:)
@@ -591,14 +592,21 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
     end do
 
     ! Horizontal wavenumbers: real (propagating) or pure imaginary (evanescent), and the
-    ! decay rate of the dominant term of each frequency (0 when a mode propagates)
+    ! decay rate of the dominant term of each frequency (0 when a mode propagates). At an
+    ! exact modal cutoff (k = k_zm) the Hankel functions would get a zero argument (Y0 and
+    ! Y1 are singular there and k_rm * H1 gives 0 * Inf = NaN): k^2 - k_zm^2 is kept at
+    ! least CUTOFF_GAP * k_zm^2 away from zero, i.e. the mode is evaluated a relative
+    ! distance 1e-6 in k from its cutoff (FFT bins of usual records lie farther away)
     ALLOCATE(k_rm_tab(Nm, NFreqs), kappa_ref(NFreqs))
     do f = 1, NFreqs
         do im = 1, Nm
-            if (k_wave(f) >= k_zm(im)) then
-                k_rm_tab(im, f) = cmplx(sqrt(k_wave(f)**2 - k_zm(im)**2), 0.0_WP, kind=WP)
+            kr_sq = k_wave(f)**2 - k_zm(im)**2
+            if (abs(kr_sq) < CUTOFF_GAP * k_zm(im)**2) kr_sq = sign(CUTOFF_GAP * k_zm(im)**2, kr_sq)
+
+            if (kr_sq >= 0.0_WP) then
+                k_rm_tab(im, f) = cmplx(sqrt(kr_sq), 0.0_WP, kind=WP)
             else
-                k_rm_tab(im, f) = I1 * sqrt(k_zm(im)**2 - k_wave(f)**2)
+                k_rm_tab(im, f) = I1 * sqrt(-kr_sq)
             end if
         end do
         kappa_ref(f) = aimag(k_rm_tab(1, f))

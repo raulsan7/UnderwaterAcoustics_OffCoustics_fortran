@@ -748,7 +748,7 @@ FUNCTION get_impedance_corrected_force_SAITEC2MWFloating(self, c) RESULT(correct
     k = (2.0_WP * PI * self % Freqs) / c
 
     ! Equivalent diameter for the elliptical cross-section
-    D_eff = sqrt(self % Diam_y * self % Diam_z) / 2.0_WP
+    D_eff = sqrt(self % Diam_y * self % Diam_z)
 
     alpha_floats = alpha_hankel(k, D_eff)    ! Shape (nf)
 

@@ -41,7 +41,7 @@ TYPE, EXTENDS(WindTurbine_t) :: DTU10MWFloating_t
     REAL(WP) :: rho_wat  = 1025.0_WP    ! [kg/m^3] Water density
     REAL(WP) :: rho_mat  = 7850.0_WP    ! [kg/m^3] Material density
     REAL(WP) :: t        = 0.023_WP     ! [m] Wall thickness
-    REAL(WP) :: wet_area = 9659.07      ! [m^2] Wetted area
+    REAL(WP) :: wet_area = 9359.07_WP   ! [m^2] Wetted area
 
     ! [-] Column members ID list: [[0,1],[2,3],[4,5]]
     INTEGER(I32) :: col_members(3,2) = reshape([0_I32, 2_I32, 4_I32, 1_I32, 3_I32, 5_I32], [3, 2])
