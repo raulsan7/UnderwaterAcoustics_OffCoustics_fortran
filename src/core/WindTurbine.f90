@@ -264,6 +264,8 @@ SUBROUTINE read_input(self, config, verbose)
                            Nmembers=self % Nmembers, Nnodes=self % Nnodes, From=config % From, &
                            Upto=config % Upto, verbose=.false., Time_out=self % Time, &
                            Array_out=self % acc, unit_out=unit, status=status)
+        if (status /= 0_I32) error stop "WindTurbine % read_input: failed to read acceleration channels from " &
+                                        // trim(self % OP_output_path)
     else
         error stop "WindTurbine % read_input: Nmembers and Nnodes must be positive integers to read SubDyn nodes"
     end if
@@ -337,7 +339,7 @@ SUBROUTINE translate_align_with_WindDir(self)
         nt = size(self % acc, 1)
         nm = size(self % acc, 2)
         nn = size(self % acc, 3)
-        !$OMP PARALLEL DO COLLAPSE(3)
+        !$OMP PARALLEL DO COLLAPSE(3) PRIVATE(x_old, y_old)
         do n = 1, nn
             do m = 1, nm
                 do i = 1, nt
@@ -354,7 +356,7 @@ SUBROUTINE translate_align_with_WindDir(self)
     if (ALLOCATED(self % xyz_all)) then
         nm = size(self % xyz_all, 1)
         nn = size(self % xyz_all, 2)
-        !$OMP PARALLEL DO COLLAPSE(2)
+        !$OMP PARALLEL DO COLLAPSE(2) PRIVATE(x_old, y_old)
         do i = 1, nm
             do j = 1, nn
                 x_old = self % xyz_all(i, j, 1)
@@ -434,8 +436,8 @@ SUBROUTINE save_turbine_params(turbine, save_path, istr)
     ! Local variables
     CHARACTER(len=:), ALLOCATABLE :: sfx
 
-    
-    sfx = ''; if (PRESENT(istr)) sfx = '_' // istr
+
+    sfx = '' ; if (present(istr)) sfx = '_' // istr
 
     CALL save_variable(save_path, "case_type" // sfx , turbine % case_type)
     CALL save_variable(save_path, "WindSpeed" // sfx , turbine % WindSpeed)

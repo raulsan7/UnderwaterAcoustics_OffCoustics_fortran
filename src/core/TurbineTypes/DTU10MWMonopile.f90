@@ -17,7 +17,7 @@
 MODULE DTU10MWMonopile
 
 USE Kinds
-USE Types
+USE Types, ONLY: Config_WindTurbine_t
 USE WindTurbine, ONLY: WindTurbine_t, drivetrain10MW_excitation_spectrum, init
 
 IMPLICIT NONE
@@ -63,8 +63,8 @@ CONTAINS
 SUBROUTINE init_DTU10MWMonopile(self, config)
     ! -------------------------------------------------------------------------
     ! Sets the monopile-specific (hardcoded) rpm-curve path, marks the turbine
-    ! as monopile-founded (both on self and on config), and delegates to the
-    ! base WindTurbine_t % init for the remaining shared initialization steps.
+    ! as monopile-founded, and delegates to the base WindTurbine_t % init for
+    ! the remaining shared initialization steps.
     ! -------------------------------------------------------------------------
 
     CLASS(DTU10MWMonopile_t)  , INTENT(INOUT) :: self      ! [-] Turbine instance
@@ -81,8 +81,8 @@ SUBROUTINE init_DTU10MWMonopile(self, config)
     inquire(file=self % path_rpm, exist=exists)
     if (.not. exists) error stop "DTU10MWMonopile % init: RPM curve file not found: " // self % path_rpm
 
-    ! Set the case type
-    self % is_monopile   = .true.
+    ! Flag the turbine as monopile
+    self % is_monopile = .true.
 
     CALL init(self, config)
 
@@ -446,6 +446,7 @@ FUNCTION get_impedance_corrected_force_DTU10MWMonopile(self, c) RESULT(corrected
             end do
         end do
     end do
+    !$OMP END PARALLEL DO
 
     DEALLOCATE(abs_alpha)
 

@@ -166,7 +166,7 @@ TYPE, EXTENDS(Config_Method_t) :: Config_ImageMethod_t
     REAL(WP)     :: UpperHBC               ! [m] z-coordinate of the upper plane; seabed = UpperHBC - depth_base
     REAL(WP)     :: attenuation_surface    ! [-] Attenuation coefficient applied to surface reflections
     REAL(WP)     :: attenuation_bottom     ! [-] Attenuation coefficient applied to bottom reflections
-    REAL(WP)     :: epsilon                ! [-] Small numerical tolerance used to avoid singularities
+    REAL(WP)     :: epsilon                ! [m] Minimum source-observer distance used to floor r
 
 END TYPE Config_ImageMethod_t
 
@@ -196,7 +196,7 @@ TYPE, EXTENDS(Config_Method_t) :: Config_AnalyticalNormalModes_t
 
     INTEGER(I32) :: Nmodes      ! [-] Number of retained modes
     REAL(WP)     :: UpperHBC    ! [m] z-coordinate of the upper plane; seabed = UpperHBC - depth_base
-    REAL(WP)     :: epsilon     ! [-] Small numerical tolerance used to avoid singularities
+    REAL(WP)     :: epsilon     ! [m] Minimum horizontal source-observer distance used to floor r
 
 END TYPE Config_AnalyticalNormalModes_t
 

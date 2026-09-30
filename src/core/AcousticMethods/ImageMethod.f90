@@ -45,7 +45,7 @@ TYPE, EXTENDS(AcousticSolver_t) :: ImageMethod_t
     INTEGER(I32) :: Upper_BC         = -1_I32       ! [-] Upper boundary condition, -1 for p = 0
     INTEGER(I32) :: Lower_BC         = +1_I32       ! [-] Lower boundary condition, +1 for dp = 0
     REAL(WP)     :: Upper_HBC        = 0.0_WP       ! [m] z-coordinate of the upper reflecting plane (e.g. free surface)
-    REAL(WP)     :: Lower_HBC        = -30.0_WP     ! [m] z-coordinate of the lower reflecting plane, Upper_HBC - depth_base
+    REAL(WP)     :: Lower_HBC        = -30.0_WP     ! [m] z-coordinate of the lower plane, Upper_HBC - depth_base
     REAL(WP)     :: up_R             = 1.0_WP       ! [-] Attenuation coefficient for upper boundary reflections
     REAL(WP)     :: lw_R             = 0.5_WP       ! [-] Attenuation coefficient for lower boundary reflections
     REAL(WP)     :: eps              = 1.0e-6_WP    ! [m] Minimum source-observer distance used to floor r
@@ -91,7 +91,6 @@ SUBROUTINE init_ImageMethod(self, sources, config)
     CLASS(ImageMethod_t)  , INTENT(INOUT)              :: self       ! [-] Solver instance
     TYPE(AcousticSource_t), INTENT(INOUT), ALLOCATABLE :: sources    ! [-] Acoustic sources (freed on exit)
     TYPE(Config_t)        , INTENT(INOUT), ALLOCATABLE :: config     ! [-] Global configuration (freed on exit)
-
 
 
     ! Parent variables (sources are moved, not copied)
@@ -175,7 +174,7 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
 
     ! Defaults
     bs = 256_I32 ; if (present(block_size)) bs = block_size
-    
+
     ! Basic checks
     nobs = size(observers, 1)
     if (nobs <= 0_I32) then
@@ -186,13 +185,14 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
 
     if (size(observers, 2) /= 3) error stop "compute_pressure_ImageMethod: observers must have shape (N,3)"
 
-    ! Number of frequencies (take from first turbine)
+    ! Sources must be defined
     if (.not. ALLOCATED(self % sources % xyz) .or. .not. ALLOCATED(self % sources % Force) .or. &
         .not. ALLOCATED(self % sources % Freqs)) then
         error stop "compute_pressure_ImageMethod: no sources defined"
     end if
 
-    nf    = size(self % sources % Freqs)
+    ! Number of frequencies
+    nf = size(self % sources % Freqs)
 
     ALLOCATE(total_pressure(nf, nobs))
     total_pressure = (0.0_WP, 0.0_WP)
@@ -211,8 +211,9 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
             nb     = iend - istart + 1_I32
 
             ! Call kernel for this chunk (p_block will be allocated by the routine)
-            CALL self % dipole_pressure_images(observers(istart:iend, :), self % sources % Freqs, self % image_system % xyz, &
-                                               self % image_system % Force, self % image_system % BC_all, p_block)
+            CALL self % dipole_pressure_images(observers(istart:iend, :), self % sources % Freqs, &
+                                               self % image_system % xyz, self % image_system % Force, &
+                                               self % image_system % BC_all, p_block)
 
             ! Accumulate results into the global array (non-overlapping slices -> no race)
             total_pressure(:, istart:iend) = total_pressure(:, istart:iend) + p_block(:, 1:nb)

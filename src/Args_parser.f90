@@ -1,9 +1,11 @@
 ! ===============================================================================
 ! MODULE: Args_parser
 ! ===============================================================================
-! Reads the four .nml configuration files (Turbine.nml, Solver.nml,
-! Environment.nml, ImagesMethod.nml) that describe a simulation case and
-! packs their contents into the global Config_t structure defined in
+! Reads the .nml configuration files that describe a simulation case
+! (Solver.nml, Environment.nml, WindTurbine.nml or WindFarm.nml,
+! ComputationSetupTurbine.nml or ComputationSetupFarm.nml, and
+! ImagesMethod.nml or AnalyticalNormalModes.nml) and packs their
+! contents into the global Config_t structure defined in
 ! Types.f90. read_input_files is the single entry point: it locates the
 ! config files inside the given directory and dispatches to one reader
 ! subroutine per namelist, plus one extra reader chosen according to the
@@ -32,8 +34,9 @@ CONTAINS
 SUBROUTINE read_input_files(files_path, config)
     ! -------------------------------------------------------------------------
     ! Top-level entry point of the input-parsing stage. Builds the paths of
-    ! the four .nml files from files_path, reads the turbine, solver and
-    ! environment namelists, then dispatches to the method-specific config
+    ! the .nml files from files_path, reads the solver and environment
+    ! namelists, the turbine or wind farm namelists and their
+    ! post-processing setup, then dispatches to the method-specific config
     ! reader based on the selected acoustic solver (config % solver % method).
     ! -------------------------------------------------------------------------
 
@@ -52,7 +55,7 @@ SUBROUTINE read_input_files(files_path, config)
     CHARACTER(len=200) :: AnalyticalNormalModes_config_path
 
 
-    if (.not. ALLOCATED(config)) ALLOCATE(Config_t :: config)
+    ALLOCATE(Config_t :: config)
 
     turbine_config_path     = files_path // "WindTurbine.nml"
     farm_config_path        = files_path // "WindFarm.nml"
@@ -79,7 +82,8 @@ SUBROUTINE read_input_files(files_path, config)
         computation_config_path = files_path // "ComputationSetupFarm.nml"
 
     CASE DEFAULT
-        error stop "read_input_files(): Unknown simulation_type (use 'turbine' or 'farm')"
+        error stop "read_input_files(): Unknown simulation_type (use 'turbine' or 'farm'): " // &
+                   trim(config % solver % simulation_type)
     END SELECT
 
     CALL read_computation_config(computation_config_path, config)
@@ -96,7 +100,7 @@ SUBROUTINE read_input_files(files_path, config)
         CALL read_AnalyticalNormalModes_config(AnalyticalNormalModes_config_path, config)
 
     CASE DEFAULT
-        error stop "read_input_files(): Unknown method "
+        error stop "read_input_files(): Unknown method " // trim(config % solver % method)
     END SELECT
 
 END SUBROUTINE read_input_files
@@ -104,12 +108,13 @@ END SUBROUTINE read_input_files
 
 SUBROUTINE read_turbine_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads the "turbine_config" namelist from Turbine.nml (rootname, OpenFAST
-    ! output paths, wind/depth conditions, node counts, time window, frequency
-    ! filtering, etc.) and packs the values into config % turbine.
+    ! Reads the "turbine_config" namelist from WindTurbine.nml (rootname,
+    ! OpenFAST output paths, wind conditions, placement, node counts, time
+    ! window, frequency filtering, etc.) and packs the values into
+    ! config % turbine.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to Turbine.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to WindTurbine.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
@@ -182,7 +187,7 @@ SUBROUTINE read_turbine_config(path, config)
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
-        stop
+        error stop
     end if
 
     rewind(unit_num)
@@ -190,7 +195,7 @@ SUBROUTINE read_turbine_config(path, config)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &turbine_config: ", trim(iomsg)
         close(unit_num)
-        stop
+        error stop
     end if
 
     close(unit_num)
@@ -297,7 +302,7 @@ SUBROUTINE read_farm_config(path, config)
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
-        stop
+        error stop
     end if
 
     rewind(unit_num)
@@ -305,7 +310,7 @@ SUBROUTINE read_farm_config(path, config)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &farm_config: ", trim(iomsg)
         close(unit_num)
-        stop
+        error stop
     end if
 
     ! --- 3. Count the &turbine blocks --- !
@@ -317,7 +322,7 @@ SUBROUTINE read_farm_config(path, config)
         if (ierr /= 0_I32) then
             write(*, '(A,I0,A)') " ERROR: Failed to read &turbine block ", n + 1_I32, ": " // trim(iomsg)
             close(unit_num)
-            stop
+            error stop
         end if
         n = n + 1_I32
     end do
@@ -325,7 +330,7 @@ SUBROUTINE read_farm_config(path, config)
     if (n == 0_I32) then
         write(*,*) "ERROR: No &turbine block found in ", path
         close(unit_num)
-        stop
+        error stop
     end if
 
     config % farm % Nturbines = n
@@ -353,7 +358,7 @@ SUBROUTINE read_farm_config(path, config)
         if (trim(rootname) == 'None') then
             write(*, '(A,I0)') " ERROR: rootname missing in &turbine block ", i
             close(unit_num)
-            stop
+            error stop
         end if
 
         ! --- 5. Pack values into Config_t: per-turbine, shared and environment depth --- !
@@ -442,7 +447,7 @@ SUBROUTINE read_solver_config(path, config)
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
-        stop
+        error stop
     end if
 
     rewind(unit_num)
@@ -450,7 +455,7 @@ SUBROUTINE read_solver_config(path, config)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &solver_config: ", trim(iomsg)
         close(unit_num)
-        stop
+        error stop
     end if
 
     close(unit_num)
@@ -505,7 +510,7 @@ SUBROUTINE read_environment_config(path, config)
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
-        stop
+        error stop
     end if
 
     rewind(unit_num)
@@ -513,7 +518,7 @@ SUBROUTINE read_environment_config(path, config)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &environment_config: ", trim(iomsg)
         close(unit_num)
-        stop
+        error stop
     end if
 
     close(unit_num)
@@ -576,7 +581,7 @@ SUBROUTINE read_ImageMethod_config(path, config)
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
-        stop
+        error stop
     end if
 
     rewind(unit_num)
@@ -584,7 +589,7 @@ SUBROUTINE read_ImageMethod_config(path, config)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &ImagesMethod_config: ", trim(iomsg)
         close(unit_num)
-        stop
+        error stop
     end if
 
     close(unit_num)
@@ -641,7 +646,7 @@ SUBROUTINE read_AnalyticalNormalModes_config(path, config)
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
-        stop
+        error stop
     end if
 
     rewind(unit_num)
@@ -649,7 +654,7 @@ SUBROUTINE read_AnalyticalNormalModes_config(path, config)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &AnalyticalNormalModes_config: ", trim(iomsg)
         close(unit_num)
-        stop
+        error stop
     end if
 
     close(unit_num)
@@ -735,14 +740,14 @@ SUBROUTINE read_do_config(path, config)
     do_line          = .true.
     do_sliceXY       = .true.
     do_sliceXZ       = .true.
-    do_sliceVertical = .false.    ! New step: off unless requested, so older files keep their behaviour
+    do_sliceVertical = .false.    ! Off unless requested: files without this switch do not run the step
     do_sphere        = .true.
 
     ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
-        stop
+        error stop
     end if
 
     rewind(unit_num)
@@ -750,7 +755,7 @@ SUBROUTINE read_do_config(path, config)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &do_config: ", trim(iomsg)
         close(unit_num)
-        stop
+        error stop
     end if
 
     close(unit_num)
@@ -794,11 +799,11 @@ END SUBROUTINE read_do_config
 SUBROUTINE read_spectrums_config(path, config)
     ! -------------------------------------------------------------------------
     ! Reads the "spectrums_config" namelist from ComputationSetupTurbine.nml
-    ! (number of spectrum observer points and their coordinates) and packs
-    ! the values into config % run_inputs.
+    ! or ComputationSetupFarm.nml (number of spectrum observer points and
+    ! their coordinates) and packs the values into config % run_inputs.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
@@ -829,7 +834,7 @@ SUBROUTINE read_spectrums_config(path, config)
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
-        stop
+        error stop
     end if
 
     rewind(unit_num)
@@ -837,14 +842,14 @@ SUBROUTINE read_spectrums_config(path, config)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &spectrums_config: ", trim(iomsg)
         close(unit_num)
-        stop
+        error stop
     end if
 
     close(unit_num)
 
     if (n_observers > MAX_PARSE_OBS) then
         write(*,*) "ERROR read_spectrums_config: n_observers exceeds the internal parsing cap of ", MAX_PARSE_OBS
-        stop
+        error stop
     end if
 
     ! --- 4. Pack values into Config_t --- !
@@ -861,12 +866,12 @@ END SUBROUTINE read_spectrums_config
 
 SUBROUTINE read_polar_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads the "polar_config" namelist from ComputationSetupTurbine.nml
-    ! (circle radius, depth, observer count and centre) and packs the values
-    ! into config % run_inputs.
+    ! Reads the "polar_config" namelist from ComputationSetupTurbine.nml or
+    ! ComputationSetupFarm.nml (circle radius, depth, observer count and
+    ! centre) and packs the values into config % run_inputs.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
@@ -895,7 +900,7 @@ SUBROUTINE read_polar_config(path, config)
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
-        stop
+        error stop
     end if
 
     rewind(unit_num)
@@ -903,7 +908,7 @@ SUBROUTINE read_polar_config(path, config)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &polar_config: ", trim(iomsg)
         close(unit_num)
-        stop
+        error stop
     end if
 
     close(unit_num)
@@ -920,11 +925,12 @@ END SUBROUTINE read_polar_config
 SUBROUTINE read_cylinder_config(path, config)
     ! -------------------------------------------------------------------------
     ! Reads the "cylinder_config" namelist from ComputationSetupTurbine.nml
-    ! (cylinder radius, azimuthal and vertical observer counts, and centre)
-    ! and packs the values into config % run_inputs.
+    ! or ComputationSetupFarm.nml (cylinder radius, azimuthal and vertical
+    ! observer counts, and centre) and packs the values into
+    ! config % run_inputs.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
@@ -953,7 +959,7 @@ SUBROUTINE read_cylinder_config(path, config)
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
-        stop
+        error stop
     end if
 
     rewind(unit_num)
@@ -961,7 +967,7 @@ SUBROUTINE read_cylinder_config(path, config)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &cylinder_config: ", trim(iomsg)
         close(unit_num)
-        stop
+        error stop
     end if
 
     close(unit_num)
@@ -1012,7 +1018,7 @@ SUBROUTINE read_decay_config(path, config)
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
-        stop
+        error stop
     end if
 
     rewind(unit_num)
@@ -1020,12 +1026,12 @@ SUBROUTINE read_decay_config(path, config)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &decay_config: ", trim(iomsg)
         close(unit_num)
-        stop
+        error stop
     end if
 
     close(unit_num)
 
-    ! --- 4. Pack values into Config_t ---
+    ! --- 4. Pack values into Config_t --- !
     config % run_inputs % params_decay % distance_decay = distance_decay
     config % run_inputs % params_decay % n_decay        = n_decay
     config % run_inputs % params_decay % z_decay        = z_decay
@@ -1036,12 +1042,12 @@ END SUBROUTINE read_decay_config
 
 SUBROUTINE read_line_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads the "line_config" namelist from ComputationSetupTurbine.nml
-    ! (line endpoints, observer count and spacing mode) and packs the values
-    ! into config % run_inputs.
+    ! Reads the "line_config" namelist from ComputationSetupTurbine.nml or
+    ! ComputationSetupFarm.nml (line endpoints, observer count and spacing
+    ! mode) and packs the values into config % run_inputs.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
@@ -1071,7 +1077,7 @@ SUBROUTINE read_line_config(path, config)
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
-        stop
+        error stop
     end if
 
     rewind(unit_num)
@@ -1079,7 +1085,7 @@ SUBROUTINE read_line_config(path, config)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &line_config: ", trim(iomsg)
         close(unit_num)
-        stop
+        error stop
     end if
 
     close(unit_num)
@@ -1096,11 +1102,11 @@ END SUBROUTINE read_line_config
 SUBROUTINE read_sliceXY_config(path, config)
     ! -------------------------------------------------------------------------
     ! Reads the "sliceXY_config" namelist from ComputationSetupTurbine.nml
-    ! (slice depth, grid dimensions, extents and centre) and packs the values
-    ! into config % run_inputs.
+    ! or ComputationSetupFarm.nml (slice depth, grid dimensions, extents and
+    ! centre) and packs the values into config % run_inputs.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
@@ -1133,7 +1139,7 @@ SUBROUTINE read_sliceXY_config(path, config)
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
-        stop
+        error stop
     end if
 
     rewind(unit_num)
@@ -1141,7 +1147,7 @@ SUBROUTINE read_sliceXY_config(path, config)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &sliceXY_config: ", trim(iomsg)
         close(unit_num)
-        stop
+        error stop
     end if
 
     close(unit_num)
@@ -1160,11 +1166,11 @@ END SUBROUTINE read_sliceXY_config
 SUBROUTINE read_sliceXZ_config(path, config)
     ! -------------------------------------------------------------------------
     ! Reads the "sliceXZ_config" namelist from ComputationSetupTurbine.nml
-    ! (slice position, grid dimensions and x/z extents) and packs the values
-    ! into config % run_inputs.
+    ! or ComputationSetupFarm.nml (slice position, grid dimensions and x/z
+    ! extents) and packs the values into config % run_inputs.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
@@ -1195,7 +1201,7 @@ SUBROUTINE read_sliceXZ_config(path, config)
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
-        stop
+        error stop
     end if
 
     rewind(unit_num)
@@ -1203,7 +1209,7 @@ SUBROUTINE read_sliceXZ_config(path, config)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &sliceXZ_config: ", trim(iomsg)
         close(unit_num)
-        stop
+        error stop
     end if
 
     close(unit_num)
@@ -1264,7 +1270,7 @@ SUBROUTINE read_sliceVertical_config(path, config)
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
-        stop
+        error stop
     end if
 
     rewind(unit_num)
@@ -1274,7 +1280,7 @@ SUBROUTINE read_sliceVertical_config(path, config)
     else if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &sliceVertical_config: ", trim(iomsg)
         close(unit_num)
-        stop
+        error stop
     end if
 
     close(unit_num)
@@ -1328,7 +1334,7 @@ SUBROUTINE read_sphere_config(path, config)
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Could not open input file: ", path
-        stop
+        error stop
     end if
 
     rewind(unit_num)
@@ -1336,7 +1342,7 @@ SUBROUTINE read_sphere_config(path, config)
     if (ierr /= 0_I32) then
         write(*,*) "ERROR: Failed to read &sphere_config: ", trim(iomsg)
         close(unit_num)
-        stop
+        error stop
     end if
 
     close(unit_num)

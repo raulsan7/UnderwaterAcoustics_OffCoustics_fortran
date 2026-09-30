@@ -3,10 +3,12 @@
 ! ===============================================================================
 ! Handles all file I/O for the codebase: parsing OpenFAST SubDyn summary files
 ! (node/member topology), parsing OpenFAST binary/ASCII output channel files,
-! a generic HDF5 variable-saving facility (via a save_variable generic
-! interface overloaded for scalar/1D/2D/3D real/int/complex/logical/character
-! data), small string helpers (to_upper, swap_extension, ensure_parent_dir),
-! and a curve-lookup helper (read_curve).
+! a generic HDF5 variable-saving facility (the save_variable dispatcher, whose
+! CLASS(*) assumed-rank argument is forwarded to the save_to_hdf5 generic
+! interface: real/integer/complex data of rank 0 to 3, plus logical and
+! character scalars; complex arrays are stored as (2, N...) in Fortran order,
+! i.e. (..., N, 2) when read with h5py), small string helpers (to_upper,
+! swap_extension, ensure_parent_dir), and a curve-lookup helper (read_curve).
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -78,8 +80,8 @@ SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
     REAL(WP)        , INTENT(OUT), ALLOCATABLE :: Nodes(:,:,:)    ! [m] Nodes array (Nmembers, Nnodes, 3)
 
     ! Local variables
-    INTEGER(I32) :: Nmembers_ = 8_I32, Nnodes_ = 5_I32
-    LOGICAL      :: verbose_ = .false.
+    INTEGER(I32) :: Nmembers_, Nnodes_
+    LOGICAL      :: verbose_
 
     INTEGER(I32)       , ALLOCATABLE :: member_nodes(:,:)
     REAL(WP)           , ALLOCATABLE :: Nodes_flat(:,:)
@@ -92,9 +94,9 @@ SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
 
 
     ! Defaults
-    if (present(Nmembers)) Nmembers_ = Nmembers
-    if (present(Nnodes))   Nnodes_   = Nnodes
-    if (present(verbose))  verbose_  = verbose
+    Nmembers_ = 8_I32   ; if (present(Nmembers)) Nmembers_ = Nmembers
+    Nnodes_   = 5_I32   ; if (present(Nnodes))   Nnodes_   = Nnodes
+    verbose_  = .false. ; if (present(verbose))  verbose_  = verbose
 
     ! Initialize IEEE NaN for padding missing nodes
     nan_val = ieee_value(1.0_WP, IEEE_QUIET_NAN)
@@ -247,10 +249,10 @@ SUBROUTINE read_input_SD(filename, what, skip, Nmembers, Nnodes, From, Upto, ver
     INTEGER(I32)    , INTENT(OUT)              :: status                ! [-] 0 on success, nonzero on error
 
     ! Local variables
-    CHARACTER(len=32) :: what_    = "acceleration"
-    INTEGER(I32)      :: skip_ = 1_I32, Nmembers_ = 8_I32, Nnodes_ = 5_I32
-    REAL(WP)          :: From_ = 0.0_WP, Upto_ = 1.0_WP
-    LOGICAL           :: verbose_ = .false.
+    CHARACTER(len=32) :: what_
+    INTEGER(I32)      :: skip_, Nmembers_, Nnodes_
+    REAL(WP)          :: From_, Upto_
+    LOGICAL           :: verbose_
 
     ! Channel names, raw data and work indices
     CHARACTER(len=16)              :: strx, stry, strz
@@ -263,13 +265,13 @@ SUBROUTINE read_input_SD(filename, what, skip, Nmembers, Nnodes, From, Upto, ver
     status = 0_I32
 
     ! Apply optional arguments
-    if (present(what))     what_     = trim(what)
-    if (present(skip))     skip_     = skip
-    if (present(Nmembers)) Nmembers_ = Nmembers
-    if (present(Nnodes))   Nnodes_   = Nnodes
-    if (present(From))     From_     = From
-    if (present(Upto))     Upto_     = Upto
-    if (present(verbose))  verbose_  = verbose
+    what_     = "acceleration" ; if (present(what))     what_     = trim(what)
+    skip_     = 1_I32          ; if (present(skip))     skip_     = skip
+    Nmembers_ = 8_I32          ; if (present(Nmembers)) Nmembers_ = Nmembers
+    Nnodes_   = 5_I32          ; if (present(Nnodes))   Nnodes_   = Nnodes
+    From_     = 0.0_WP         ; if (present(From))     From_     = From
+    Upto_     = 1.0_WP         ; if (present(Upto))     Upto_     = Upto
+    verbose_  = .false.        ; if (present(verbose))  verbose_  = verbose
 
     ! --- 1. Determine channel suffixes based on 'what' --- !
     SELECT CASE (trim(what_))
@@ -342,11 +344,18 @@ SUBROUTINE read_input_SD(filename, what, skip, Nmembers, Nnodes, From, Upto, ver
     nt = size(raw_time)
     if (nt == 0_I32) then
         write(*,*) "Warning: No data returned from parser."
+        status = -1_I32
         return
     end if
 
     ! --- 4. Decimate (skip) and reshape into 4D tensor --- !
     nt_skip = (nt - 1_I32) / skip_ + 1_I32
+    if (nt_skip < 2_I32) then
+        write(*,*) "Error: At least 2 time samples are needed after decimation, got ", nt_skip
+        status = -1_I32
+        return
+    end if
+
     ALLOCATE(Time_out(nt_skip))
     ALLOCATE(Array_out(nt_skip, Nmembers_, Nnodes_, 3))
 
@@ -355,7 +364,7 @@ SUBROUTINE read_input_SD(filename, what, skip, Nmembers, Nnodes, From, Upto, ver
         Time_out(t_skip) = raw_time(t_orig)
         do m = 1, Nmembers_
             base = (m - 1_I32) * Nnodes_ * 3_I32 + 1_I32
-            !$OMP SIMD
+            !$OMP SIMD PRIVATE(idx)
             do n = 1, Nnodes_
                 idx = base + (n - 1_I32) * 3_I32
                 Array_out(t_skip, m, n, 1) = raw_array(t_orig, idx)
@@ -395,17 +404,17 @@ SUBROUTINE parse_channels_auto(full_path, plotChannels, From, Upto, &
     INTEGER(I32)     , INTENT(OUT)              :: status                ! [-] 0 on success, nonzero on error
 
     ! Local variables
-    REAL(WP)     :: From_ = 0.0_WP, Upto_ = 1.0_WP
-    LOGICAL      :: avail_ch = .false., verb = .true.
-    INTEGER(I32) :: c_size = 4096_I32, ext_idx
+    REAL(WP)     :: From_, Upto_
+    LOGICAL      :: avail_ch, verb
+    INTEGER(I32) :: c_size, ext_idx
 
 
     ! Defaults
-    if (present(From))               From_    = From
-    if (present(Upto))               Upto_    = Upto
-    if (present(available_channels)) avail_ch = available_channels
-    if (present(verbose))            verb     = verbose
-    if (present(chunk_size))         c_size   = chunk_size
+    From_    = 0.0_WP   ; if (present(From))               From_    = From
+    Upto_    = 1.0_WP   ; if (present(Upto))               Upto_    = Upto
+    avail_ch = .false.  ; if (present(available_channels)) avail_ch = available_channels
+    verb     = .true.   ; if (present(verbose))            verb     = verbose
+    c_size   = 4096_I32 ; if (present(chunk_size))         c_size   = chunk_size
     status = 0_I32
 
     ! Detect extension
@@ -596,7 +605,7 @@ SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
         N_cols_raw = NumOutChans
     end if
 
-    chunk_rows = chunk_size
+    chunk_rows = max(1_I32, chunk_size)
     ALLOCATE(raw_data(N_cols_raw, chunk_rows))
 
     row_counter = 0_I32
@@ -629,7 +638,7 @@ SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
                 end do
 
                 ! Decode data channels with SIMD
-                !$OMP SIMD
+                !$OMP SIMD PRIVATE(k, val_i16)
                 do j = 1, req_chans
                     if (ReqIdx(j) /= -1_I32) then
                         k = ReqIdx(j)
@@ -647,6 +656,8 @@ SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
         row_counter = row_counter + rows_to_read
         if (written == n_target_rows) exit
     end do
+
+    close(fu)
 
     if (verbose) then
         write(*,*) "Output array shape: [", written, ", ", req_chans, "]"
@@ -820,6 +831,7 @@ SUBROUTINE parse_channels_ascii(full_path, plotChannels, From_val, Upto_val, &
     if (n_filtered <= 0_I32) then
         write(*,*) "Warning: Filter range resulted in 0 output rows."
         close(fu)
+        status = -1_I32
         return
     end if
 
@@ -859,7 +871,7 @@ END SUBROUTINE parse_channels_ascii
 FUNCTION read_curve(filename, ws, col_idx) RESULT(val)
     ! -------------------------------------------------------------------------
     ! Reads a two-line-header CSV lookup table (windspeed vs. one or more
-    ! dependent columns) and linearly interpolates (with flat extrapolation
+    ! dependent columns) and linearly interpolates (with linear extrapolation
     ! outside the table's range) the requested column at the given wind speed.
     ! -------------------------------------------------------------------------
 
@@ -1196,8 +1208,9 @@ SUBROUTINE save_variable(save_path, var_name, var)
     ! -------------------------------------------------------------------------
     ! Generic dispatcher: given a variable of assumed rank/type (CLASS(*)), it
     ! uses SELECT RANK / SELECT TYPE to identify the actual rank (0 to 3) and
-    ! type (real/integer/complex/logical) of "var" and forwards the call to
-    ! the matching save_to_hdf5 (save_hdf5_<type>_<rank>) specific procedure.
+    ! type (real/integer/complex, plus logical/character scalars) of "var" and
+    ! forwards the call to the matching save_to_hdf5 (save_hdf5_<type>_<rank>)
+    ! specific procedure. Any other type or rank stops the program.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN) :: save_path    ! [-] Path to the HDF5 file
@@ -1218,6 +1231,8 @@ SUBROUTINE save_variable(save_path, var_name, var)
             CALL save_to_hdf5(save_path, trim(var_name), v)
         TYPE IS (CHARACTER(len=*))
             CALL save_to_hdf5(save_path, trim(var_name), v)
+        CLASS DEFAULT
+            error stop "save_variable: unsupported type for dataset " // trim(var_name)
         END SELECT
     RANK (1)
         SELECT TYPE (v => v_rank)
@@ -1227,6 +1242,8 @@ SUBROUTINE save_variable(save_path, var_name, var)
             CALL save_to_hdf5(save_path, trim(var_name), v)
         TYPE IS (COMPLEX(WP))
             CALL save_to_hdf5(save_path, trim(var_name), v)
+        CLASS DEFAULT
+            error stop "save_variable: unsupported type for dataset " // trim(var_name)
         END SELECT
     RANK (2)
         SELECT TYPE (v => v_rank)
@@ -1236,6 +1253,8 @@ SUBROUTINE save_variable(save_path, var_name, var)
             CALL save_to_hdf5(save_path, trim(var_name), v)
         TYPE IS (COMPLEX(WP))
             CALL save_to_hdf5(save_path, trim(var_name), v)
+        CLASS DEFAULT
+            error stop "save_variable: unsupported type for dataset " // trim(var_name)
         END SELECT
     RANK (3)
         SELECT TYPE (v => v_rank)
@@ -1245,7 +1264,11 @@ SUBROUTINE save_variable(save_path, var_name, var)
             CALL save_to_hdf5(save_path, trim(var_name), v)
         TYPE IS (COMPLEX(WP))
             CALL save_to_hdf5(save_path, trim(var_name), v)
+        CLASS DEFAULT
+            error stop "save_variable: unsupported type for dataset " // trim(var_name)
         END SELECT
+    RANK DEFAULT
+        error stop "save_variable: unsupported rank for dataset " // trim(var_name)
     END SELECT
 
 END SUBROUTINE save_variable
@@ -1583,7 +1606,8 @@ END SUBROUTINE save_hdf5_int_1d
 SUBROUTINE save_hdf5_cplx_1d(filepath, var_name, data_array)
     ! -------------------------------------------------------------------------
     ! save_to_hdf5 overload for a rank-1 COMPLEX(WP) array, written as a
-    ! (2, N) H5T_NATIVE_DOUBLE dataset holding (real part, imaginary part).
+    ! (2, N) H5T_NATIVE_DOUBLE dataset holding (real part, imaginary part),
+    ! i.e. (N, 2) when read with h5py.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN) :: filepath         ! [-] Path to the HDF5 file
@@ -1726,7 +1750,8 @@ END SUBROUTINE save_hdf5_int_2d
 SUBROUTINE save_hdf5_cplx_2d(filepath, var_name, data_array)
     ! -------------------------------------------------------------------------
     ! save_to_hdf5 overload for a rank-2 COMPLEX(WP) array, written as a
-    ! (2, N1, N2) H5T_NATIVE_DOUBLE dataset holding (real, imaginary) parts.
+    ! (2, N1, N2) H5T_NATIVE_DOUBLE dataset holding (real, imaginary) parts,
+    ! i.e. (N2, N1, 2) when read with h5py.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN) :: filepath           ! [-] Path to the HDF5 file
@@ -1872,7 +1897,8 @@ END SUBROUTINE save_hdf5_int_3d
 SUBROUTINE save_hdf5_cplx_3d(filepath, var_name, data_array)
     ! -------------------------------------------------------------------------
     ! save_to_hdf5 overload for a rank-3 COMPLEX(WP) array, written as a
-    ! (2, N1, N2, N3) H5T_NATIVE_DOUBLE dataset holding (real, imaginary) parts.
+    ! (2, N1, N2, N3) H5T_NATIVE_DOUBLE dataset holding (real, imaginary) parts,
+    ! i.e. (N3, N2, N1, 2) when read with h5py.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN) :: filepath             ! [-] Path to the HDF5 file

@@ -532,9 +532,9 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
     ! Evaluates the normal-mode dipole Green's function for a block of
     ! observers, summed over every real source and every retained mode, at
     ! every frequency. The vertical modal shapes
-    !     Psi_m(z)   = sqrt(2*rho/H) * sin(k_zm*z)
-    !     dPsi_m/dz  = sqrt(2*rho/H) * k_zm * cos(k_zm*z)
-    ! (Psi_m(0) = 0, dPsi_m/dz(-H) = 0) are frequency independent, so they
+    !     Psi_m(z)   = sqrt(2*rho/H) * sin(k_zm*(z - Upper_HBC))
+    !     dPsi_m/dz  = sqrt(2*rho/H) * k_zm * cos(k_zm*(z - Upper_HBC))
+    ! (Psi_m(Upper_HBC) = 0, dPsi_m/dz(Lower_HBC) = 0) are frequency independent, so they
     ! are tabulated once per block for observers and sources. Horizontal
     ! distances are also precomputed (floored at eps). For each (f, m) the
     ! horizontal wavenumber k_rm = sqrt(k^2 - k_zm^2) is either real

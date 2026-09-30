@@ -18,7 +18,7 @@ MODULE WindFarm
 
 USE Kinds
 USE Types
-USE IOUtils, ONLY: save_variable
+USE IOUtils, ONLY: save_variable, to_upper
 USE WindTurbine, ONLY: WindTurbine_t, save_turbine_params, write_turbine_txt
 
 IMPLICIT NONE
@@ -57,7 +57,7 @@ TYPE :: WindFarm_t
     PROCEDURE :: compute_forces => compute_forces_WindFarm      ! Reads OpenFAST outputs and computes forces
     PROCEDURE :: farm_to_source => farm_to_source_WindFarm      ! Merges every turbine into one source set
     PROCEDURE :: save_params    => save_params_WindFarm         ! Farm and per-turbine parameters -> HDF5
-    PROCEDURE :: write_txt      => write_txt_WindFarm           ! Farm and per-turbine blocks of the .dat    
+    PROCEDURE :: write_txt      => write_txt_WindFarm           ! Farm and per-turbine blocks of the .dat
 
 END TYPE WindFarm_t
 
@@ -70,23 +70,25 @@ SUBROUTINE new_turbine(case_type, wt)
     ! Allocates a turbine of the concrete type named by case_type. Shared by
     ! the single-turbine and the wind-farm paths.
     ! -------------------------------------------------------------------------
+
     USE DTU10MWMonopile  , ONLY: DTU10MWMonopile_t
     USE DTU10MWFloating  , ONLY: DTU10MWFloating_t
     USE SAITEC2MWFloating, ONLY: SAITEC2MWFloating_t
 
-    CHARACTER(len=*)    , INTENT(IN) :: case_type           ! [-] Turbine model tag
-    CLASS(WindTurbine_t), INTENT(OUT), ALLOCATABLE :: wt    ! [-] New turbine instance
+    CHARACTER(len=*)    , INTENT(IN)               :: case_type    ! [-] Turbine model tag
+    CLASS(WindTurbine_t), INTENT(OUT), ALLOCATABLE :: wt           ! [-] New turbine instance
 
-    SELECT CASE(trim(case_type))
-    CASE('DTU10MWMonopile')
+
+    SELECT CASE (trim(case_type))
+    CASE ('DTU10MWMonopile')
         ALLOCATE(DTU10MWMonopile_t :: wt)
-    CASE('DTU10MWFloating')
+    CASE ('DTU10MWFloating')
         ALLOCATE(DTU10MWFloating_t :: wt)
-    CASE('SAITEC2MWFloating')
+    CASE ('SAITEC2MWFloating')
         ALLOCATE(SAITEC2MWFloating_t :: wt)
     CASE DEFAULT
         write(*,*) 'Unsupported turbine type: ' // trim(case_type)
-        stop
+        error stop
     END SELECT
 
 END SUBROUTINE new_turbine
@@ -97,8 +99,9 @@ SUBROUTINE init_WindFarm(self, config)
     ! Allocates every turbine with the concrete type given by its case_type
     ! and runs its constructor (paths, rpm curve, shared parameters).
     ! -------------------------------------------------------------------------
+
     CLASS(WindFarm_t)      , INTENT(INOUT) :: self      ! [-] Farm instance
-    TYPE(Config_WindFarm_t), INTENT(INOUT) :: config    ! [-] farm configuration
+    TYPE(Config_WindFarm_t), INTENT(INOUT) :: config    ! [-] Farm configuration
 
     ! Local variables
     INTEGER(I32) :: i
@@ -110,7 +113,7 @@ SUBROUTINE init_WindFarm(self, config)
 
     do i = 1, self % Nturbines
         CALL new_turbine(config % turbines(i) % case_type, self % turbines(i) % wt)
-        CALL self % turbines(i) % wt % init(config = config % turbines(i))
+        CALL self % turbines(i) % wt % init(config=config % turbines(i))
     end do
 
     write(*, '(A,I0,A)') ' >> [WindFarm] Initialized with ', self % Nturbines, ' turbines'
@@ -125,21 +128,20 @@ SUBROUTINE compute_forces_WindFarm(self, config, verbose)
     ! lives in memory at a time (compute_force frees it).
     ! -------------------------------------------------------------------------
 
-    CLASS(WindFarm_t)      , INTENT(INOUT) :: self      ! [-] farm instance
-    TYPE(Config_WindFarm_t), INTENT(INOUT) :: config    ! [-] Farm configuration
-    LOGICAL                , INTENT(IN)    :: verbose   ! [-] Whether to print a summary per turbine
+    CLASS(WindFarm_t)      , INTENT(INOUT) :: self       ! [-] Farm instance
+    TYPE(Config_WindFarm_t), INTENT(INOUT) :: config     ! [-] Farm configuration
+    LOGICAL                , INTENT(IN)    :: verbose    ! [-] Whether to print a summary per turbine
 
     ! Local variables
     INTEGER(I32) :: i
 
-    
+
     do i = 1, self % Nturbines
         write(*, '(A,I0,A,I0,A)') ' >> [WindFarm] Turbine ', i, '/', self % Nturbines, &
                                   ': ' // trim(config % turbines(i) % rootname)
-        CALL self % turbines(i) % wt % read_input(config = config % turbines(i), verbose = verbose)
-        CALL self % turbines(i) % wt % compute_force(config = config % turbines(i), verbose = verbose)
+        CALL self % turbines(i) % wt % read_input(config=config % turbines(i), verbose=verbose)
+        CALL self % turbines(i) % wt % compute_force(config=config % turbines(i), verbose=verbose)
     end do
-
 
 END SUBROUTINE compute_forces_WindFarm
 
@@ -154,16 +156,16 @@ SUBROUTINE farm_to_source_WindFarm(self, config, sources)
     ! turbine's own turbine_to_source.
     ! -------------------------------------------------------------------------
 
-    CLASS(WindFarm_t), INTENT(INOUT) :: self                        ! [-] Farm instance
-    TYPE(Config_t)   , INTENT(IN)    :: config                      ! [-] Global configuration
-    TYPE(AcousticSource_t), INTENT(OUT), ALLOCATABLE :: sources     ! [-] Farm acoustic point sources
+    CLASS(WindFarm_t)     , INTENT(INOUT)            :: self       ! [-] Farm instance
+    TYPE(Config_t)        , INTENT(IN)               :: config     ! [-] Global configuration
+    TYPE(AcousticSource_t), INTENT(OUT), ALLOCATABLE :: sources    ! [-] Farm acoustic point sources
 
     ! Local variables
     TYPE(AcousticSource_t), ALLOCATABLE :: src_i
     LOGICAL               , ALLOCATABLE :: bin_used(:)
     INTEGER(I32)          , ALLOCATABLE :: bin_pos(:), pos_i(:)
-    INTEGER(I32)      :: i, j, k, k_max, nf, Ns, n_i, off, m, s
-    REAL(WP)          :: df, sum_cos, sum_sin
+    INTEGER(I32)                        :: i, j, k, k_max, nf, Ns, n_i, off, m, s
+    REAL(WP)                            :: df, sum_cos, sum_sin
 
 
     ! --- 1. Common FFT grid: every turbine must share df = 1/(nt*dt) --- !
@@ -193,7 +195,7 @@ SUBROUTINE farm_to_source_WindFarm(self, config, sources)
     bin_pos = 0_I32
     j       = 0_I32
     do k = 0, k_max
-        if (bin_used(k)) then 
+        if (bin_used(k)) then
             j          = j + 1_I32
             bin_pos(k) = j
         end if
@@ -204,7 +206,7 @@ SUBROUTINE farm_to_source_WindFarm(self, config, sources)
     ALLOCATE(self % src_offset(self % Nturbines + 1))
     self % src_offset(1) = 0_I32
     do i = 1, self % Nturbines
-        self % src_offset(i+1) = self % src_offset(i) + size(self % turbines(i) % wt % xyz,1)
+        self % src_offset(i+1) = self % src_offset(i) + size(self % turbines(i) % wt % xyz, 1)
     end do
     Ns = self % src_offset(self % Nturbines + 1)
 
@@ -220,9 +222,9 @@ SUBROUTINE farm_to_source_WindFarm(self, config, sources)
         n_i   = size(src_i % xyz, 1)
         pos_i = bin_pos(nint(src_i % Freqs / df, I32))
 
-        sources % xyz(off+1:off+n_i,:) = src_i % xyz
-        sources % Freqs(pos_i)         = src_i % Freqs      ! Copied, not recomputed as k*df
-        
+        sources % xyz(off+1:off+n_i, :) = src_i % xyz
+        sources % Freqs(pos_i)          = src_i % Freqs    ! Copied, not recomputed as k*df
+
         !$OMP PARALLEL DO COLLAPSE(2) PRIVATE(m, s, j)
         do m = 1, 3
             do s = 1, n_i
@@ -253,9 +255,9 @@ SUBROUTINE farm_to_source_WindFarm(self, config, sources)
         sum_sin = sum_sin + sin(self % turbines(i) % wt % WindDir * PI / 180.0_WP)
     end do
 
-    sources % geometry % center = sources % geometry % center / real(self % Nturbines, WP)
-    sources % geometry % origin = sources % geometry % origin / real(self % Nturbines, WP)
-    sources % geometry % direction =  atan2(sum_sin, sum_cos) * 180.0_WP / PI   ! Circular mean
+    sources % geometry % center    = sources % geometry % center / real(self % Nturbines, WP)
+    sources % geometry % origin    = sources % geometry % origin / real(self % Nturbines, WP)
+    sources % geometry % direction = atan2(sum_sin, sum_cos) * 180.0_WP / PI    ! Circular mean
 
     ! Default output folder and file name labels (the solver inserts its method tag in between)
     sources % geometry % out_dir = './farm_acoustic_data/'
@@ -273,8 +275,8 @@ SUBROUTINE save_params_WindFarm(self, save_path)
     ! carry the suffix "_i" (e.g. WindSpeed_2, Structure_nodes_2).
     ! -------------------------------------------------------------------------
 
-    CLASS(WindFarm_t), INTENT(IN) :: self           ! [-] farm instance
-    CHARACTER(len=*) , INTENT(IN) :: save_path      ! [-] Path to the HDF5 output file
+    CLASS(WindFarm_t), INTENT(IN) :: self         ! [-] Farm instance
+    CHARACTER(len=*) , INTENT(IN) :: save_path    ! [-] Path to the HDF5 output file
 
     ! Local variables
     INTEGER(I32)      :: i
@@ -286,8 +288,8 @@ SUBROUTINE save_params_WindFarm(self, save_path)
 
     do i = 1, self % Nturbines
         write(istr, '(I0)') i
-        CALL save_turbine_params(self % turbines(i) % wt, save_path, istr = trim(istr))
-        CALL self % turbines(i) % wt % save_specific_params(save_path, istr = trim(istr))
+        CALL save_turbine_params(self % turbines(i) % wt, save_path, istr=trim(istr))
+        CALL self % turbines(i) % wt % save_specific_params(save_path, istr=trim(istr))
     end do
 
 END SUBROUTINE save_params_WindFarm

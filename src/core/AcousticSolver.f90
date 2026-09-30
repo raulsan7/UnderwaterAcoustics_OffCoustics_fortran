@@ -556,7 +556,7 @@ SUBROUTINE run_spectrums(self)
 
     write(*, '(A)') '>> [Spectrums] computing pressure at observer points...'
 
-    ! Defaults (resolved once, persisted back into run_inputs)
+    ! Defaults: the 3 automatic points are not persisted, update_parameters describes them itself
     associate(pp => self % run_inputs % params_spectrums)
         if (pp % n_observers == DEFAULT_I) then
             ALLOCATE(observers_(3, 3))
@@ -664,7 +664,10 @@ SUBROUTINE run_cylinder(self)
     ! Computes pressure on a vertical cylindrical surface (radius r_cyl,
     ! n_cyl azimuth points x nz_cyl depth levels) around the turbine
     ! barycenter. Saves the reshaped pressure/observer grids and the cylinder
-    ! geometry metadata to the solver's HDF5 file.
+    ! geometry metadata to the solver's HDF5 file. The depth levels include
+    ! both ends (z = -Depth and z = 0), so dA_cylinder is the area of an
+    ! interior cell: a surface integral must weight the first and last
+    ! levels by 1/2 (trapezoid rule).
     ! -------------------------------------------------------------------------
 
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self    ! [-] Solver instance

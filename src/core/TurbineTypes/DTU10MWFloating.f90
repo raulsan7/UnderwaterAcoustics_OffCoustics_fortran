@@ -91,8 +91,8 @@ SUBROUTINE init_DTU10MWFloating(self, config)
     inquire(file=self % path_rpm, exist=exists)
     if (.not. exists) error stop "DTU10MWFloating % init: RPM curve file not found: " // self % path_rpm
 
-    ! Set the case type
-    self % is_monopile   = .false.
+    ! Flag the turbine as floating
+    self % is_monopile = .false.
 
     CALL init(self, config)
 
@@ -141,7 +141,7 @@ SUBROUTINE compute_force_DTU10MWFloating(self, config, verbose)
 
     ! Acceleration flatten
     ALLOCATE(acc_flat(nt, Nm*Nn, 3))
-    !$OMP PARALLEL DO COLLAPSE(2) PRIVATE(i)
+    !$OMP PARALLEL DO COLLAPSE(2) PRIVATE(i, global_idx)
     do j = 1, Nm
         do k = 1, Nn
             global_idx = (j - 1_I32) * Nn + k
@@ -180,7 +180,7 @@ SUBROUTINE compute_force_DTU10MWFloating(self, config, verbose)
 
     ! Convert the 1D arrays into a 2D matrix (Nm, Nn) matching C-order layout
     ALLOCATE(mass_eff(Nm, Nn))
-    !$OMP PARALLEL DO COLLAPSE(2) PRIVATE(i, j)
+    !$OMP PARALLEL DO COLLAPSE(2) PRIVATE(i, j, global_idx)
     do i = 1, Nm
         do j = 1, Nn
             global_idx     = (i - 1_I32) * Nn + j
@@ -520,8 +520,8 @@ END FUNCTION filter_frequencies_DTU10MWFloating
 SUBROUTINE save_specific_params_DTU10MWFloating(self, save_path, istr)
     ! -------------------------------------------------------------------------
     ! Persists the platform-specific geometry and material parameters (column
-    ! diameter, pontoon cross-section, wall thickness, densities, wetted area,
-    ! member ID maps) to the solver's HDF5 output, optionally suffixing each
+    ! diameter, pontoon cross-section, wall thickness, material density, wetted
+    ! area, member ID maps) to the solver's HDF5 output, optionally suffixing each
     ! variable name with an instance tag (istr) when several turbines are saved.
     ! -------------------------------------------------------------------------
 

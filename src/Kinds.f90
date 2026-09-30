@@ -3,8 +3,9 @@
 ! ===============================================================================
 ! Defines the numeric kind parameters (integer and real precisions) and the
 ! fundamental physical/mathematical constants used consistently across the
-! whole off-coustics codebase. Centralizing them here means the working
-! precision (WP) can be changed for the entire project from a single place.
+! whole off-coustics codebase. The working precision (WP) must stay DP: the
+! FFTW3 bindings (C_DOUBLE) and the HDF5 writers (H5T_NATIVE_DOUBLE) assume
+! double precision.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -31,7 +32,7 @@ INTEGER, PARAMETER :: I64 = selected_int_kind(18)    ! [-] 64-bit integer kind
 ! ===============================================================================
 INTEGER, PARAMETER :: SP = selected_real_kind(6, 37)      ! [-] Single precision kind
 INTEGER, PARAMETER :: DP = selected_real_kind(15, 307)    ! [-] Double precision kind
-INTEGER, PARAMETER :: WP = DP                             ! [-] Working precision, change when desired
+INTEGER, PARAMETER :: WP = DP                             ! [-] Working precision (must stay DP, see header)
 
 
 ! ===============================================================================

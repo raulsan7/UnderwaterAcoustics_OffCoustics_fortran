@@ -5,8 +5,9 @@
 ! base: elapsed wall-clock time formatting, duplicate structural-node removal,
 ! FFTW-based real FFT of time series, synthetic drivetrain excitation signal
 ! generation, frequency-mask filtering, a C qsort wrapper for sorting reals,
-! and Bessel/Hankel-function acoustic scattering helpers (K0/K1 modified
-! Bessel approximations) used to build the impedance/shielding correction.
+! the cylindrical scattering-correction coefficient (alpha_hankel), and the
+! Hankel functions of the normal-mode propagator (compute_hankel_complex),
+! whose evanescent branch uses K0/K1 modified Bessel approximations.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -697,9 +698,9 @@ END SUBROUTINE compute_hankel_complex
 PURE FUNCTION bessel_k0(x) RESULT(k0)
     ! -------------------------------------------------------------------------
     ! Abramowitz and Stegun polynomial approximation (9.8.5 - 9.8.6) of the
-    ! modified Bessel function of the second kind, order 0: K0(x) for x > 0.
-    ! Used to build the evanescent-mode Hankel function for the cylindrical
-    ! scattering correction.
+    ! modified Bessel function of the second kind, order 0: K0(x) for x > 0
+    ! (relative error below 2e-7). Used by compute_hankel_complex to build the
+    ! evanescent-mode Hankel function of the normal-mode propagator.
     ! -------------------------------------------------------------------------
 
     REAL(WP), INTENT(IN) :: x     ! [-] Argument (x > 0)
@@ -737,9 +738,9 @@ END FUNCTION bessel_k0
 PURE FUNCTION bessel_k1(x) RESULT(k1)
     ! -------------------------------------------------------------------------
     ! Abramowitz and Stegun polynomial approximation (9.8.9 - 9.8.10) of the
-    ! modified Bessel function of the second kind, order 1: K1(x) for x > 0.
-    ! Used to build the evanescent-mode Hankel function for the cylindrical
-    ! scattering correction.
+    ! modified Bessel function of the second kind, order 1: K1(x) for x > 0
+    ! (relative error below 2e-7). Used by compute_hankel_complex to build the
+    ! evanescent-mode Hankel function of the normal-mode propagator.
     ! -------------------------------------------------------------------------
 
     REAL(WP), INTENT(IN) :: x     ! [-] Argument (x > 0)

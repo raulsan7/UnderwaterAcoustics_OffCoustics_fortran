@@ -122,7 +122,7 @@ $(BUILD)/WindTurbine.o: $(SRC_DIR)/core/WindTurbine.f90 $(BUILD)/Kinds.o $(BUILD
 $(BUILD)/WindFarm.o: $(SRC_DIR)/core/WindFarm.f90 $(BUILD)/Kinds.o $(BUILD)/Types.o $(BUILD)/IOUtils.o $(BUILD)/WindTurbine.o $(BUILD)/DTU10MWMonopile.o $(BUILD)/DTU10MWFloating.o $(BUILD)/SAITEC2MWFloating.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/AcousticSolver.o: $(SRC_DIR)/core/AcousticSolver.f90 $(BUILD)/Kinds.o $(BUILD)/Types.o $(BUILD)/IOUtils.o $(BUILD)/WindTurbine.o | $(BUILD)
+$(BUILD)/AcousticSolver.o: $(SRC_DIR)/core/AcousticSolver.f90 $(BUILD)/Kinds.o $(BUILD)/Types.o $(BUILD)/IOUtils.o $(BUILD)/WindTurbine.o $(BUILD)/WindFarm.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/DTU10MWFloating.o: $(SRC_DIR)/core/TurbineTypes/DTU10MWFloating.f90 $(BUILD)/Kinds.o $(BUILD)/Types.o $(BUILD)/WindTurbine.o $(BUILD)/MathUtils.o $(BUILD)/IOUtils.o | $(BUILD)
@@ -134,10 +134,10 @@ $(BUILD)/DTU10MWMonopile.o: $(SRC_DIR)/core/TurbineTypes/DTU10MWMonopile.f90 $(B
 $(BUILD)/SAITEC2MWFloating.o: $(SRC_DIR)/core/TurbineTypes/SAITEC2MWFloating.f90 $(BUILD)/Kinds.o $(BUILD)/Types.o $(BUILD)/WindTurbine.o $(BUILD)/MathUtils.o $(BUILD)/IOUtils.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/ImageMethod.o: $(SRC_DIR)/core/AcousticMethods/ImageMethod.f90 $(BUILD)/Kinds.o $(BUILD)/Types.o $(BUILD)/IOUtils.o $(BUILD)/WindTurbine.o $(BUILD)/AcousticSolver.o | $(BUILD)
+$(BUILD)/ImageMethod.o: $(SRC_DIR)/core/AcousticMethods/ImageMethod.f90 $(BUILD)/Kinds.o $(BUILD)/Types.o $(BUILD)/IOUtils.o $(BUILD)/WindTurbine.o $(BUILD)/WindFarm.o $(BUILD)/AcousticSolver.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/AnalyticalNormalModes.o: $(SRC_DIR)/core/AcousticMethods/AnalyticalNormalModes.f90 $(BUILD)/Kinds.o $(BUILD)/Types.o $(BUILD)/IOUtils.o $(BUILD)/MathUtils.o $(BUILD)/WindTurbine.o $(BUILD)/AcousticSolver.o | $(BUILD)
+$(BUILD)/AnalyticalNormalModes.o: $(SRC_DIR)/core/AcousticMethods/AnalyticalNormalModes.f90 $(BUILD)/Kinds.o $(BUILD)/Types.o $(BUILD)/IOUtils.o $(BUILD)/MathUtils.o $(BUILD)/WindTurbine.o $(BUILD)/WindFarm.o $(BUILD)/AcousticSolver.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/main.o: $(APP_DIR)/main.f90 $(OBJS) | $(BUILD)
