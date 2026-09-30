@@ -118,8 +118,6 @@ SUBROUTINE init_SAITEC2MWFloating(self, config)
         error stop
     end if
 
-    write(*,*) "SAITEC2MWFloating % init(): CHECK IF BARIPOS IS WELL COMPUTED, SHOULD BE (-8.9586, 0)"
-
 END SUBROUTINE init_SAITEC2MWFloating
 
 
@@ -257,9 +255,9 @@ SUBROUTINE read_input_SAITEC2MWFloating(self, config, verbose)
         write(*, '(A)') 'TURBINE: ' // trim(self % rootname)
         write(*, '(A)') repeat('-', 68)
         write(*, '(A, A)') 'Type: ', trim(self % case_type)
-        write(*, '(A, F5.1, A, F5.1, A)') 'Wind Speed: ', self % WindSpeed, ' m/s   | Wind Direction: ', &
+        write(*, '(A, F5.1, A, F6.1, A)') 'Wind Speed: ', self % WindSpeed, ' m/s   | Wind Direction: ', &
                                           self % WindDir, ' deg'
-        write(*, '(A, F5.1, A, F4.1, A, F4.1, A)') 'Water Depth: ', self % Depth, &
+        write(*, '(A, F5.1, A, F8.1, A, F8.1, A)') 'Water Depth: ', self % Depth, &
                                                    ' m   | Position: (', self % AxisPos(1), ', ', &
                                                    self % AxisPos(2), ') m'
         write(*, '(A, I6, A, F6.4, A)') 'Time Series: ', size(self % Time), ' samples @ ', dt, ' s/sample'
@@ -483,13 +481,14 @@ SUBROUTINE compute_force_SAITEC2MWFloating(self, config, verbose)
 
     ! --- Verbose summary ---
     if (verbose_) then
-        F_memory_mb = real(storage_size(self % Force) * size(self % Force) / 8, WP) / 1024.0_WP / 1024.0_WP
+        F_memory_mb = real(storage_size(self % Force), WP) * real(size(self % Force, kind=I64), WP) &
+                      / 8.0_WP / 1024.0_WP / 1024.0_WP
         write(*, '(A)') repeat('=', 70)
         write(*, '(A)') 'FORCE COMPUTATION COMPLETED (FLOATING PLATFORM)'
         write(*, '(A)') repeat('-', 68)
         write(*, '(A, I6)') 'Nodes (wet): ', Nnodes_wet
         write(*, '(A, I6)') 'Frequencies: ', nf
-        write(*, '(A, F6.2, A)') 'Memory (F):  ', F_memory_mb, ' MB'
+        write(*, '(A, F10.2, A)') 'Memory (F):  ', F_memory_mb, ' MB'
         write(*, '(A)') repeat('=', 70)
     end if
 
