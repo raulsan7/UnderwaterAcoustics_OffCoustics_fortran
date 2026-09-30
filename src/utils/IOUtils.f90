@@ -63,14 +63,17 @@ CONTAINS
 ! ===============================================================================
 ! OPENFAST READERS
 ! ===============================================================================
-SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
+SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes, status)
     ! -------------------------------------------------------------------------
     ! Parses an OpenFAST SubDyn summary file (SD.sum.yaml) to recover the
     ! structural topology: it locates the "#Member I Joint1_ID Joint2_ID"
     ! table to map each member to its node IDs, then locates the node
     ! coordinate table ("Node_[#] X_[m] Y_[m] Z_[m]") to recover each node's
     ! (x,y,z) position, and finally combines both into a (Nmembers, Nnodes, 3)
-    ! tensor, padding any missing node with NaN.
+    ! tensor, padding any missing node with NaN. Any read or format error
+    ! (including a node ID outside the node table) sets status = -1 when
+    ! status is present and stops the program otherwise, so that a failed
+    ! read never returns a geometry collapsed to the origin.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN)               :: SD_path         ! [-] Path to OpenFAST SubDyn sum file
@@ -78,6 +81,7 @@ SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
     INTEGER(I32)    , INTENT(IN), OPTIONAL     :: Nnodes          ! [-] Number of OpenFAST nodes
     LOGICAL         , INTENT(IN), OPTIONAL     :: verbose         ! [-] Flag to print more info
     REAL(WP)        , INTENT(OUT), ALLOCATABLE :: Nodes(:,:,:)    ! [m] Nodes array (Nmembers, Nnodes, 3)
+    INTEGER(I32)    , INTENT(OUT), OPTIONAL    :: status          ! [-] 0 on success, -1 on error (stops if absent)
 
     ! Local variables
     INTEGER(I32) :: Nmembers_, Nnodes_
@@ -85,7 +89,7 @@ SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
 
     INTEGER(I32)       , ALLOCATABLE :: member_nodes(:,:)
     REAL(WP)           , ALLOCATABLE :: Nodes_flat(:,:)
-    INTEGER(I32)                     :: status, file_unit, ios, i, j, k, idx, num_nodes
+    INTEGER(I32)                     :: ierr, file_unit, ios, i, j, k, idx, num_nodes
     INTEGER(I32)                     :: pos_open, pos_close
     REAL(WP)                         :: nan_val, x, y, z, idx_real
     LOGICAL                          :: found
@@ -100,16 +104,17 @@ SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
 
     ! Initialize IEEE NaN for padding missing nodes
     nan_val = ieee_value(1.0_WP, IEEE_QUIET_NAN)
-    status  = 0_I32
+    if (present(status)) status = 0_I32
 
     if (verbose_) write(*,*) "Reading SD.sum nodes in ", trim(SD_path)
 
     ALLOCATE(Nodes(Nmembers_, Nnodes_, 3), source=0.0_WP)
     ALLOCATE(member_nodes(Nmembers_, Nnodes_), source=0_I32)
 
-    open(newunit=file_unit, file=trim(SD_path), status='old', action='read', iostat=status)
-    if (status /= 0_I32) then
+    open(newunit=file_unit, file=trim(SD_path), status='old', action='read', iostat=ierr)
+    if (ierr /= 0_I32) then
         write(*,*) "Error: Could not open ", trim(SD_path)
+        CALL set_error_status("get_SDsum_variables", SD_path, status)
         return
     end if
 
@@ -126,14 +131,20 @@ SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
 
     if (.not. found) then
         write(*,*) "Error: Member mapping header not found."
-        status = -1_I32
         close(file_unit)
+        CALL set_error_status("get_SDsum_variables", SD_path, status)
         return
     end if
 
     ! Parse node IDs for each member
     do i = 1, Nmembers_
-        read(file_unit, '(A)') line_buf
+        read(file_unit, '(A)', iostat=ios) line_buf
+        if (ios /= 0_I32) then
+            write(*,*) "Error: Member table ends before member ", i
+            close(file_unit)
+            CALL set_error_status("get_SDsum_variables", SD_path, status)
+            return
+        end if
         CALL parse_member_nodes(line_buf, Nnodes_, member_nodes(i, :))
     end do
 
@@ -151,13 +162,19 @@ SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
 
     if (.not. found) then
         write(*,*) "Error: Node coordinate header not found."
-        status = -1_I32
         close(file_unit)
+        CALL set_error_status("get_SDsum_variables", SD_path, status)
         return
     end if
 
     ! Read the number of nodes (e.g., "Nodes: # 33 x 9")
-    read(file_unit, '(A)') line_buf
+    read(file_unit, '(A)', iostat=ios) line_buf
+    if (ios /= 0_I32) then
+        write(*,*) "Error: Node table truncated in ", trim(SD_path)
+        close(file_unit)
+        CALL set_error_status("get_SDsum_variables", SD_path, status)
+        return
+    end if
     num_nodes = extract_number_nodes(line_buf)
 
     ALLOCATE(Nodes_flat(num_nodes, 3), source=0.0_WP)
@@ -168,14 +185,20 @@ SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
     ! so the leading '-' YAML list marker never gets fed to the parser
     ! (removing it globally would corrupt negative coordinate values)
     do i = 1, num_nodes
-        read(file_unit, '(A)') line_buf
+        read(file_unit, '(A)', iostat=ios) line_buf
+        if (ios /= 0_I32) then
+            write(*,*) "Error: Node table truncated in ", trim(SD_path)
+            close(file_unit)
+            CALL set_error_status("get_SDsum_variables", SD_path, status)
+            return
+        end if
 
         pos_open  = index(line_buf, '[')
         pos_close = index(line_buf, ']')
         if (pos_open == 0_I32 .or. pos_close == 0_I32 .or. pos_close <= pos_open) then
             write(*,*) "Error: malformed node coordinate line: ", trim(line_buf)
-            status = -1_I32
             close(file_unit)
+            CALL set_error_status("get_SDsum_variables", SD_path, status)
             return
         end if
 
@@ -191,8 +214,8 @@ SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
         read(data_str, *, iostat=ios) idx_real, x, y, z
         if (ios /= 0_I32) then
             write(*,*) "Error: could not parse node coordinate line: ", trim(line_buf)
-            status = -1_I32
             close(file_unit)
+            CALL set_error_status("get_SDsum_variables", SD_path, status)
             return
         end if
 
@@ -201,8 +224,8 @@ SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
             Nodes_flat(idx, :) = [x, y, z]
         else
             write(*,*) "Error: node index ", idx, " out of range [1, ", num_nodes, "]"
-            status = -1_I32
             close(file_unit)
+            CALL set_error_status("get_SDsum_variables", SD_path, status)
             return
         end if
     end do
@@ -213,7 +236,12 @@ SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
     do i = 1, Nmembers_
         do j = 1, Nnodes_
             idx = member_nodes(i, j)
-            if (idx > 0_I32) then
+            if (idx < 0_I32 .or. idx > num_nodes) then
+                write(*,*) "Error: member ", i, " refers to node ", idx, " outside the node table [1, ", &
+                           num_nodes, "]"
+                CALL set_error_status("get_SDsum_variables", SD_path, status)
+                return
+            else if (idx > 0_I32) then
                 Nodes(i, j, :) = Nodes_flat(idx, :)
             else
                 Nodes(i, j, :) = nan_val
@@ -222,6 +250,26 @@ SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
     end do
 
 END SUBROUTINE get_SDsum_variables
+
+
+SUBROUTINE set_error_status(routine, path, status)
+    ! -------------------------------------------------------------------------
+    ! Reports a read failure: sets status = -1 when the caller passed it, and
+    ! otherwise stops the program, so that a failed read never goes unnoticed.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)            :: routine    ! [-] Name of the calling routine
+    CHARACTER(len=*), INTENT(IN)            :: path       ! [-] File that could not be read
+    INTEGER(I32)    , INTENT(OUT), OPTIONAL :: status     ! [-] Set to -1 when present
+
+
+    if (present(status)) then
+        status = -1_I32
+    else
+        error stop routine // ": could not read " // trim(path)
+    end if
+
+END SUBROUTINE set_error_status
 
 
 SUBROUTINE read_input_SD(filename, what, skip, Nmembers, Nnodes, From, Upto, verbose, &
@@ -442,13 +490,16 @@ SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
                                  available_channels, verbose, chunk_size, &
                                  time_out, array_out, units_out, status)
     ! -------------------------------------------------------------------------
-    ! Parses OpenFAST's packed binary output format (.outb): reads the fixed
-    ! header (FileID, channel count/names/units, time and per-column scale
-    ! and offset factors used to decompress the packed INTEGER(2) values),
-    ! maps the requested channel names to column indices, then streams the
-    ! data body in chunks (to bound memory use), decoding only the requested
-    ! time window and channels back into REAL(WP) using the scale/offset
-    ! factors.
+    ! Parses OpenFAST's packed binary output format (.outb), as written by
+    ! WrBinFAST (NWTC_IO.f90): reads the fixed header (FileID, channel
+    ! count/names/units, time and per-column scale and offset factors used to
+    ! decompress the packed INTEGER(2) values), maps the requested channel
+    ! names to column indices, then streams the data body in chunks (to bound
+    ! memory use), decoding only the requested time window and channels back
+    ! into REAL(WP) using the scale/offset factors. With FileID = 1 the packed
+    ! INTEGER(4) times are one block of NT values stored before the INTEGER(2)
+    ! channel matrix. The window must satisfy 0 <= From_val <= Upto_val <= 1,
+    ! and every row of the window must be read, otherwise status is -1.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*) , INTENT(IN)               :: full_path             ! [-] Path to the .outb file
@@ -471,7 +522,7 @@ SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
     INTEGER(2), PARAMETER :: FMT_CHAN_LEN     = 4
 
     ! File header variables
-    INTEGER(I32)                   :: fu, i, j, k, req_chans
+    INTEGER(I32)                   :: fu, i, j, k, req_chans, ios
     INTEGER(2)                     :: FileID, LenName
     INTEGER(I32)                   :: NumOutChans, NT
     REAL(8)                        :: TimeScl, TimeOff, TimeOut1, TimeIncr
@@ -480,18 +531,23 @@ SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
     CHARACTER(len=:) , ALLOCATABLE :: DescStr
     CHARACTER(len=32), ALLOCATABLE :: ChanName(:), ChanUnit(:)
     INTEGER(I32)     , ALLOCATABLE :: ReqIdx(:)
+    INTEGER(4)       , ALLOCATABLE :: packed_time(:)
 
     ! Array streaming variables
-    INTEGER(I32)              :: time_bytes, N_cols_raw
     INTEGER(I32)              :: idx_0_start, idx_0_end, start_idx, end_idx, n_target_rows
     INTEGER(I32)              :: row_counter, written, chunk_rows, rows_to_read, current_row
-    INTEGER(4)                :: p_time
     INTEGER(2)                :: val_i16
     INTEGER(2)  , ALLOCATABLE :: raw_data(:,:)
 
 
     status    = 0_I32
     req_chans = size(plotChannels)
+
+    if (From_val < 0.0_WP .or. Upto_val > 1.0_WP .or. From_val > Upto_val) then
+        write(*,*) "Error: Window fractions must satisfy 0 <= From <= Upto <= 1, got ", From_val, Upto_val
+        status = -1_I32
+        return
+    end if
 
     open(newunit=fu, file=trim(full_path), access='stream', form='unformatted', status='old', iostat=status)
     if (status /= 0_I32) then
@@ -500,27 +556,21 @@ SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
     end if
 
     ! --- 1. Read header --- !
-    read(fu) FileID
+    read(fu, iostat=ios) FileID
 
-    if (FileID == FMT_CHAN_LEN) then
-        read(fu) LenName
+    if (ios == 0_I32 .and. FileID == FMT_CHAN_LEN) then
+        read(fu, iostat=ios) LenName
     else
         LenName = 10_2
     end if
 
-    read(fu) NumOutChans
-    read(fu) NT
-
-    ! --- 2. Time info --- !
-    ! Note: FileID = 4 (FMT_CHAN_LEN) does not pack the time column into the data matrix
-    if (FileID == FMT_WITH_TIME) then
-        read(fu) TimeScl
-        read(fu) TimeOff
-        time_bytes = 4_I32
-    else
-        read(fu) TimeOut1
-        read(fu) TimeIncr
-        time_bytes = 0_I32
+    if (ios == 0_I32) read(fu, iostat=ios) NumOutChans
+    if (ios == 0_I32) read(fu, iostat=ios) NT
+    if (ios /= 0_I32) then
+        write(*,*) "Error: Could not read the header of binary file: ", trim(full_path)
+        status = -1_I32
+        close(fu)
+        return
     end if
 
     if (FileID == FMT_NO_COMPRESS) then
@@ -530,16 +580,40 @@ SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
         return
     end if
 
+    if (FileID /= FMT_WITH_TIME .and. FileID /= FMT_WITHOUT_TIME .and. FileID /= FMT_CHAN_LEN) then
+        write(*,*) "Error: Unknown FileID ", FileID, " in binary file: ", trim(full_path)
+        status = -1_I32
+        close(fu)
+        return
+    end if
+
+    if (LenName < 1_2 .or. LenName > 32_2 .or. NumOutChans < 1_I32 .or. NT < 0_I32) then
+        write(*,*) "Error: Invalid header (LenName, NumOutChans, NT) = ", LenName, NumOutChans, NT, &
+                   " in binary file: ", trim(full_path)
+        status = -1_I32
+        close(fu)
+        return
+    end if
+
+    ! --- 2. Time info --- !
+    if (FileID == FMT_WITH_TIME) then
+        read(fu, iostat=ios) TimeScl
+        if (ios == 0_I32) read(fu, iostat=ios) TimeOff
+    else
+        read(fu, iostat=ios) TimeOut1
+        if (ios == 0_I32) read(fu, iostat=ios) TimeIncr
+    end if
+
     ! --- 3. Channel scaling --- !
     ALLOCATE(ColScl(NumOutChans), ColOff(NumOutChans))
-    read(fu) ColScl
-    read(fu) ColOff
+    if (ios == 0_I32) read(fu, iostat=ios) ColScl
+    if (ios == 0_I32) read(fu, iostat=ios) ColOff
 
     ! --- 4. Description string --- !
-    read(fu) LenDesc
-    if (LenDesc > 0_I32) then
+    if (ios == 0_I32) read(fu, iostat=ios) LenDesc
+    if (ios == 0_I32 .and. LenDesc > 0_I32) then
         ALLOCATE(CHARACTER(len=LenDesc) :: DescStr)
-        read(fu) DescStr
+        read(fu, iostat=ios) DescStr
         DEALLOCATE(DescStr)
     end if
 
@@ -551,11 +625,24 @@ SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
     ChanName = ""
     ChanUnit = ""
     do i = 1, NumOutChans + 1
-        read(fu) ChanName(i)(1:LenName)
+        if (ios == 0_I32) read(fu, iostat=ios) ChanName(i)(1:LenName)
     end do
     do i = 1, NumOutChans + 1
-        read(fu) ChanUnit(i)(1:LenName)
+        if (ios == 0_I32) read(fu, iostat=ios) ChanUnit(i)(1:LenName)
     end do
+
+    ! Packed time column (FileID = 1 only): one block of NT values before the data matrix
+    if (FileID == FMT_WITH_TIME) then
+        ALLOCATE(packed_time(NT))
+        if (ios == 0_I32) read(fu, iostat=ios) packed_time
+    end if
+
+    if (ios /= 0_I32) then
+        write(*,*) "Error: Truncated header in binary file: ", trim(full_path)
+        status = -1_I32
+        close(fu)
+        return
+    end if
 
     if (available_channels) then
         write(*,*) "Available Channels in .outb: "
@@ -599,22 +686,16 @@ SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
     ALLOCATE(array_out(n_target_rows, req_chans))
 
     ! --- 8. Read data as massive contiguous arrays --- !
-    if (time_bytes == 4_I32) then
-        N_cols_raw = NumOutChans + 2_I32
-    else
-        N_cols_raw = NumOutChans
-    end if
-
     chunk_rows = max(1_I32, chunk_size)
-    ALLOCATE(raw_data(N_cols_raw, chunk_rows))
+    ALLOCATE(raw_data(NumOutChans, chunk_rows))
 
     row_counter = 0_I32
     written     = 0_I32
 
-    do while (row_counter < NT)
+    do while (row_counter < NT .and. written < n_target_rows)
         rows_to_read = min(chunk_rows, NT - row_counter)
-        read(fu, iostat=status) raw_data(:, 1:rows_to_read)
-        if (status /= 0_I32) exit
+        read(fu, iostat=ios) raw_data(:, 1:rows_to_read)
+        if (ios /= 0_I32) exit
 
         do i = 1, rows_to_read
             current_row = row_counter + i
@@ -622,9 +703,8 @@ SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
                 written = written + 1_I32
 
                 ! Decode time
-                if (time_bytes == 4_I32) then
-                    p_time            = transfer(raw_data(1:2, i), p_time)
-                    time_out(written) = real((real(p_time, 8) - TimeOff) / TimeScl, WP)
+                if (FileID == FMT_WITH_TIME) then
+                    time_out(written) = real((real(packed_time(current_row), 8) - TimeOff) / TimeScl, WP)
                 else
                     time_out(written) = real(TimeOut1 + TimeIncr * real(current_row - 1_I32, 8), WP)
                 end if
@@ -641,12 +721,8 @@ SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
                 !$OMP SIMD PRIVATE(k, val_i16)
                 do j = 1, req_chans
                     if (ReqIdx(j) /= -1_I32) then
-                        k = ReqIdx(j)
-                        if (time_bytes == 4_I32) then
-                            val_i16 = raw_data(k+2, i)
-                        else
-                            val_i16 = raw_data(k, i)
-                        end if
+                        k       = ReqIdx(j)
+                        val_i16 = raw_data(k, i)
                         array_out(written, j) = real((real(val_i16, 4) - ColOff(k)) / ColScl(k), WP)
                     end if
                 end do
@@ -654,10 +730,16 @@ SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
         end do
 
         row_counter = row_counter + rows_to_read
-        if (written == n_target_rows) exit
     end do
 
     close(fu)
+
+    if (written /= n_target_rows) then
+        write(*,*) "Error: Only ", written, " of the ", n_target_rows, " requested rows could be read from ", &
+                   trim(full_path)
+        status = -1_I32
+        return
+    end if
 
     if (verbose) then
         write(*,*) "Output array shape: [", written, ", ", req_chans, "]"
@@ -672,10 +754,13 @@ SUBROUTINE parse_channels_ascii(full_path, plotChannels, From_val, Upto_val, &
     ! -------------------------------------------------------------------------
     ! Parses OpenFAST's plain-text output format (.out): skips the 6 metadata
     ! header lines, reads the channel-name and channel-unit header lines
-    ! (line 7/8) to map requested channel names to column positions and to
-    ! locate the "Time" column, does a fast pre-pass to count total data rows
-    ! (needed to size the From/Upto time window), then rewinds and reads only
-    ! the requested rows/columns into the output arrays.
+    ! (line 7/8, of any length, blank- or TAB-delimited) to map requested
+    ! channel names to column positions and to locate the "Time" column, does
+    ! a fast pre-pass to count the data rows (blank lines and '#' comment
+    ! lines such as "#Restarting here" are not data rows, as in numpy.loadtxt)
+    ! to size the From/Upto time window (0 <= From_val <= Upto_val <= 1), then
+    ! rewinds and parses only the rows of the window. An empty window, a row
+    ! that cannot be parsed or a missing row returns status = -1.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*) , INTENT(IN)               :: full_path             ! [-] Path to the .out file
@@ -692,9 +777,9 @@ SUBROUTINE parse_channels_ascii(full_path, plotChannels, From_val, Upto_val, &
     ! Local variables
     INTEGER(I32)                     :: fu, i, j, k, ios, n_req, n_all_chans, n_total, time_col
     INTEGER(I32)                     :: idx_0_start, idx_0_end, start_idx, end_idx, n_filtered, out_row
-    INTEGER(I32)                     :: row_idx, pos, l_len
-    CHARACTER(len=4096)              :: line_buffer
-    CHARACTER(len=1)                 :: dummy_char
+    INTEGER(I32)                     :: row_idx
+    CHARACTER(len=256)               :: head_buffer
+    CHARACTER(len=:)   , ALLOCATABLE :: line
     CHARACTER(len=32)  , ALLOCATABLE :: all_channels(:), all_units(:)
     INTEGER(I32)       , ALLOCATABLE :: col_map(:)
     REAL(WP)           , ALLOCATABLE :: row_buff(:)
@@ -709,6 +794,12 @@ SUBROUTINE parse_channels_ascii(full_path, plotChannels, From_val, Upto_val, &
         return
     end if
 
+    if (From_val < 0.0_WP .or. Upto_val > 1.0_WP .or. From_val > Upto_val) then
+        write(*,*) "Error: Window fractions must satisfy 0 <= From <= Upto <= 1, got ", From_val, Upto_val
+        status = -1_I32
+        return
+    end if
+
     open(newunit=fu, file=trim(full_path), status='old', action='read', iostat=status)
     if (status /= 0_I32) then
         write(*,*) "Error: Could not open ASCII file: ", trim(full_path)
@@ -718,7 +809,7 @@ SUBROUTINE parse_channels_ascii(full_path, plotChannels, From_val, Upto_val, &
     ! --- 1. Read header lines --- !
     ! Skip lines 1 to 6 (description/metadata)
     do i = 1, 6
-        read(fu, '(A)', iostat=status) line_buffer
+        read(fu, '(A)', iostat=status) head_buffer
         if (status /= 0_I32) then
             write(*,*) "Error reading header lines in file: ", trim(full_path)
             close(fu)
@@ -727,28 +818,16 @@ SUBROUTINE parse_channels_ascii(full_path, plotChannels, From_val, Upto_val, &
         end if
     end do
 
-    ! Line 7: channel names
-    read(fu, '(A)', iostat=status) line_buffer
-    if (status /= 0_I32) then
+    ! Line 7: channel names (whole record, blank- or TAB-delimited)
+    CALL read_full_line(fu, line, ios)
+    if (ios /= 0_I32) then
         close(fu)
         status = -1_I32
         return
     end if
 
-    ! Count whitespace-delimited tokens in line 7
-    n_all_chans = 0_I32
-    pos         = 1_I32
-    l_len       = len_trim(line_buffer)
-    do while (pos <= l_len)
-        do while (pos <= l_len .and. line_buffer(pos:pos) == ' ')
-            pos = pos + 1_I32
-        end do
-        if (pos > l_len) exit
-        n_all_chans = n_all_chans + 1_I32
-        do while (pos <= l_len .and. line_buffer(pos:pos) /= ' ')
-            pos = pos + 1_I32
-        end do
-    end do
+    CALL split_tokens(line, all_channels)
+    n_all_chans = size(all_channels)
 
     if (n_all_chans == 0_I32) then
         write(*,*) "Error: No channel names found on line 7."
@@ -757,19 +836,21 @@ SUBROUTINE parse_channels_ascii(full_path, plotChannels, From_val, Upto_val, &
         return
     end if
 
-    ALLOCATE(all_channels(n_all_chans))
-    read(line_buffer, *) all_channels
-
-    ! Line 8: channel units
-    read(fu, '(A)', iostat=status) line_buffer
-    if (status /= 0_I32) then
+    ! Line 8: channel units (split like the names, so a '/' inside a unit is kept)
+    CALL read_full_line(fu, line, ios)
+    if (ios /= 0_I32) then
         close(fu)
         status = -1_I32
         return
     end if
 
-    ALLOCATE(all_units(n_all_chans))
-    read(line_buffer, *) all_units
+    CALL split_tokens(line, all_units)
+    if (size(all_units) /= n_all_chans) then
+        write(*,*) "Error: ", size(all_units), " units found on line 8 for ", n_all_chans, " channels."
+        close(fu)
+        status = -1_I32
+        return
+    end if
 
     if (available_channels) then
         write(*,*) "Available Channels in .out: "
@@ -805,12 +886,12 @@ SUBROUTINE parse_channels_ascii(full_path, plotChannels, From_val, Upto_val, &
     end do
 
     ! --- 3. Fast count of total data rows --- !
-    ! Reading each line into a single '(A)' character skips to the next record almost instantly
+    ! Only the first 256 characters of each record are read to classify it
     n_total = 0_I32
     do
-        read(fu, '(A)', iostat=ios) dummy_char
+        read(fu, '(A)', iostat=ios) head_buffer
         if (ios /= 0_I32) exit
-        n_total = n_total + 1_I32
+        if (is_data_line(head_buffer)) n_total = n_total + 1_I32
     end do
 
     if (n_total == 0_I32) then
@@ -838,28 +919,52 @@ SUBROUTINE parse_channels_ascii(full_path, plotChannels, From_val, Upto_val, &
     ! --- 5. Extract time series data --- !
     rewind(fu)
     do i = 1, 8
-        read(fu, '(A)') line_buffer
+        read(fu, '(A)') head_buffer
     end do
 
     ALLOCATE(time_out(n_filtered))
     ALLOCATE(array_out(n_filtered, n_req))
     ALLOCATE(row_buff(n_all_chans))
 
-    out_row = 1_I32
-    do row_idx = 1, end_idx
-        read(fu, *, iostat=ios) row_buff
-        if (ios /= 0_I32) exit
-
-        if (row_idx >= start_idx) then
-            time_out(out_row) = row_buff(time_col)
-            do k = 1, n_req
-                array_out(out_row, k) = row_buff(col_map(k))
-            end do
-            out_row = out_row + 1_I32
+    out_row = 0_I32
+    row_idx = 0_I32
+    do while (row_idx < end_idx)
+        ! Rows before the window are only classified, never parsed
+        if (row_idx + 1_I32 < start_idx) then
+            read(fu, '(A)', iostat=ios) head_buffer
+            if (ios /= 0_I32) exit
+            if (is_data_line(head_buffer)) row_idx = row_idx + 1_I32
+            cycle
         end if
+
+        CALL read_full_line(fu, line, ios)
+        if (ios /= 0_I32) exit
+        if (.not. is_data_line(line)) cycle
+
+        row_idx = row_idx + 1_I32
+        read(line, *, iostat=ios) row_buff
+        if (ios /= 0_I32) then
+            write(*,*) "Error: Could not parse data row ", row_idx, " in file: ", trim(full_path)
+            close(fu)
+            status = -1_I32
+            return
+        end if
+
+        out_row           = out_row + 1_I32
+        time_out(out_row) = row_buff(time_col)
+        do k = 1, n_req
+            array_out(out_row, k) = row_buff(col_map(k))
+        end do
     end do
 
     close(fu)
+
+    if (out_row /= n_filtered) then
+        write(*,*) "Error: Only ", out_row, " of the ", n_filtered, " requested rows could be read from ", &
+                   trim(full_path)
+        status = -1_I32
+        return
+    end if
 
     if (verbose) then
         write(*,*) "Output array shape: [", n_filtered, ", ", n_req, "]"
@@ -868,11 +973,109 @@ SUBROUTINE parse_channels_ascii(full_path, plotChannels, From_val, Upto_val, &
 END SUBROUTINE parse_channels_ascii
 
 
+SUBROUTINE read_full_line(unit, line, ios)
+    ! -------------------------------------------------------------------------
+    ! Reads the next record of a formatted sequential unit into "line",
+    ! whatever its length, with non-advancing reads of 4096-character pieces.
+    ! -------------------------------------------------------------------------
+
+    INTEGER(I32)    , INTENT(IN)               :: unit    ! [-] Open formatted sequential unit
+    CHARACTER(len=:), INTENT(OUT), ALLOCATABLE :: line    ! [-] Whole record
+    INTEGER(I32)    , INTENT(OUT)              :: ios     ! [-] 0 on success, nonzero at end of file or on error
+
+    ! Local variables
+    CHARACTER(len=4096) :: piece
+    INTEGER(I32)        :: n_read
+
+
+    line = ''
+    do
+        read(unit, '(A)', advance='no', iostat=ios, size=n_read) piece
+        line = line // piece(1:n_read)
+        if (is_iostat_eor(ios)) then
+            ios = 0_I32
+            exit
+        end if
+        if (ios /= 0_I32) exit
+    end do
+
+END SUBROUTINE read_full_line
+
+
+PURE SUBROUTINE split_tokens(text_line, tokens)
+    ! -------------------------------------------------------------------------
+    ! Splits "text_line" into its tokens separated by blanks, TABs or carriage
+    ! returns (each token truncated to 32 characters).
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*) , INTENT(IN)               :: text_line    ! [-] Line to split
+    CHARACTER(len=32), INTENT(OUT), ALLOCATABLE :: tokens(:)    ! [-] Tokens found, in order
+
+    ! Local variables
+    INTEGER(I32) :: i, n, istart, pass
+    LOGICAL      :: in_token, is_sep
+
+
+    do pass = 1, 2
+        n        = 0_I32
+        in_token = .false.
+        istart   = 0_I32
+        do i = 1, len(text_line) + 1
+            if (i > len(text_line)) then
+                is_sep = .true.
+            else
+                is_sep = text_line(i:i) == ' ' .or. text_line(i:i) == achar(9) .or. text_line(i:i) == achar(13)
+            end if
+            if (.not. is_sep .and. .not. in_token) then
+                in_token = .true.
+                istart   = i
+            else if (is_sep .and. in_token) then
+                in_token = .false.
+                n        = n + 1_I32
+                if (pass == 2_I32) tokens(n) = text_line(istart:i-1)
+            end if
+        end do
+        if (pass == 1_I32) ALLOCATE(tokens(n))
+    end do
+
+END SUBROUTINE split_tokens
+
+
+PURE FUNCTION is_data_line(text_line) RESULT(is_data)
+    ! -------------------------------------------------------------------------
+    ! True when the first non-blank character among the first 256 characters
+    ! of "text_line" exists and is not '#': blank lines and comment lines such
+    ! as "#Restarting here" are not data rows of an OpenFAST .out file.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN) :: text_line    ! [-] Line of an OpenFAST .out file
+    LOGICAL                      :: is_data      ! [-] Whether the line holds a data row
+
+    ! Local variables
+    CHARACTER(len=256) :: head
+    INTEGER(I32)       :: i
+
+
+    head = text_line(1:min(len(text_line), 256))
+    do i = 1, len_trim(head)
+        if (head(i:i) == achar(9) .or. head(i:i) == achar(13)) head(i:i) = ' '
+    end do
+    head    = adjustl(head)
+    is_data = len_trim(head) > 0 .and. head(1:1) /= '#'
+
+END FUNCTION is_data_line
+
+
 FUNCTION read_curve(filename, ws, col_idx) RESULT(val)
     ! -------------------------------------------------------------------------
-    ! Reads a two-line-header CSV lookup table (windspeed vs. one or more
-    ! dependent columns) and linearly interpolates (with linear extrapolation
-    ! outside the table's range) the requested column at the given wind speed.
+    ! Reads a CSV lookup table (windspeed vs. one or more dependent columns)
+    ! and linearly interpolates (with linear extrapolation outside the table's
+    ! range) the requested column at the given wind speed. A line is a data
+    ! row when its first col_idx comma-separated fields are all numeric; any
+    ! other line (headers such as "rpm," and "X,Y" or "ws,rpm", blank lines,
+    ! short rows) is skipped by both passes, so tables with one or two header
+    ! lines are both read. A missing file, an invalid column or fewer than 2
+    ! data rows stops the program.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN)           :: filename    ! [-] Path to the CSV curve file
@@ -881,84 +1084,49 @@ FUNCTION read_curve(filename, ws, col_idx) RESULT(val)
     REAL(WP)                               :: val         ! [-] Interpolated scalar
 
     ! Local variables
-    INTEGER(I32)                     :: fu, status, ios, n_rows, i, j, k, target_col
+    INTEGER(I32)                     :: fu, status, ios, n_rows, i, k, target_col, pass
     CHARACTER(len=2048)              :: line_buffer
     REAL(WP)           , ALLOCATABLE :: ws_array(:), var_array(:), row_buff(:)
     REAL(WP)                         :: dx, t
+    LOGICAL                          :: is_row
 
 
     val        = 0.0_WP
     target_col = 2_I32
     if (present(col_idx)) target_col = col_idx
 
+    if (target_col < 1_I32) error stop "read_curve: col_idx must be a positive column index"
+
     open(newunit=fu, file=trim(filename), status='old', action='read', iostat=status)
-    if (status /= 0_I32) then
-        write(*,*) "Error: Could not open curve CSV file: ", trim(filename)
-        return
-    end if
+    if (status /= 0_I32) error stop "read_curve: could not open curve CSV file " // trim(filename)
 
-    ! Skip CSV header: first line is the variable name, second line is the column names
-    read(fu, '(A)', iostat=status) line_buffer
-    if (status /= 0_I32) then
-        close(fu)
-        return
-    end if
-    read(fu, '(A)', iostat=status) line_buffer
-    if (status /= 0_I32) then
-        close(fu)
-        return
-    end if
-
-    ! Count only numeric data rows
-    ALLOCATE(row_buff(1))
-    n_rows = 0_I32
-    do
-        read(fu, '(A)', iostat=ios) line_buffer
-        if (ios /= 0_I32) exit
-        if (len_trim(line_buffer) == 0) cycle
-        ! Ignore header lines if they accidentally remain in the data block
-        if (index(adjustl(line_buffer), 'X') == 1 .or. index(adjustl(line_buffer), 'Y') == 1) cycle
-
-        ! Try to parse the first value as a real; if it fails, skip the line
-        read(line_buffer, *, iostat=ios) row_buff(1)
-        if (ios == 0_I32) n_rows = n_rows + 1_I32
-    end do
-
-    if (n_rows < 2_I32) then
-        write(*,*) "Error: CSV requires at least 2 numeric points for interpolation."
-        close(fu)
-        DEALLOCATE(row_buff)
-        return
-    end if
-
-    ALLOCATE(ws_array(n_rows))
-    ALLOCATE(var_array(n_rows))
-    DEALLOCATE(row_buff)
+    ! Pass 1 counts the data rows, pass 2 stores them (same row test in both)
     ALLOCATE(row_buff(target_col))
+    n_rows = 0_I32
+    do pass = 1, 2
+        if (pass == 2_I32) then
+            if (n_rows < 2_I32) then
+                close(fu)
+                error stop "read_curve: fewer than 2 numeric rows for interpolation in " // trim(filename)
+            end if
+            ALLOCATE(ws_array(n_rows), var_array(n_rows))
+            rewind(fu)
+            n_rows = 0_I32
+        end if
 
-    ! Read and parse data
-    rewind(fu)
-    read(fu, '(A)') line_buffer    ! Skip first line
-    read(fu, '(A)') line_buffer    ! Skip second line
+        do
+            read(fu, '(A)', iostat=ios) line_buffer
+            if (ios /= 0_I32) exit
 
-    i = 0_I32
-    do
-        read(fu, '(A)', iostat=ios) line_buffer
-        if (ios /= 0_I32) exit
-        if (len_trim(line_buffer) == 0) cycle
+            CALL parse_csv_row(line_buffer, row_buff, is_row)
+            if (.not. is_row) cycle
 
-        ! Replace commas with blank spaces
-        do j = 1, len_trim(line_buffer)
-            if (line_buffer(j:j) == ',') line_buffer(j:j) = ' '
+            n_rows = n_rows + 1_I32
+            if (pass == 2_I32) then
+                ws_array(n_rows)  = row_buff(1)
+                var_array(n_rows) = row_buff(target_col)
+            end if
         end do
-
-        read(line_buffer, *, iostat=ios) row_buff(1:target_col)
-        if (ios /= 0_I32) cycle
-
-        i            = i + 1_I32
-        ws_array(i)  = row_buff(1)
-        var_array(i) = row_buff(target_col)
-        if (i >= n_rows) exit
     end do
 
     close(fu)
@@ -988,6 +1156,45 @@ FUNCTION read_curve(filename, ws, col_idx) RESULT(val)
     val = var_array(k) + t * (var_array(k+1) - var_array(k))
 
 END FUNCTION read_curve
+
+
+SUBROUTINE parse_csv_row(text_line, values, is_row)
+    ! -------------------------------------------------------------------------
+    ! Reads the first size(values) comma-separated fields of "text_line" as
+    ! reals. is_row is .true. only if all of them exist and are numeric, so
+    ! header lines, blank lines and short rows are all rejected the same way.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)  :: text_line    ! [-] Line of the CSV file
+    REAL(WP)        , INTENT(OUT) :: values(:)    ! [-] Values of the first size(values) fields
+    LOGICAL         , INTENT(OUT) :: is_row       ! [-] Whether all the fields were read
+
+    ! Local variables
+    INTEGER(I32) :: i, i_start, i_comma, ios
+
+
+    is_row  = .false.
+    values  = 0.0_WP
+    i_start = 1_I32
+    do i = 1, size(values)
+        if (i_start > len_trim(text_line)) return
+
+        i_comma = index(text_line(i_start:), ',')
+        if (i_comma == 0_I32) then
+            i_comma = len_trim(text_line) + 1_I32
+        else
+            i_comma = i_start + i_comma - 1_I32
+        end if
+
+        if (len_trim(text_line(i_start:i_comma-1)) == 0) return
+        read(text_line(i_start:i_comma-1), *, iostat=ios) values(i)
+        if (ios /= 0_I32) return
+
+        i_start = i_comma + 1_I32
+    end do
+    is_row = .true.
+
+END SUBROUTINE parse_csv_row
 
 
 ! ===============================================================================
@@ -1155,8 +1362,10 @@ END FUNCTION to_upper
 
 PURE FUNCTION swap_extension(path, new_ext) RESULT(new_path)
     ! -------------------------------------------------------------------------
-    ! Replaces the extension of "path" (everything after the last '.') with
-    ! "new_ext". If "path" has no extension, "new_ext" is simply appended.
+    ! Replaces the extension of "path" (everything after the last '.' of the
+    ! file name, i.e. of the part after the last '/') with "new_ext". If the
+    ! file name has no extension, or its only '.' is the leading one of a
+    ! hidden file (".name"), "new_ext" is simply appended.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN)  :: path        ! [-] Original file path
@@ -1164,12 +1373,13 @@ PURE FUNCTION swap_extension(path, new_ext) RESULT(new_path)
     CHARACTER(len=:), ALLOCATABLE :: new_path    ! [-] Path with the new extension
 
     ! Local variables
-    INTEGER(I32) :: dot_pos
+    INTEGER(I32) :: dot_pos, slash_pos
 
 
-    dot_pos = index(trim(path), '.', back=.true.)
+    slash_pos = index(trim(path), '/', back=.true.)
+    dot_pos   = index(trim(path), '.', back=.true.)
 
-    if (dot_pos > 0_I32) then
+    if (dot_pos > slash_pos + 1_I32) then
         new_path = trim(path(1:dot_pos-1)) // trim(new_ext)
     else
         new_path = trim(path) // trim(new_ext)
@@ -1182,20 +1392,38 @@ SUBROUTINE ensure_parent_dir(path)
     ! -------------------------------------------------------------------------
     ! Given a file path, creates its parent directory (and any missing
     ! intermediate directories) if it doesn't already exist. No-op if "path"
-    ! has no directory component (i.e. it's a bare filename).
+    ! has no directory component (i.e. it's a bare filename) or its parent is
+    ! the root directory. The directory reaches the shell single-quoted (with
+    ! any embedded quote escaped), so no character of the path is expanded,
+    ! and a failed mkdir stops the program.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN) :: path    ! [-] File path whose parent directory must exist
 
     ! Local variables
-    CHARACTER(len=:), ALLOCATABLE :: dir
-    INTEGER(I32)                  :: slash_pos
+    CHARACTER(len=:), ALLOCATABLE :: dir, quoted
+    INTEGER(I32)                  :: slash_pos, i, exit_stat, cmd_stat
 
 
     slash_pos = index(trim(path), '/', back=.true.)
-    if (slash_pos > 0_I32) then
+    if (slash_pos > 1_I32) then
         dir = trim(path(1:slash_pos-1))
-        CALL execute_command_line('mkdir -p "' // dir // '"')
+
+        ! Single-quote the directory for the shell: each ' becomes '\''
+        quoted = "'"
+        do i = 1, len(dir)
+            if (dir(i:i) == "'") then
+                quoted = quoted // "'\''"
+            else
+                quoted = quoted // dir(i:i)
+            end if
+        end do
+        quoted = quoted // "'"
+
+        CALL execute_command_line('mkdir -p -- ' // quoted, exitstat=exit_stat, cmdstat=cmd_stat)
+        if (cmd_stat /= 0_I32 .or. exit_stat /= 0_I32) then
+            error stop "ensure_parent_dir: could not create directory " // dir
+        end if
     end if
 
 END SUBROUTINE ensure_parent_dir

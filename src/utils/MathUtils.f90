@@ -375,7 +375,8 @@ SUBROUTINE generate_timeseries_banded_sines(peaks, keys, t, zeta, nfreq, seed, &
     ! Reconstructs a synthetic time-series signal from spectral peak
     ! distributions. Optimized for HPC: aggregates all frequency components
     ! first, then performs a single OpenMP+SIMD pass over the time domain to
-    ! maximize cache locality.
+    ! maximize cache locality. The phases are reproducible for a given seed,
+    ! and nfreq = 1 gives a single line at f0 for every banded peak.
     ! -------------------------------------------------------------------------
 
     REAL(WP)         , INTENT(IN)                         :: peaks(:,:)      ! [-] Peaks (Npeaks, 2): freq [Hz], RMS
@@ -413,6 +414,8 @@ SUBROUTINE generate_timeseries_banded_sines(peaks, keys, t, zeta, nfreq, seed, &
     fcut_       = 10.0_WP ; if (present(fcut))       fcut_       = fcut
     used_freqs_ = .false. ; if (present(used_freqs)) used_freqs_ = used_freqs
 
+    if (nfreq_ < 1_I32) error stop "generate_timeseries_banded_sines: nfreq must be >= 1"
+
     nt = size(t)
     ALLOCATE(a(nt))
     n_peaks = size(peaks, 1)
@@ -429,6 +432,9 @@ SUBROUTINE generate_timeseries_banded_sines(peaks, keys, t, zeta, nfreq, seed, &
     ! Initialize random seed
     CALL random_seed(size=seed_size)
     ALLOCATE(seed_arr(seed_size))
+    do i = 1, seed_size
+        seed_arr(i) = seed_ + 37_I32 * (i - 1_I32)
+    end do
     CALL random_seed(put=seed_arr)
 
     ! --- 1. Aggregate all frequency components (no time-domain computation here) --- !
@@ -444,9 +450,13 @@ SUBROUTINE generate_timeseries_banded_sines(peaks, keys, t, zeta, nfreq, seed, &
 
             ALLOCATE(fk(nfreq_), g(nfreq_), Arms_k(nfreq_), phases(nfreq_))
 
-            do j = 1, nfreq_
-                fk(j) = f0 - 4.0_WP * sigma + (j - 1_I32) * (8.0_WP * sigma) / real(nfreq_ - 1_I32, WP)
-            end do
+            if (nfreq_ == 1_I32) then
+                fk(1) = f0
+            else
+                do j = 1, nfreq_
+                    fk(j) = f0 - 4.0_WP * sigma + (j - 1_I32) * (8.0_WP * sigma) / real(nfreq_ - 1_I32, WP)
+                end do
+            end if
 
             g      = exp(-0.5_WP * ((fk - f0) / sigma)**2)
             g      = g / sqrt(sum(g**2))
