@@ -325,6 +325,75 @@ def generate_iso_third_octave(fmin=0.0, fmax=20000.0):
     mask = (fc_all >= fmin) & (fc_all <= fmax)
     return n_vals[mask], np.asarray(fc_all[mask])
 
+def smooth_fractional_octave(freqs, spectrum, fraction=12, domain='db'):
+    """
+    Smooths a narrowband spectrum with a moving window 1/fraction octave wide, centred on every bin. It is
+    the frequency-domain counterpart of Welch's segment averaging (less variance, coarser resolution), with
+    a constant relative width so it looks uniform on a logarithmic frequency axis. Unlike to_third_octave,
+    the output keeps the input frequency grid. Any grid is accepted, also with gaps (filter_freqs=True).
+    NaN bins are left out of every window; a column that is NaN everywhere (masked observer) stays NaN.
+
+    Parameters
+    ----------
+    freqs : array_like
+        Frequency vector (Hz), shape (nfreqs,).
+    spectrum : array_like
+        Spectrum values corresponding to `freqs`, shape (nfreqs,) or (nfreqs, ncols). Every column (e.g.
+        every observer) is smoothed on its own, all of them in a single pass.
+    fraction : int
+        Window width in octaves is 1/fraction (e.g. 12 → 1/12 octave). Default: 12.
+    domain : str
+        'db'   → spectrum in dB, averaged as power: 10 log10(mean(10^(L/10))).
+                 Suitable for: SPL (dB), PSD (dB/Hz), an energetic mean in dB.
+        'mean' → plain arithmetic mean of the values.
+                 Suitable for: an arithmetic mean of levels (dB), non-energetic quantities.
+
+    Returns
+    -------
+    smoothed : np.ndarray
+        Smoothed spectrum on the input grid, same shape as `spectrum`.
+    """
+
+    if domain not in ('db', 'mean'):
+        raise ValueError(f"Unknown domain '{domain}'. Use 'db' or 'mean'.")
+
+    freqs    = np.asarray(freqs,    dtype=float)
+    spectrum = np.asarray(spectrum, dtype=float)
+
+    if freqs.ndim != 1 or spectrum.ndim not in (1, 2) or spectrum.shape[0] != freqs.size:
+        raise ValueError("`freqs` must be 1D and `spectrum` (nfreqs,) or (nfreqs, ncols).")
+
+    # (nfreqs,) → (nfreqs, 1), so 1D and 2D inputs share the same loop
+    values_2d = spectrum.reshape(freqs.size, -1)
+
+    # Window edges of every bin on the sorted grid: [f / 2^(1/2N), f * 2^(1/2N)]
+    order    = np.argsort(freqs)
+    f_sorted = freqs[order]
+    values   = values_2d[order]
+    if domain == 'db':
+        values = 10 ** (values / 10)
+
+    half_bw = 2 ** (1 / (2 * fraction))
+    lo      = np.searchsorted(f_sorted, f_sorted / half_bw, side='left')
+    hi      = np.searchsorted(f_sorted, f_sorted * half_bw, side='right')
+
+    # Direct window means (no cumulative sums: their cancellation would ruin the quiet bins next to the
+    # loud ones, the dynamic range of these spectra exceeds 100 dB). Windows without data give 0/0 = NaN.
+    is_data  = ~np.isnan(values)
+    values   = np.where(is_data, values, 0.0)
+    smoothed = np.empty_like(values)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        for i in range(f_sorted.size):
+            smoothed[i] = values[lo[i]:hi[i]].sum(axis=0) / is_data[lo[i]:hi[i]].sum(axis=0)
+
+        if domain == 'db':
+            smoothed = 10 * np.log10(smoothed)
+
+    out        = np.empty_like(smoothed)
+    out[order] = smoothed
+
+    return out.reshape(spectrum.shape)
+
 def pressure_to_PSD(p, df, p_ref=1e-6, absorption=False, freq=None, distance=None):
     """
     Convert complex pressure amplitudes to Power Spectral Density (PSD) in dB

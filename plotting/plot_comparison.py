@@ -151,6 +151,8 @@ def plot_spectrum(cases        : list  = None,      # [-] List of dictionaries c
                   filter_under : float = None,      # [Hz] Minimum frequency threshold
                   filter_over  : float = None,      # [Hz] Maximum frequency threshold
                   do_thresholds: bool  = False,     # [-] Whether to plot regulatory/reference thresholds
+                  smooth       : bool  = True,      # [-] Narrowband only: smooth every observer curve too (False: only the means)
+                  smooth_fraction: int = 12,        # [-] Narrowband only: smoothing window, 1/N octave (None: no smoothing at all)
                   figsize      : tuple = (7, 5)):  # [-] Size of a single panel
     """
     Plots the acoustic spectrum of every case side by side (one panel per case).
@@ -170,6 +172,8 @@ def plot_spectrum(cases        : list  = None,      # [-] List of dictionaries c
                           filter_under=filter_under,
                           filter_over=filter_over,
                           do_thresholds=do_thresholds,
+                          smooth=smooth,
+                          smooth_fraction=smooth_fraction,
                           figsize=figsize,
                           ax_in=axes[i])
         if i % ncols > 0:

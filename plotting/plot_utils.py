@@ -16,6 +16,7 @@ import numpy as np
 from pathlib import Path
 from datetime import datetime
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import utils.AcousticUtils as au
 import plot_style as ps
 from mpl_toolkits.mplot3d import Axes3D
@@ -841,6 +842,30 @@ def get_case_colors(n: int = 1):    # [-] Number of cases
     palette = ps.AcademicStyle.CASE_COLORS + [c for c in ps.AcademicStyle.BAND_COLORS if c not in ps.AcademicStyle.CASE_COLORS]
 
     return [palette[i % len(palette)] for i in range(n)]
+
+def get_color_shades(color,             # [-] Base color (any matplotlib color)
+                     n: int = 1):       # [-] Number of shades
+    """
+    Shades of a single color, from darker to lighter, to tell apart several curves of the same case (e.g.
+    the observers of a spectrum). The base color is mixed with black (darker shades) or with white (lighter
+    tints), so every curve still reads as the same color. A single shade is the base color itself.
+
+    Returns
+    -------
+    shades : list of tuple
+        n RGB colors.
+    """
+
+    rgb = np.array(mcolors.to_rgb(color))
+    if n <= 1:
+        return [tuple(rgb)]
+
+    shades = []
+    for t in np.linspace(-0.35, 0.45, n):     # [-] < 0: fraction of black, > 0: fraction of white
+        target = np.zeros(3) if t < 0 else np.ones(3)
+        shades.append(tuple(rgb + abs(t) * (target - rgb)))
+
+    return shades
 
 def get_line_styles():
     return ps.AcademicStyle.LINE_STYLES

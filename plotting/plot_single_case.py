@@ -187,11 +187,17 @@ def plot_spectrum(case         : dict  = None,      # [-] Dictionary containing 
                   filter_under : float = None,      # [Hz] Minimum frequency threshold
                   filter_over  : float = None,      # [Hz] Maximum frequency threshold
                   do_thresholds: bool  = False,     # [-] Whether to plot regulatory/reference thresholds
+                  smooth       : bool  = True,      # [-] Narrowband only: smooth every observer curve too (False: only the means)
+                  smooth_fraction: int = 12,        # [-] Narrowband only: smoothing window, 1/N octave (None: no smoothing at all)
                   figsize      : tuple = (10,5),    # [-] Figure size
                   ax_in        : plt.Axes = None):  # [-] Optional external axes for subplots
     """
     Plots the acoustic spectrum. Observers without data (NaN, inside the structure) are left out with a
-    message.
+    message. If every observer with data lies at the same distance to the axis, their energetic mean
+    (solid black) and arithmetic dB mean (dashed black) are added. In narrowband the means are always
+    smoothed over 1/smooth_fraction octave, so they read as a trend instead of a saw, and with smooth=True
+    so is every observer curve. The means are computed from the raw curves either way, and OASPL never
+    sees the smoothing.
 
     Returns
     -------
@@ -268,20 +274,50 @@ def plot_spectrum(case         : dict  = None,      # [-] Dictionary containing 
     linestyles   = pu.get_line_styles()
     num_observers = spl.shape[1] if spl.ndim> 1 else 1
     if num_observers > len(linestyles): print("plot_spectrum(): too many observers, linestyles will be repeated")
+    shades = pu.get_color_shades(color, num_observers)    # Same case color, one shade per observer
+    valid  = []                                           # Observers with data, for the mean spectrum
+
+    # Narrowband smoothing: of every curve (smooth=True) or only of the means; the raw spl feeds the means
+    smooth_means  = (not octave) and bool(smooth_fraction)
+    smooth_curves = smooth_means and smooth
+    spl_plot      = au.smooth_fractional_octave(Freqs, spl, smooth_fraction, domain='db') if smooth_curves else spl
+    smooth_note   = f"1/{smooth_fraction} oct. smoothed" if smooth_means else ""
 
     for i in range(num_observers):
         ls = linestyles[i % len(linestyles)]
-        y_data = spl[:,i] if spl.ndim > 1 else spl
+        y_data = spl_plot[:,i] if spl_plot.ndim > 1 else spl_plot
+
+        # Observers are told apart by their coordinates: several of them may share the same distance
+        x_obs, y_obs, z_obs = Observers[i]
+        coords = f"({x_obs:.1f}, {y_obs:.1f}, {z_obs:.1f}) m"
 
         # Observers inside the structure carry no data (NaN at every frequency)
         if np.all(np.isnan(y_data)):
-            print(f"plot_spectrum(): observer at r = {distances[i]:.1f} m has no data (NaN, inside the structure), skipping it")
+            print(f"plot_spectrum(): observer {coords} has no data (NaN, inside the structure), skipping it")
             continue
 
-        ax.semilogx(Freqs, y_data, ls, color=color, label=f"r = {distances[i]:.1f} m")
+        ax.semilogx(Freqs, y_data, ls, color=shades[i], label=coords)
+        valid.append(i)
 
-        print(f"\nDistance: {distances[i]:.1f} m" )
+        print(f"\nObserver: {coords} | r = {distances[i]:.1f} m")
         print(f"{tag}: OASPL = {oaspl[i]:.1f}")
+
+    # Observers all at the same distance to the axis (e.g. around the platform): energetic and dB means
+    if len(valid) > 1 and np.allclose(distances[valid], distances[valid[0]], rtol=0.0, atol=0.1):
+        spl_valid = spl[:, valid]
+        mean_energetic = 10.0 * np.log10(np.nanmean(10.0**(spl_valid / 10.0), axis=1))    # Mean of p^2, in dB
+        mean_db        = np.nanmean(spl_valid, axis=1)                                     # Mean of the levels
+
+        # Narrowband: each mean smoothed in its own domain (power for the energetic one, dB for the other)
+        if smooth_means:
+            mean_energetic = au.smooth_fractional_octave(Freqs, mean_energetic, smooth_fraction, domain='db')
+            mean_db        = au.smooth_fractional_octave(Freqs, mean_db, smooth_fraction, domain='mean')
+
+        # Only the means smoothed: the note goes on their labels (otherwise it goes on the title)
+        label_extra = f", {smooth_note}" if smooth_means and not smooth_curves else ""
+
+        ax.semilogx(Freqs, mean_energetic, '-' , color='k', label=f"Energetic mean{label_extra}")
+        ax.semilogx(Freqs, mean_db       , '--', color='k', label=f"Arithmetic mean (dB){label_extra}")
 
     # Animal thresholds
     if do_thresholds:
@@ -305,7 +341,7 @@ def plot_spectrum(case         : dict  = None,      # [-] Dictionary containing 
 
     ax.set_ylabel(ylabel)
     ax.set_xlabel("Frequency [Hz]")
-    ax.set_title(tag)
+    ax.set_title(f"{tag} ({smooth_note})" if smooth_curves else tag)
     ax.grid(True, which='both', ls='--', alpha=0.4)
     ax.set_ylim(bottom=0.)
 
