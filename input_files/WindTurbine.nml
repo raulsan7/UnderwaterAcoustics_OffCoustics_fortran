@@ -25,7 +25,7 @@
     Nnodes = 9                                  ! [-] Number of structural nodes per member
 
     ! --- Time-series reading window --- !
-    From = 0.9                                  ! [-] Fraction of the time series to start reading from
+    From = 0.0                                  ! [-] Fraction of the time series to start reading from
     Upto = 1.0                                  ! [-] Fraction of the time series to stop reading at
     skip = 1                                    ! [-] Keep 1 out of every "skip" time samples
     skipf = 1                                   ! [-] Keep 1 out of every "skipf" frequency bins

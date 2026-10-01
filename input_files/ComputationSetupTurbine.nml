@@ -26,8 +26,8 @@
 ! Which post-processing steps to run
 ! ---------------------------------------------------------------
 &do_config
-    do_all           = .true.       ! [-] Run all cases listed bellow
-    do_spectrums     = .false.      ! [-] Spectrums at observer points (run_spectrums)
+    do_all           = .false.       ! [-] Run all cases listed bellow
+    do_spectrums     = .true.      ! [-] Spectrums at observer points (run_spectrums)
     do_polar         = .false.      ! [-] Polar contour (run_polar)
     do_cylinder      = .false.      ! [-] Cylinder surface (run_cylinder)
     do_decay         = .false.      ! [-] Distance decay along wind direction (run_decay)

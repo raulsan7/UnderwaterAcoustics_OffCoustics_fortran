@@ -49,7 +49,7 @@ def pressure_to_SPL(p, p_ref=1e-6, absorption=False, freq=None, distance=None):
 
     return spl
 
-def SPL_to_OASPL(spl, axis=0):
+def SPL_to_OASPL(spl, axis=0, Hanning_correction=True):
     """
     Convert narrowband SPL [dB] to OASPL [dB] by summing over frequency.
 
@@ -67,7 +67,10 @@ def SPL_to_OASPL(spl, axis=0):
     """
     spl = np.asarray(spl, dtype=float)
 
-    return 10.0 * np.log10(np.sum(10 ** (spl / 10), axis=axis)+1e-6)
+    if Hanning_correction:
+        return 10.0 * np.log10(np.sum(10 ** (spl / 10), axis=axis)+1e-6) - 10.0 * np.log10(1.5)  # Correction for Hanning window (1.5 factor)
+    else:
+        return 10.0 * np.log10(np.sum(10 ** (spl / 10), axis=axis)+1e-6)
 
 def pressure_to_OASPL(p, p_ref=1e-6, absorption=False, freq=None, distance=None, axis=0):
     """
@@ -158,7 +161,7 @@ def add_absorption(freq, SPL, distance):
         Absorption-corrected SPL in dB.
     """
     freq = np.asarray(freq)
-    distance = np.asarray(distance)
+    distance = np.asarray(distance)/1000.0  # Convert distance to km
     SPL = np.asarray(SPL)
 
     if freq.size > 1:
@@ -394,7 +397,7 @@ def smooth_fractional_octave(freqs, spectrum, fraction=12, domain='db'):
 
     return out.reshape(spectrum.shape)
 
-def pressure_to_PSD(p, df, p_ref=1e-6, absorption=False, freq=None, distance=None):
+def pressure_to_PSD(p, df, p_ref=1e-6, absorption=False, freq=None, distance=None, Hanning_correction=True):
     """
     Convert complex pressure amplitudes to Power Spectral Density (PSD) in dB
     re (p_ref²/Hz).
@@ -451,6 +454,9 @@ def pressure_to_PSD(p, df, p_ref=1e-6, absorption=False, freq=None, distance=Non
         df = df.reshape(shape)
     # else if scalar, it will broadcast automatically
 
-    psd = spl - 10.0 * np.log10(df)
+    if Hanning_correction:
+        psd = spl - 10.0 * np.log10(1.5 * df) # Correction for Hanning window (1.5 factor)
+    else:
+        psd = spl - 10.0 * np.log10(df)
 
     return psd

@@ -28,7 +28,7 @@ def main():
         case = cases[0]
         # p.plot_structure(case, mode="xz")
         p.plot_spectrum(case, do_thresholds=False, absorption=False, filter_under=10.0, mode='PSD')
-        p.plot_spectrum(case, do_thresholds=False, absorption=False, filter_under=10.0, octave=False, smooth=True)
+        p.plot_spectrum(case, do_thresholds=False, absorption=False, filter_under=10.0, octave=False, smooth=True, mode='PSD')
         # p.plot_polar(case)
         # p.plot_cylinder(case)
         # p.plot_distance_decay(case, turbine_data=True)
@@ -40,7 +40,7 @@ def main():
         # p.compute_cylinder_metrics(case)
     else:
         pc.plot_spectrum(cases, do_thresholds=False, absorption=False, filter_under=10.0, mode='PSD')
-        pc.plot_spectrum(cases, do_thresholds=False, absorption=False, filter_under=10.0, octave=False)
+        pc.plot_spectrum(cases, do_thresholds=False, absorption=False, filter_under=10.0, octave=False, mode='PSD')
         # pc.plot_polar(cases)
         # pc.plot_cylinder(cases)
         # pc.plot_distance_decay(cases, turbine_data=True)
