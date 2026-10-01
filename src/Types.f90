@@ -336,7 +336,7 @@ TYPE :: Config_SliceVertical_t
     ! Valid for a single turbine and for a wind farm alike.
     ! -------------------------------------------------------------------------
 
-    REAL(WP)     :: azimuth_sv      ! [deg] Azimuth of the plane normal (0 deg: normal to +x, anticlockwise)
+    REAL(WP)     :: azimuth_sv      ! [deg] Azimuth of the plane normal (0 deg: normal along +x, YZ plane; anticlockwise)
     REAL(WP)     :: center_sv(2)    ! [m] Plane centre (x, y)
     REAL(WP)     :: width_sv        ! [m] Full horizontal span of the plane
     REAL(WP)     :: zlim_sv(2)      ! [m] Depth extent (min, max)

@@ -1186,14 +1186,18 @@ END SUBROUTINE run_sliceXZ
 SUBROUTINE run_sliceVertical(self)
     ! -------------------------------------------------------------------------
     ! Computes pressure on a vertical plane whose horizontal normal points
-    ! along azimuth_sv (0 deg: normal to +x, anticlockwise). The plane spans
-    ! the horizontal axis span = (-sin, cos)(azimuth) and the depth. With the
-    ! automatic width every source is projected onto the span axis and the
-    ! plane covers all of them plus margin_sv on both sides, so the same
-    ! routine is valid for a single turbine and for a wind farm. Observers
-    ! are ordered with z varying fastest, as in the Python implementation.
-    ! Saves the reshaped pressure/observer grids and the plane geometry
-    ! metadata to the solver's HDF5 file.
+    ! along azimuth_sv (0 deg: normal along +x, i.e. the YZ plane; measured
+    ! anticlockwise, as the wind direction and the polar angle). The plane
+    ! spans the horizontal axis span = (-sin, cos)(azimuth) and the depth.
+    ! With the automatic width every source is projected onto the span axis
+    ! and the plane covers all of them plus margin_sv on both sides, so the
+    ! same routine is valid for a single turbine and for a wind farm. If
+    ! run_sliceXZ already covers the same plane (normal along +-y through
+    ! y = y_xz) the step is skipped and switched off in do_run, so the .dat
+    ! summary does not report it. Observers are ordered with z varying
+    ! fastest, as in the Python implementation. Saves the reshaped
+    ! pressure/observer grids and the plane geometry metadata to the
+    ! solver's HDF5 file.
     ! -------------------------------------------------------------------------
 
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self    ! [-] Solver instance
@@ -1224,12 +1228,14 @@ SUBROUTINE run_sliceVertical(self)
         ! --- 2. Centre: turbine axis, or mean turbine axis for a wind farm --- !
         if (any(pp % center_sv == DEFAULT_R)) pp % center_sv = self % sources % geometry % origin
 
+        ! Normal along +-y (azimuth = +-90 deg) through y = y_xz: same plane as run_sliceXZ, skipped
         if (self % run_inputs % do_run % do_sliceXZ .and. &
             abs(cos(az_rad)) < sin(1.0e-3_WP * PI / 180.0_WP)) then
             y_xz = self % run_inputs % params_sliceXZ % y_xz
-            if (y_xz == DEFAULT_R) y_xz = self % sources % geometry % origin(2)
+            if (y_xz == DEFAULT_R) y_xz = self % sources % geometry % origin(2)    ! Same default as run_sliceXZ
             if (abs(y_xz - pp % center_sv(2)) < 1.0e-3_WP) then
-                write(*, '(A)') '>> [SliceVert]  skipped: same XZ plane as SliceXZ'
+                write(*, '(A,F8.2,A)') '>> [SliceVert]  skipped: same plane as SliceXZ (y = ', y_xz, ' m)'
+                self % run_inputs % do_run % do_sliceVertical = .false.    ! Not run: left out of the .dat summary
                 return
             end if
         end if
@@ -1324,14 +1330,16 @@ END SUBROUTINE run_sliceVertical
 SUBROUTINE dummy_run_sphere(self)
     ! -------------------------------------------------------------------------
     ! Default (no-op) implementation of run_sphere, used by solvers that do
-    ! not support a spherical free-field observer geometry. Only consumes its
-    ! arguments and prints a "skipped" notice.
+    ! not support a spherical free-field observer geometry. Prints a
+    ! "skipped" notice and switches do_sphere off, so the .dat summary does
+    ! not report a step that never ran.
     ! -------------------------------------------------------------------------
 
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self    ! [-] Solver instance
 
 
     write(*, '(A)') '>> [Sphere]     skipped, not available for: ' // trim(self % solver_name)
+    self % run_inputs % do_run % do_sphere = .false.    ! Not run: left out of the .dat summary
 
 END SUBROUTINE dummy_run_sphere
 

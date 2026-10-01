@@ -137,8 +137,8 @@
 ! ---------------------------------------------------------------
 ! Vertical slice at any azimuth (run_sliceVertical)
 ! ---------------------------------------------------------------
-! The plane normal points along azimuth_sv (0 deg: normal to +x,
-! anticlockwise); the plane spans the horizontal axis (-sin, cos) of
+! The plane normal points along azimuth_sv (0 deg: normal along +x,
+! i.e. the YZ plane; anticlockwise); the plane spans the axis (-sin, cos) of
 ! that azimuth and the depth. azimuth_sv = -90.0 gives the XZ plane
 ! with the span axis along +x, i.e. the vertical plane through the
 ! turbine row. The automatic width covers both turbines; margin_sv =
