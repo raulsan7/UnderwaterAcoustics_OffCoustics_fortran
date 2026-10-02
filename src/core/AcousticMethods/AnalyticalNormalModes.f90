@@ -107,6 +107,7 @@ SUBROUTINE init_AnalyticalNormalModes(self, sources, config)
     self % block_size         = config % solver % block_size
     self % debug              = config % solver % debug
     self % in_cluster         = config % solver % in_cluster
+    self % update_existing    = config % solver % update_existing
 
     ! Child-specific variables
     SELECT TYPE (m => config % method)
@@ -266,13 +267,17 @@ SUBROUTINE save_parameters_AnalyticalNormalModes(self, turbine, farm)
     ! Saves the solver, environment and generic turbine parameters to the
     ! HDF5 output file, delegates the turbine-specific parameters to
     ! turbine % save_specific_params, and triggers the human-readable .dat
-    ! text summary via write_txt_summary.
+    ! text summary via write_txt_summary. An existing output kept for update is
+    ! checked first (check_update).
     ! -------------------------------------------------------------------------
 
     CLASS(AnalyticalNormalModes_t), INTENT(IN)           :: self       ! [-] Solver instance
     CLASS(WindTurbine_t)          , INTENT(IN), OPTIONAL :: turbine    ! [-] Turbine instance (optional)
     TYPE(WindFarm_t)              , INTENT(IN), OPTIONAL :: farm       ! [-] Wind farm instance (optional)
 
+
+    ! Existing output of another case: deleted here, before anything is written
+    CALL self % check_update(turbine, farm)
 
     ! Solver / environment / generic turbine data -> HDF5
     CALL save_variable(self % save_path, "Nmodes"   , self % Nmodes)

@@ -26,7 +26,7 @@ IMPLICIT NONE
 
 PRIVATE
 PUBLIC :: get_SDsum_variables, read_input_SD, read_curve, save_variable, save_to_hdf5, to_upper, swap_extension, &
-          ensure_parent_dir
+          ensure_parent_dir, move_text_file, read_hdf5_real_1d, read_full_line
 
 
 ! ===============================================================================
@@ -1427,6 +1427,87 @@ SUBROUTINE ensure_parent_dir(path)
     end if
 
 END SUBROUTINE ensure_parent_dir
+
+
+SUBROUTINE move_text_file(src, dst)
+    ! -------------------------------------------------------------------------
+    ! Moves a text file: copies it line by line to "dst" (replacing any
+    ! previous file there) and deletes "src". Portable (no RENAME extension).
+    ! No-op if "src" does not exist.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN) :: src    ! [-] Existing text file
+    CHARACTER(len=*), INTENT(IN) :: dst    ! [-] Destination path
+
+    ! Local variables
+    CHARACTER(len=:), ALLOCATABLE :: line
+    INTEGER(I32)                  :: u_in, u_out, ios
+
+
+    open(newunit=u_in, file=src, status='old', action='read', iostat=ios)
+    if (ios /= 0_I32) return
+
+    open(newunit=u_out, file=dst, status='replace', action='write')
+    do
+        CALL read_full_line(u_in, line, ios)
+        if (ios /= 0_I32) exit
+        write(u_out, '(A)') line
+    end do
+    close(u_out)
+    close(u_in, status='delete')
+
+END SUBROUTINE move_text_file
+
+
+SUBROUTINE read_hdf5_real_1d(filepath, var_name, data_array, found)
+    ! -------------------------------------------------------------------------
+    ! Reads a rank-1 REAL(WP) dataset (as written by save_hdf5_real_1d).
+    ! found = .false. and data_array unallocated if the file cannot be opened
+    ! or the dataset does not exist or is not rank-1.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)               :: filepath         ! [-] Path to the HDF5 file
+    CHARACTER(len=*), INTENT(IN)               :: var_name         ! [-] Dataset name
+    REAL(WP)        , INTENT(OUT), ALLOCATABLE :: data_array(:)    ! [-] Dataset values
+    LOGICAL         , INTENT(OUT)              :: found            ! [-] Whether the dataset was read
+
+    ! Local variables
+    INTEGER(HID_T)   :: file_id, dspace_id, dset_id
+    INTEGER          :: error, rank
+    LOGICAL          :: file_exists
+    INTEGER(HSIZE_T) :: dims(1), maxdims(1)
+
+
+    found = .false.
+    inquire(file=filepath, exist=file_exists)
+    if (.not. file_exists) return
+
+    CALL h5open_f(error)
+    CALL h5fopen_f(filepath, H5F_ACC_RDONLY_F, file_id, error)
+    if (error /= 0) then
+        CALL h5close_f(error)
+        return
+    end if
+
+    CALL h5lexists_f(file_id, var_name, found, error)
+    if (found) then
+        CALL h5dopen_f(file_id, var_name, dset_id, error)
+        CALL h5dget_space_f(dset_id, dspace_id, error)
+        CALL h5sget_simple_extent_ndims_f(dspace_id, rank, error)
+        found = (rank == 1)
+        if (found) then
+            CALL h5sget_simple_extent_dims_f(dspace_id, dims, maxdims, error)
+            ALLOCATE(data_array(dims(1)))
+            CALL h5dread_f(dset_id, H5T_NATIVE_DOUBLE, data_array, dims, error)
+        end if
+        CALL h5sclose_f(dspace_id, error)
+        CALL h5dclose_f(dset_id, error)
+    end if
+
+    CALL h5fclose_f(file_id, error)
+    CALL h5close_f(error)
+
+END SUBROUTINE read_hdf5_real_1d
 
 
 ! ===============================================================================

@@ -97,6 +97,7 @@ TYPE :: Config_Solver_t
     ! --- Input parameters --- !
     LOGICAL            :: debug             ! [-] More info for debugging
     LOGICAL            :: in_cluster        ! [-] Whether we are working on a cluster
+    LOGICAL            :: update_existing   ! [-] Update an existing output file of the same case instead of rebuilding it
     CHARACTER(len=200) :: save_path         ! [-] Where to save results
     CHARACTER(len=100) :: extra_label       ! [-] Label appended to the output file name ('None' or '': none)
     CHARACTER(len=50)  :: method            ! [-] Acoustic method to use

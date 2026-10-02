@@ -105,6 +105,7 @@ SUBROUTINE init_ImageMethod(self, sources, config)
     self % block_size         = config % solver % block_size
     self % debug              = config % solver % debug
     self % in_cluster         = config % solver % in_cluster
+    self % update_existing    = config % solver % update_existing
 
     ! Child-specific variables
     SELECT TYPE (m => config % method)
@@ -249,13 +250,17 @@ SUBROUTINE save_parameters_ImageMethod(self, turbine, farm)
     ! Saves the solver, environment and generic turbine parameters to the
     ! HDF5 output file, delegates the turbine-specific parameters to
     ! turbine % save_specific_params, and triggers the human-readable .dat
-    ! text summary via write_txt_summary.
+    ! text summary via write_txt_summary. An existing output kept for update is
+    ! checked first (check_update).
     ! -------------------------------------------------------------------------
 
     CLASS(ImageMethod_t), INTENT(IN)           :: self          ! [-] Solver instance
     CLASS(WindTurbine_t), INTENT(IN), OPTIONAL :: turbine       ! [-] Turbine instance (optional)
     TYPE(WindFarm_t)    , INTENT(IN), OPTIONAL :: farm          ! [-] Farm instance (optional)
 
+
+    ! Existing output of another case: deleted here, before anything is written
+    CALL self % check_update(turbine, farm)
 
     ! Solver / environment / generic turbine data -> HDF5
     CALL save_variable(self % save_path, "N_images" , self % N_images)
@@ -666,13 +671,17 @@ SUBROUTINE run_sphere(self)
     end associate
 
     ! Basic enclosure check
-    a_max = 0.0_WP
-    do i = 1, size(self % sources % xyz, 1)
-        a_max = max(a_max, norm2(self % sources % xyz(i, :) - center_))
-    end do
+    if (r_ == 0.0_WP) then
+        a_max = 0.0_WP
+        do i = 1, size(self % sources % xyz, 1)
+            a_max = max(a_max, norm2(self % sources % xyz(i, :) - center_))
+        end do
 
-    k_far = 2.0_WP * PI * f_farfield_ / self % env % speed_sound_base
-    r_ = a_max + 3.0_WP / k_far     ! [-] Farfield criterion: 3 wavelengths at f_farfield
+        k_far = 2.0_WP * PI * f_farfield_ / self % env % speed_sound_base
+        r_ = a_max + 3.0_WP / k_far     ! [-] Farfield criterion: 3 
+    end if
+
+    self % run_inputs % params_sphere % r_sphere = r_
 
     Nobs = n_theta_ * nz_
     ALLOCATE(observers_(Nobs, 3))

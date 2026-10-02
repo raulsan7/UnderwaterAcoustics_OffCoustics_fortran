@@ -424,9 +424,10 @@ SUBROUTINE read_solver_config(path, config)
     ! -------------------------------------------------------------------------
     ! Reads the "solver_config" namelist from Solver.nml (simulation type,
     ! which acoustic solver method to use, output save path and its optional
-    ! extra label, block size, cluster/debug flags) and packs the values into
-    ! config % solver. Strings are read into long buffers and rejected when
-    ! they do not fit in Config_Solver_t, so a long save_path is never cut.
+    ! extra label, block size, cluster/debug flags and whether an existing
+    ! output file is updated) and packs the values into config % solver.
+    ! Strings are read into long buffers and rejected when they do not fit in
+    ! Config_Solver_t, so a long save_path is never cut.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to Solver.nml
@@ -444,6 +445,7 @@ SUBROUTINE read_solver_config(path, config)
     INTEGER(I32)        :: block_size
     LOGICAL             :: in_cluster
     LOGICAL             :: debug
+    LOGICAL             :: update_existing
 
     ! --- 1. Configuration namelist --- !
     NAMELIST /solver_config/    &
@@ -453,7 +455,8 @@ SUBROUTINE read_solver_config(path, config)
         extra_label,            &
         block_size,             &
         in_cluster,             &
-        debug
+        debug,                  &
+        update_existing
 
 
     ! --- 2. Defaults --- !
@@ -464,6 +467,7 @@ SUBROUTINE read_solver_config(path, config)
     block_size      = 128_I32
     in_cluster      = .true.
     debug           = .false.
+    update_existing = .true.
 
     ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
@@ -496,6 +500,7 @@ SUBROUTINE read_solver_config(path, config)
     config % solver % block_size      = block_size
     config % solver % in_cluster      = in_cluster
     config % solver % debug           = debug
+    config % solver % update_existing = update_existing
 
 END SUBROUTINE read_solver_config
 
