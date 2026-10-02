@@ -20,7 +20,7 @@
 MODULE SAITEC2MWFloating
 
 USE Kinds
-USE WindTurbine, ONLY: WindTurbine_t, init
+USE WindTurbine, ONLY: WindTurbine_t
 USE ConfigTypes, ONLY: Config_WindTurbine_t
 USE DrivetrainExcitation, ONLY: drivetrain2MW_excitation_spectrum
 
@@ -39,12 +39,12 @@ TYPE, EXTENDS(WindTurbine_t) :: SAITEC2MWFloating_t
     ! -------------------------------------------------------------------------
 
     ! Physical and structural parameters specific to the SAITEC SENVION 2 MW SATH platform
-    REAL(WP) :: Diam_y   = 10.0_WP      ! [m] Elliptical floater diameter in y-direction
-    REAL(WP) :: Diam_z   = 12.5_WP      ! [m] Elliptical floater diameter in z-direction
-    REAL(WP) :: rho_wat  = 1025.0_WP    ! [kg/m^3] Water density
-    REAL(WP) :: rho_mat  = 1850.0_WP    ! [kg/m^3] Material density (concrete)
-    REAL(WP) :: t        = 1.0_WP       ! [m] Wall thickness
-    REAL(WP) :: wet_area = 0.0_WP       ! [m^2] Wetted area (not computed for this platform)
+    REAL(WP) :: Diam_y   = 10.0_WP                  ! [m] Elliptical floater diameter in y-direction
+    REAL(WP) :: Diam_z   = 12.5_WP                  ! [m] Elliptical floater diameter in z-direction
+    REAL(WP) :: rho_wat  = 1025.0_WP                ! [kg/m^3] Water density
+    REAL(WP) :: rho_mat  = 1850.0_WP                ! [kg/m^3] Material density (concrete)
+    REAL(WP) :: t        = 1.0_WP                   ! [m] Wall thickness
+    REAL(WP) :: wet_area = 0.0_WP                   ! [m^2] Wetted area (not computed for this platform)
 
     ! [-] Floater members ID list: [[0,1],[3,4]]
     INTEGER(I32) :: float_members(2,2) = reshape([0_I32, 3_I32, 1_I32, 4_I32], [2, 2])
@@ -52,8 +52,8 @@ TYPE, EXTENDS(WindTurbine_t) :: SAITEC2MWFloating_t
     INTEGER(I32) :: joint_members(3) = [5_I32, 2_I32, 6_I32]
 
     ! Hardcoded paths to the SAITEC 2 MW drivetrain bar-chart amplitude data
-    CHARACTER(len=:), ALLOCATABLE :: path_barRB    ! [-] Rotor-bearing bar-chart data file
-    CHARACTER(len=:), ALLOCATABLE :: path_barGB    ! [-] Gearbox bar-chart data file
+    CHARACTER(len=:), ALLOCATABLE :: path_barRB     ! [-] Rotor-bearing bar-chart data file
+    CHARACTER(len=:), ALLOCATABLE :: path_barGB     ! [-] Gearbox bar-chart data file
 
     CONTAINS
 
@@ -108,7 +108,7 @@ SUBROUTINE init_SAITEC2MWFloating(self, config)
     ! Flag the turbine as floating
     self % is_monopile = .false.
 
-    CALL init(self, config)
+    CALL self % init_base(config)
 
     ! The 0-based float_members/joint_members IDs must exist in the structural model
     n_req = max(maxval(self % float_members), maxval(self % joint_members)) + 1_I32

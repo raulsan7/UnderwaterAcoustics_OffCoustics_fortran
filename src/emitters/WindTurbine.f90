@@ -29,7 +29,7 @@ USE SourceTypes, ONLY: AcousticSource_t, SOURCE_DIPOLE
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: WindTurbine_t, init, save_turbine_params, write_turbine_txt
+PUBLIC :: WindTurbine_t, save_turbine_params, write_turbine_txt
 
 
 TYPE, ABSTRACT, EXTENDS(Emitter_t) :: WindTurbine_t
@@ -40,48 +40,49 @@ TYPE, ABSTRACT, EXTENDS(Emitter_t) :: WindTurbine_t
     ! -------------------------------------------------------------------------
 
     ! --- Input parameters --- !
-    CHARACTER(len=200) :: rootname         ! [-] Name without extensions of the OpenFAST output files
-    CHARACTER(len=200) :: OP_output_dir    ! [-] Directory with OpenFAST output files
-    LOGICAL            :: Binary           ! [-] Whether OpenFAST files are binary (.outb) or not (.out)
-    REAL(WP)           :: WindSpeed        ! [m/s] Wind speed in norm
-    REAL(WP)           :: WindDir          ! [deg] Wind direction, 0 deg points to +x axis (anticlockwise from +x)
-    REAL(WP)           :: Depth            ! [m] Water depth
-    REAL(WP)           :: AxisPos(2)       ! [m] Position of the turbine axis in xy plane
-    REAL(WP)           :: BariPos(2)       ! [m] Position of the turbine barycenter in xy plane
-    INTEGER(I32)       :: Nmembers         ! [-] Number of structural members in the OpenFAST model
-    INTEGER(I32)       :: Nnodes           ! [-] Number of structural nodes in the OpenFAST model
+    CHARACTER(len=200) :: rootname                      ! [-] Name without extensions of the OpenFAST output files
+    CHARACTER(len=200) :: OP_output_dir                 ! [-] Directory with OpenFAST output files
+    LOGICAL            :: Binary                        ! [-] Whether OpenFAST files are binary (.outb) or not (.out)
+    REAL(WP)           :: WindSpeed                     ! [m/s] Wind speed in norm
+    REAL(WP)           :: WindDir                       ! [deg] Wind direction, 0 deg points to +x axis (anticlockwise from +x)
+    REAL(WP)           :: Depth                         ! [m] Water depth
+    REAL(WP)           :: AxisPos(2)                    ! [m] Position of the turbine axis in xy plane
+    REAL(WP)           :: BariPos(2)                    ! [m] Position of the turbine barycenter in xy plane
+    INTEGER(I32)       :: Nmembers                      ! [-] Number of structural members in the OpenFAST model
+    INTEGER(I32)       :: Nnodes                        ! [-] Number of structural nodes in the OpenFAST model
 
     ! --- Dynamic physical arrays --- !
-    REAL(WP), ALLOCATABLE :: Time(:)           ! [s] Simulation time vector
-    REAL(WP), ALLOCATABLE :: acc(:,:,:,:)      ! [m/s^2] Acceleration array (nt, Nmembers, Nnodes, 3)
-    REAL(WP), ALLOCATABLE :: xyz_all(:,:,:)    ! [m] Nodes coordinates (Nmembers, Nnodes, 3)
-    REAL(WP), ALLOCATABLE :: xyz(:,:)          ! [m] Nodes coordinates list (Nnodes_total, 3)
-    REAL(WP), ALLOCATABLE :: Freqs(:)          ! [Hz] Frequency array
+    REAL(WP), ALLOCATABLE :: Time(:)                    ! [s] Simulation time vector
+    REAL(WP), ALLOCATABLE :: acc(:,:,:,:)               ! [m/s^2] Acceleration array (nt, Nmembers, Nnodes, 3)
+    REAL(WP), ALLOCATABLE :: xyz_all(:,:,:)             ! [m] Nodes coordinates (Nmembers, Nnodes, 3)
+    REAL(WP), ALLOCATABLE :: xyz(:,:)                   ! [m] Nodes coordinates list (Nnodes_total, 3)
+    REAL(WP), ALLOCATABLE :: Freqs(:)                   ! [Hz] Frequency array
 
-    COMPLEX(WP), ALLOCATABLE :: Force(:,:,:)    ! [N] Force array (Nfreqs, Nnodes_total, 3)
+    COMPLEX(WP), ALLOCATABLE :: Force(:,:,:)            ! [N] Force array (Nfreqs, Nnodes_total, 3)
 
-    CHARACTER(len=:), ALLOCATABLE :: OP_output_path    ! [-] OpenFAST output file path
-    CHARACTER(len=:), ALLOCATABLE :: OP_SubDyn_path    ! [-] OpenFAST SubDyn file path
-    CHARACTER(len=:), ALLOCATABLE :: path_rpm          ! [-] Path where variables depending on rpm are located
-    CHARACTER(len=:), ALLOCATABLE :: case_type         ! [-] Tag to distinguish turbine
+    CHARACTER(len=:), ALLOCATABLE :: OP_output_path     ! [-] OpenFAST output file path
+    CHARACTER(len=:), ALLOCATABLE :: OP_SubDyn_path     ! [-] OpenFAST SubDyn file path
+    CHARACTER(len=:), ALLOCATABLE :: path_rpm           ! [-] Path where variables depending on rpm are located
+    CHARACTER(len=:), ALLOCATABLE :: case_type          ! [-] Tag to distinguish turbine
 
     ! --- Derived variables --- !
-    LOGICAL  :: is_monopile    ! [-] Whether turbine is monopile or floating
-    REAL(WP) :: df             ! [Hz] FFT bin width 1/(nt*dt), defines the shared frequency grid of a wind farm
+    LOGICAL  :: is_monopile                             ! [-] Whether turbine is monopile or floating
+    REAL(WP) :: df                                      ! [Hz] FFT bin width 1/(nt*dt), defines the shared frequency grid of a wind farm
 
     CONTAINS
 
     ! --- Shared procedures --- !
-    PROCEDURE :: init                            ! Constructor
-    PROCEDURE :: read_input                      ! Reads OpenFAST outputs
-    PROCEDURE :: translate_align_with_WindDir    ! Places nodes correctly
-    PROCEDURE :: filter_frequencies              ! Keeps the frequencies near the drivetrain excitation peaks
+    PROCEDURE :: init                                   ! Polymorphic constructor; overridden by concrete turbine types.
+    PROCEDURE :: init_base => init                      ! Alias for calling the shared parent initializer from a child override.
+    PROCEDURE :: read_input                             ! Reads OpenFAST outputs
+    PROCEDURE :: translate_align_with_WindDir           ! Places nodes correctly
+    PROCEDURE :: filter_frequencies                     ! Keeps the frequencies near the drivetrain excitation peaks
 
     ! --- Emitter_t procedures --- !
-    PROCEDURE :: to_source   => turbine_to_source      ! Translates turbine to source abstraction
-    PROCEDURE :: save_params => save_params_turbine    ! Generic and type-specific parameters -> HDF5
-    PROCEDURE :: write_txt   => write_txt_turbine      ! Generic and type-specific blocks of the .dat
-    PROCEDURE :: get_enbw    => get_enbw_turbine       ! Hann window of compute_rfft (HANN_ENBW)
+    PROCEDURE :: to_source   => turbine_to_source       ! Translates turbine to source abstraction
+    PROCEDURE :: save_params => save_params_turbine     ! Generic and type-specific parameters -> HDF5
+    PROCEDURE :: write_txt   => write_txt_turbine       ! Generic and type-specific blocks of the .dat
+    PROCEDURE :: get_enbw    => get_enbw_turbine        ! Hann window of compute_rfft (HANN_ENBW)
 
     ! --- Deferred (abstract) procedures --- !
     PROCEDURE(compute_force_i)                , DEFERRED :: compute_force

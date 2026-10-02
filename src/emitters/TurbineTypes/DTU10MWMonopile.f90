@@ -17,7 +17,7 @@
 MODULE DTU10MWMonopile
 
 USE Kinds
-USE WindTurbine, ONLY: WindTurbine_t, init
+USE WindTurbine, ONLY: WindTurbine_t
 USE ConfigTypes, ONLY: Config_WindTurbine_t
 USE DrivetrainExcitation, ONLY: drivetrain10MW_excitation_spectrum
 
@@ -37,10 +37,10 @@ TYPE, EXTENDS(WindTurbine_t) :: DTU10MWMonopile_t
     ! -------------------------------------------------------------------------
 
     ! Physical and structural parameters specific to the DTU 10 MW Monopile
-    REAL(WP) :: D        = 9.0_WP       ! [m] Base monopile outer diameter
-    REAL(WP) :: rho_wat  = 1025.0_WP    ! [kg/m^3] Seawater density
-    REAL(WP) :: rho_mat  = 8500.0_WP    ! [kg/m^3] Material density (steel)
-    REAL(WP) :: wet_area = 848.12_WP    ! [m^2] Wetted area
+    REAL(WP) :: D        = 9.0_WP               ! [m] Base monopile outer diameter
+    REAL(WP) :: rho_wat  = 1025.0_WP            ! [kg/m^3] Seawater density
+    REAL(WP) :: rho_mat  = 8500.0_WP            ! [kg/m^3] Material density (steel)
+    REAL(WP) :: wet_area = 848.12_WP            ! [m^2] Wetted area
 
     CONTAINS
 
@@ -85,7 +85,7 @@ SUBROUTINE init_DTU10MWMonopile(self, config)
     ! Flag the turbine as monopile
     self % is_monopile = .true.
 
-    CALL init(self, config)
+    CALL self % init_base(config)
 
 END SUBROUTINE init_DTU10MWMonopile
 

@@ -53,10 +53,7 @@ SUBROUTINE read_input_files(files_path, config)
     CHARACTER(len=200) :: solver_config_path
     CHARACTER(len=200) :: environment_config_path
     CHARACTER(len=200) :: computation_config_path
-
-    ! Method-specific configuration paths
-    CHARACTER(len=200) :: ImagesMethod_config_path
-    CHARACTER(len=200) :: AnalyticalNormalModes_config_path
+    CHARACTER(len=200) :: method_config_path
 
 
     ALLOCATE(Config_t :: config)
@@ -65,10 +62,6 @@ SUBROUTINE read_input_files(files_path, config)
     farm_config_path        = files_path // "WindFarm.nml"
     solver_config_path      = files_path // "Solver.nml"
     environment_config_path = files_path // "Environment.nml"
-
-    ! Method-specific paths
-    ImagesMethod_config_path          = files_path // "ImagesMethod.nml"
-    AnalyticalNormalModes_config_path = files_path // "AnalyticalNormalModes.nml"
 
     ! Read principal files
     CALL read_solver_config(solver_config_path, config)
@@ -96,12 +89,14 @@ SUBROUTINE read_input_files(files_path, config)
     ! acoustic solver was selected in Solver.nml
     SELECT CASE (trim(config % solver % method))
     CASE ('ImageMethod')
+        method_config_path = files_path // "ImagesMethod.nml"
         ALLOCATE(Config_ImageMethod_t :: config % method)
-        CALL read_ImageMethod_config(ImagesMethod_config_path, config)
+        CALL read_ImageMethod_config(method_config_path, config)
 
     CASE ('AnalyticalNormalModes')
+        method_config_path = files_path // "AnalyticalNormalModes.nml"
         ALLOCATE(Config_AnalyticalNormalModes_t :: config % method)
-        CALL read_AnalyticalNormalModes_config(AnalyticalNormalModes_config_path, config)
+        CALL read_AnalyticalNormalModes_config(method_config_path, config)
 
     CASE DEFAULT
         error stop "read_input_files(): Unknown method " // trim(config % solver % method)

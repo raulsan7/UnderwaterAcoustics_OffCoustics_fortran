@@ -17,7 +17,7 @@
 MODULE DTU10MWFloating
 
 USE Kinds
-USE WindTurbine, ONLY: WindTurbine_t, init
+USE WindTurbine, ONLY: WindTurbine_t
 USE ConfigTypes, ONLY: Config_WindTurbine_t
 USE DrivetrainExcitation, ONLY: drivetrain10MW_excitation_spectrum
 
@@ -36,13 +36,13 @@ TYPE, EXTENDS(WindTurbine_t) :: DTU10MWFloating_t
     ! -------------------------------------------------------------------------
 
     ! Physical and structural parameters specific to the DTU 10 MW Floating CENER DeltaWind version
-    REAL(WP) :: col_D    = 14.5_WP      ! [m] Columns diameter
-    REAL(WP) :: XsecA    = 10.875_WP    ! [m] Pontoon width
-    REAL(WP) :: XsecB    = 7.0_WP       ! [m] Pontoon height
-    REAL(WP) :: rho_wat  = 1025.0_WP    ! [kg/m^3] Water density
-    REAL(WP) :: rho_mat  = 7850.0_WP    ! [kg/m^3] Material density
-    REAL(WP) :: t        = 0.023_WP     ! [m] Wall thickness
-    REAL(WP) :: wet_area = 9359.07_WP   ! [m^2] Wetted area
+    REAL(WP) :: col_D    = 14.5_WP                  ! [m] Columns diameter
+    REAL(WP) :: XsecA    = 10.875_WP                ! [m] Pontoon width
+    REAL(WP) :: XsecB    = 7.0_WP                   ! [m] Pontoon height
+    REAL(WP) :: rho_wat  = 1025.0_WP                ! [kg/m^3] Water density
+    REAL(WP) :: rho_mat  = 7850.0_WP                ! [kg/m^3] Material density
+    REAL(WP) :: t        = 0.023_WP                 ! [m] Wall thickness
+    REAL(WP) :: wet_area = 9359.07_WP               ! [m^2] Wetted area
 
     ! [-] Column members ID list: [[0,1],[2,3],[4,5]]
     INTEGER(I32) :: col_members(3,2) = reshape([0_I32, 2_I32, 4_I32, 1_I32, 3_I32, 5_I32], [3, 2])
@@ -50,7 +50,7 @@ TYPE, EXTENDS(WindTurbine_t) :: DTU10MWFloating_t
     INTEGER(I32) :: pon_members(3,1) = reshape([6_I32, 7_I32, 8_I32], [3, 1])
 
     ! Built and stored by compute_force for later reuse by get_impedance_corrected_force
-    LOGICAL, ALLOCATABLE :: keep_flat(:)    ! [-] Flat (Nmembers*Nnodes) wet and non-duplicate node keep-mask
+    LOGICAL, ALLOCATABLE :: keep_flat(:)            ! [-] Flat (Nmembers*Nnodes) wet and non-duplicate node keep-mask
 
     CONTAINS
 
@@ -97,7 +97,7 @@ SUBROUTINE init_DTU10MWFloating(self, config)
     ! Flag the turbine as floating
     self % is_monopile = .false.
 
-    CALL init(self, config)
+    CALL self % init_base(config)
 
     ! The 0-based col_members/pon_members IDs must exist in the structural model
     n_req = max(maxval(self % col_members), maxval(self % pon_members)) + 1_I32
