@@ -68,7 +68,7 @@ TYPE, EXTENDS(AcousticSolver_t) :: ImageMethod_t
     REAL(WP)     :: lw_R             = 0.5_WP       ! [-] Attenuation coefficient for lower boundary reflections
     REAL(WP)     :: eps              = 1.0e-6_WP    ! [m] Minimum source-observer distance used to floor r
 
-    TYPE(ImageSystem_t) :: image_system    ! [-] Full real+image dipole system (coords, forces, boundary tags)
+    TYPE(ImageSystem_t) :: image_system             ! [-] Full real+image dipole system (coords, forces, boundary tags)
 
     CONTAINS
 
@@ -270,7 +270,7 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
 END SUBROUTINE compute_pressure_ImageMethod
 
 
-SUBROUTINE save_parameters_ImageMethod(self, emitter)
+SUBROUTINE save_parameters_ImageMethod(self, emitter_obj)
     ! -------------------------------------------------------------------------
     ! Saves the solver and environment parameters to the HDF5 output file,
     ! delegates the emitter parameters to emitter % save_params, and triggers
@@ -279,11 +279,11 @@ SUBROUTINE save_parameters_ImageMethod(self, emitter)
     ! -------------------------------------------------------------------------
 
     CLASS(ImageMethod_t), INTENT(IN) :: self       ! [-] Solver instance
-    CLASS(Emitter_t)    , INTENT(IN) :: emitter    ! [-] Emitter that produced the sources
+    CLASS(Emitter_t)    , INTENT(IN) :: emitter_obj    ! [-] Emitter that produced the sources
 
 
     ! Existing output of another case: deleted here, before anything is written
-    CALL self % check_update(emitter)
+    CALL self % check_update(emitter_obj)
 
     ! Solver / environment / generic turbine data -> HDF5
     CALL save_variable(self % save_path, "N_images" , self % N_images)
@@ -294,13 +294,13 @@ SUBROUTINE save_parameters_ImageMethod(self, emitter)
     CALL save_variable(self % save_path, "p_ref"    , self % env % reference_pressure)
 
     ! Datasets shared by every solver (Method, ENBW) -> HDF5
-    CALL self % save_shared_parameters(emitter)
+    CALL self % save_shared_parameters(emitter_obj)
 
     ! Emitter data -> HDF5
-    CALL emitter % save_params(self % save_path)
+    CALL emitter_obj % save_params(self % save_path)
 
     ! Human-readable .dat summary, delegated to the solver-specific implementation
-    CALL self % write_txt_summary(emitter)
+    CALL self % write_txt_summary(emitter_obj)
 
 END SUBROUTINE save_parameters_ImageMethod
 
@@ -324,7 +324,7 @@ SUBROUTINE build_save_path_ImageMethod(self)
 END SUBROUTINE build_save_path_ImageMethod
 
 
-SUBROUTINE write_txt_summary_ImageMethod(self, emitter)
+SUBROUTINE write_txt_summary_ImageMethod(self, emitter_obj)
     ! -------------------------------------------------------------------------
     ! Writes a plain-text (.dat) summary next to the HDF5 output, mirroring
     ! the saved emitter, environment and Image Method solver parameters in a
@@ -332,7 +332,7 @@ SUBROUTINE write_txt_summary_ImageMethod(self, emitter)
     ! -------------------------------------------------------------------------
 
     CLASS(ImageMethod_t), INTENT(IN) :: self       ! [-] Solver instance
-    CLASS(Emitter_t)    , INTENT(IN) :: emitter    ! [-] Emitter that produced the sources
+    CLASS(Emitter_t)    , INTENT(IN) :: emitter_obj    ! [-] Emitter that produced the sources
 
     ! Local variables
     CHARACTER(len=:), ALLOCATABLE :: dat_path
@@ -349,7 +349,7 @@ SUBROUTINE write_txt_summary_ImageMethod(self, emitter)
     write(u, '(A)') 'HDF5 file: ' // trim(self % save_path)
     write(u, *)
 
-    CALL emitter % write_txt(u)
+    CALL emitter_obj % write_txt(u)
 
     write(u, '(A)') repeat('-', 70)
     write(u, '(A)') 'ENVIRONMENT'
@@ -650,7 +650,7 @@ END SUBROUTINE dipole_pressure_images
 
 
 ! ===============================================================================
-! RUN SPHERE
+! RUN SPHERE (overriden from AcousticSolver_t)
 ! ===============================================================================
 SUBROUTINE run_sphere(self)
     ! -------------------------------------------------------------------------

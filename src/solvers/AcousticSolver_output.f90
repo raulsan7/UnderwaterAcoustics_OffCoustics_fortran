@@ -96,7 +96,7 @@ MODULE SUBROUTINE resolve_save_path(self, method_tag)
 END SUBROUTINE resolve_save_path
 
 
-MODULE SUBROUTINE check_update(self, emitter)
+MODULE SUBROUTINE check_update(self, emitter_obj)
     ! -------------------------------------------------------------------------
     ! Called by save_parameters before anything is written. If resolve_save_path
     ! kept an existing output file (update_existing), it is updated only if it
@@ -108,7 +108,7 @@ MODULE SUBROUTINE check_update(self, emitter)
     ! -------------------------------------------------------------------------
 
     CLASS(AcousticSolver_t), INTENT(IN) :: self       ! [-] Solver instance
-    CLASS(Emitter_t)       , INTENT(IN) :: emitter    ! [-] Emitter that produced the sources
+    CLASS(Emitter_t)       , INTENT(IN) :: emitter_obj    ! [-] Emitter that produced the sources
 
     ! Local variables
     CHARACTER(len=:), ALLOCATABLE :: dat_path, prev_path, reason
@@ -139,7 +139,7 @@ MODULE SUBROUTINE check_update(self, emitter)
         if (.not. prev_exists) then
             reason = 'no previous .dat to compare with'
         else
-            CALL self % write_txt_summary(emitter)
+            CALL self % write_txt_summary(emitter_obj)
             CALL compare_dat_headers(dat_path, prev_path, reason)
         end if
     end if
@@ -434,7 +434,7 @@ END SUBROUTINE update_parameters
 ! ===============================================================================
 ! DATASETS SHARED BY EVERY SOLVER
 ! ===============================================================================
-MODULE SUBROUTINE save_shared_parameters(self, emitter)
+MODULE SUBROUTINE save_shared_parameters(self, emitter_obj)
     ! -------------------------------------------------------------------------
     ! Writes the datasets shared by every solver, called by each solver's
     ! save_parameters right after its own datasets: the solver name (Method,
@@ -444,7 +444,7 @@ MODULE SUBROUTINE save_shared_parameters(self, emitter)
     ! -------------------------------------------------------------------------
 
     CLASS(AcousticSolver_t), INTENT(IN) :: self       ! [-] Solver instance
-    CLASS(Emitter_t)       , INTENT(IN) :: emitter    ! [-] Emitter that produced the sources
+    CLASS(Emitter_t)       , INTENT(IN) :: emitter_obj    ! [-] Emitter that produced the sources
 
     ! Local variables
     REAL(WP) :: enbw
@@ -453,7 +453,7 @@ MODULE SUBROUTINE save_shared_parameters(self, emitter)
     CALL save_variable(self % save_path, "Method", trim(self % solver_name))
 
     ! Window of the forces: only when they come from a windowed FFT
-    enbw = emitter % get_enbw()
+    enbw = emitter_obj % get_enbw()
     if (enbw > 0.0_WP) CALL save_variable(self % save_path, "ENBW", enbw)
 
 END SUBROUTINE save_shared_parameters

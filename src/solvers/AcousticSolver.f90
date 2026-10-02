@@ -43,29 +43,29 @@ TYPE, ABSTRACT :: AcousticSolver_t
     ! routines are deferred.
     ! -------------------------------------------------------------------------
 
-    TYPE(AcousticSource_t)     :: sources                 ! [-] Acoustic point sources and their reference geometry
-    TYPE(Config_Environment_t) :: env                     ! [-] Environment configuration (depth, sound speed, ...)
-    TYPE(Config_Computation_t) :: run_inputs              ! [-] Per-run_* post-processing step configuration
-    INTEGER(I32)               :: block_size              ! [-] Number of observers processed simultaneously
-    LOGICAL                    :: debug                   ! [-] Whether to print extra debug info (e.g. pressure norms)
-    LOGICAL                    :: in_cluster              ! [-] Whether the solver runs on a cluster
-    LOGICAL                    :: update_existing         ! [-] Whether an existing output file of the same case is updated
-    REAL(WP)                   :: mask_distance           ! [m] Observers closer than this to a source node get NaN
-    CHARACTER(len=50)          :: solver_name = 'None'    ! [-] Solver name
-    CHARACTER(len=512)         :: save_path   = 'None'    ! [-] Path to save acoustics
-    CHARACTER(len=100)         :: extra_label = 'None'    ! [-] Label appended to the file name ('None' or '': none)
+    TYPE(AcousticSource_t)     :: sources               ! [-] Acoustic point sources and their reference geometry
+    TYPE(Config_Environment_t) :: env                   ! [-] Environment configuration (depth, sound speed, ...)
+    TYPE(Config_Computation_t) :: run_inputs            ! [-] Per-run_* post-processing step configuration
+    INTEGER(I32)               :: block_size            ! [-] Number of observers processed simultaneously
+    LOGICAL                    :: debug                 ! [-] Whether to print extra debug info (e.g. pressure norms)
+    LOGICAL                    :: in_cluster            ! [-] Whether the solver runs on a cluster
+    LOGICAL                    :: update_existing       ! [-] Whether an existing output file of the same case is updated
+    REAL(WP)                   :: mask_distance         ! [m] Observers closer than this to a source node get NaN
+    CHARACTER(len=50)          :: solver_name = 'None'  ! [-] Solver name
+    CHARACTER(len=512)         :: save_path   = 'None'  ! [-] Path to save acoustics
+    CHARACTER(len=100)         :: extra_label = 'None'  ! [-] Label appended to the file name ('None' or '': none)
 
     CONTAINS
 
     ! --- Public type-bound procedures --- !
-    PROCEDURE :: check_observers_distances    ! Observer mask: .false. closer than mask_distance to a source
-    PROCEDURE :: compute_pressure_masked      ! compute_pressure with NaN at the masked observers
-    PROCEDURE :: resolve_save_path            ! Output path shared by every solver (build_save_path helper)
-    PROCEDURE :: check_update                 ! Keeps an existing output only if it holds the same case
-    PROCEDURE :: save_shared_parameters       ! Datasets written by every solver (Method, ENBW)
-    PROCEDURE :: update_parameters            ! Appends run_* parameters actually used to the .dat
-    PROCEDURE :: run                          ! Config-driven entry point: every enabled do_* step
-    PROCEDURE :: run_spectrums                ! Subroutines to compute acoustic pressure
+    PROCEDURE :: check_observers_distances              ! Observer mask: .false. closer than mask_distance to a source
+    PROCEDURE :: compute_pressure_masked                ! compute_pressure with NaN at the masked observers
+    PROCEDURE :: resolve_save_path                      ! Output path shared by every solver (build_save_path helper)
+    PROCEDURE :: check_update                           ! Keeps an existing output only if it holds the same case
+    PROCEDURE :: save_shared_parameters                 ! Datasets written by every solver (Method, ENBW)
+    PROCEDURE :: update_parameters                      ! Appends run_* parameters actually used to the .dat
+    PROCEDURE :: run                                    ! Config-driven entry point: every enabled do_* step
+    PROCEDURE :: run_spectrums                          ! Subroutines to compute acoustic pressure
     PROCEDURE :: run_polar
     PROCEDURE :: run_cylinder
     PROCEDURE :: run_decay
@@ -76,9 +76,9 @@ TYPE, ABSTRACT :: AcousticSolver_t
     PROCEDURE :: run_sphere => dummy_run_sphere
 
     ! --- Water-column queries (a method overrides them to publish its boundaries) --- !
-    PROCEDURE :: z_surface => default_z_surface    ! z of the water surface at (x, y)
-    PROCEDURE :: z_seabed  => default_z_seabed     ! z of the seabed at (x, y)
-    PROCEDURE :: in_water  => default_in_water     ! Observer mask: .true. inside the water column
+    PROCEDURE :: z_surface => default_z_surface         ! z of the water surface at (x, y)
+    PROCEDURE :: z_seabed  => default_z_seabed          ! z of the seabed at (x, y)
+    PROCEDURE :: in_water  => default_in_water          ! Observer mask: .true. inside the water column
 
     ! --- Deferred (abstract) procedures --- !
     PROCEDURE(init_i)             , DEFERRED :: init
@@ -137,7 +137,7 @@ ABSTRACT INTERFACE
 
     END SUBROUTINE compute_pressure_i
 
-    SUBROUTINE save_parameters_i(self, emitter)
+    SUBROUTINE save_parameters_i(self, emitter_obj)
         ! -------------------------------------------------------------------------
         ! Saves the solver, environment and emitter parameters to the HDF5
         ! output file and writes the .dat text summary.
@@ -146,7 +146,7 @@ ABSTRACT INTERFACE
         IMPORT :: AcousticSolver_t, Emitter_t
 
         CLASS(AcousticSolver_t), INTENT(IN) :: self       ! [-] Solver instance
-        CLASS(Emitter_t)       , INTENT(IN) :: emitter    ! [-] Emitter that produced the sources
+        CLASS(Emitter_t)       , INTENT(IN) :: emitter_obj    ! [-] Emitter that produced the sources
 
     END SUBROUTINE save_parameters_i
 
@@ -161,7 +161,7 @@ ABSTRACT INTERFACE
 
     END SUBROUTINE build_save_path_i
 
-    SUBROUTINE write_txt_summary_i(self, emitter)
+    SUBROUTINE write_txt_summary_i(self, emitter_obj)
         ! -------------------------------------------------------------------------
         ! Writes the human-readable .dat summary next to the HDF5 output file.
         ! -------------------------------------------------------------------------
@@ -169,7 +169,7 @@ ABSTRACT INTERFACE
         IMPORT :: AcousticSolver_t, Emitter_t
 
         CLASS(AcousticSolver_t), INTENT(IN) :: self       ! [-] Solver instance
-        CLASS(Emitter_t)       , INTENT(IN) :: emitter    ! [-] Emitter that produced the sources
+        CLASS(Emitter_t)       , INTENT(IN) :: emitter_obj    ! [-] Emitter that produced the sources
 
     END SUBROUTINE write_txt_summary_i
 
@@ -206,7 +206,7 @@ INTERFACE
 
     END SUBROUTINE resolve_save_path
 
-    MODULE SUBROUTINE check_update(self, emitter)
+    MODULE SUBROUTINE check_update(self, emitter_obj)
         ! -------------------------------------------------------------------------
         ! Called by save_parameters before anything is written. If resolve_save_path
         ! kept an existing output file (update_existing), it is updated only if it
@@ -218,7 +218,7 @@ INTERFACE
         ! -------------------------------------------------------------------------
 
         CLASS(AcousticSolver_t), INTENT(IN) :: self       ! [-] Solver instance
-        CLASS(Emitter_t)       , INTENT(IN) :: emitter    ! [-] Emitter that produced the sources
+        CLASS(Emitter_t)       , INTENT(IN) :: emitter_obj    ! [-] Emitter that produced the sources
 
     END SUBROUTINE check_update
 
@@ -239,7 +239,7 @@ INTERFACE
 
     END SUBROUTINE update_parameters
 
-    MODULE SUBROUTINE save_shared_parameters(self, emitter)
+    MODULE SUBROUTINE save_shared_parameters(self, emitter_obj)
         ! -------------------------------------------------------------------------
         ! Writes the datasets shared by every solver, called by each solver's
         ! save_parameters right after its own datasets: the solver name (Method,
@@ -249,7 +249,7 @@ INTERFACE
         ! -------------------------------------------------------------------------
 
         CLASS(AcousticSolver_t), INTENT(IN) :: self       ! [-] Solver instance
-        CLASS(Emitter_t)       , INTENT(IN) :: emitter    ! [-] Emitter that produced the sources
+        CLASS(Emitter_t)       , INTENT(IN) :: emitter_obj    ! [-] Emitter that produced the sources
 
     END SUBROUTINE save_shared_parameters
 
