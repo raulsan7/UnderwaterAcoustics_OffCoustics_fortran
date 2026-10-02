@@ -1,4 +1,4 @@
-name = "Off_coustics_fortran"
+name = "Off_coustics"
 version = "0.1.0"
 author = "Raul Sanz Ramirez <raul.sanz.ramirez@upm.es>"
 description = "Underwater vibroacoustic code"
