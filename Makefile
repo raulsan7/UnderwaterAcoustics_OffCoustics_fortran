@@ -43,7 +43,7 @@
 FC     := gfortran
 FFLAGS := -O3 -fopenmp
 BUILD  := build_make
-EXE    := off_coustics_fortran
+EXE    := off_coustics
 
 # --- HDF5 detection (mirrors fpm's "hdf5" metapackage) ----------------
 # h5fc/h5pfc is the wrapper compiler that ships with any Fortran-enabled
