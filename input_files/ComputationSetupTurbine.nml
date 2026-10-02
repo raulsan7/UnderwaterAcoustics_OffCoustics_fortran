@@ -3,8 +3,8 @@
 ! =====================================================================
 ! Configures every observer-geometry post-processing step that run()
 ! can execute (currently passed as optional arguments to each run_*
-! routine in src/core/AcousticSolver.f90 / run_sphere in
-! src/core/AcousticMethods/ImageMethod.f90).
+! routine in src/solvers/AcousticSolver_steps.f90 / run_sphere in
+! src/solvers/methods/ImageMethod.f90).
 !
 ! - do_config (below): one "do_<name>" logical per step, all together,
 !   deciding whether run() executes it at all (.false. skips it

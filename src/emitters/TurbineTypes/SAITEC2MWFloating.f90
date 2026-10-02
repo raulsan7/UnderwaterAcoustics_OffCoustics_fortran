@@ -2,7 +2,7 @@
 ! MODULE: SAITEC2MWFloating
 ! ===============================================================================
 ! Defines SAITEC2MWFloating_t, a concrete turbine type extending the abstract
-! WindTurbine_t (src/core/WindTurbine.f90) for the SAITEC SENVION 2 MW floating
+! WindTurbine_t (src/emitters/WindTurbine.f90) for the SAITEC SENVION 2 MW floating
 ! platform (SATH dual-hull concrete technology). It implements the deferred
 ! procedures: compute_force, compute_mass, filter_frequencies,
 ! save/write_specific_params and get_impedance_corrected_force, treating the
@@ -20,9 +20,9 @@
 MODULE SAITEC2MWFloating
 
 USE Kinds
-USE Types, ONLY: Config_WindTurbine_t
 USE WindTurbine, ONLY: WindTurbine_t, init
-USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_is_nan
+USE ConfigTypes, ONLY: Config_WindTurbine_t
+USE DrivetrainExcitation, ONLY: drivetrain2MW_excitation_spectrum
 
 IMPLICIT NONE
 
@@ -144,7 +144,7 @@ SUBROUTINE read_input_SAITEC2MWFloating(self, config, verbose)
     ! introduce into self % xyz_all.
     ! -------------------------------------------------------------------------
 
-    USE IOUtils, ONLY: get_SDsum_variables, read_input_SD
+    USE OpenFASTReader, ONLY: get_SDsum_variables, read_input_SD
 
     CLASS(SAITEC2MWFloating_t), INTENT(INOUT) :: self       ! [-] Turbine instance
     TYPE(Config_WindTurbine_t), INTENT(INOUT) :: config     ! [-] Turbine configuration
@@ -280,7 +280,7 @@ SUBROUTINE compute_force_SAITEC2MWFloating(self, config, verbose)
     ! as an array of point dipoles.
     ! -------------------------------------------------------------------------
 
-    USE MathUtils, ONLY: compute_rfft
+    USE SignalProcessing, ONLY: compute_rfft
 
     CLASS(SAITEC2MWFloating_t), INTENT(INOUT) :: self       ! [-] Turbine instance
     TYPE(Config_WindTurbine_t), INTENT(IN)    :: config     ! [-] Turbine configuration
@@ -507,7 +507,7 @@ SUBROUTINE compute_mass_SAITEC2MWFloating(self, mass, added_mass)
     ! are excluded later by compute_force's keep mask.
     ! -------------------------------------------------------------------------
 
-    USE MathUtils, ONLY: divide_span, integral_elipse_z
+    USE StructureModel, ONLY: divide_span, integral_elipse_z
 
     CLASS(SAITEC2MWFloating_t), INTENT(INOUT)            :: self             ! [-] Turbine instance
     REAL(WP)                  , INTENT(OUT), ALLOCATABLE :: mass(:)          ! [kg] Dry mass per node (Nm*Nn)
@@ -611,8 +611,8 @@ FUNCTION filter_frequencies_SAITEC2MWFloating(self, freqs_over) RESULT(mask)
     ! spectral content.
     ! -------------------------------------------------------------------------
 
-    USE IOUtils, ONLY: read_curve
-    USE MathUtils, ONLY: generate_timeseries_banded_sines, filter_non_useful_freqs
+    USE CSVReader, ONLY: read_curve
+    USE DrivetrainExcitation, ONLY: generate_timeseries_banded_sines, filter_non_useful_freqs
 
     CLASS(SAITEC2MWFloating_t), INTENT(INOUT)        :: self          ! [-] Turbine instance
     REAL(WP)                  , INTENT(IN), OPTIONAL :: freqs_over    ! [Hz] Frequencies below this are never filtered
@@ -660,7 +660,7 @@ SUBROUTINE save_specific_params_SAITEC2MWFloating(self, save_path, istr)
     ! name with an instance tag (istr) when several turbines are saved.
     ! -------------------------------------------------------------------------
 
-    USE IOUtils, ONLY: save_variable
+    USE HDF5Utils, ONLY: save_variable
 
     CLASS(SAITEC2MWFloating_t), INTENT(IN)           :: self         ! [-] Turbine instance
     CHARACTER(len=*)          , INTENT(IN)           :: save_path    ! [-] Path to the HDF5 output file
@@ -727,7 +727,7 @@ FUNCTION get_impedance_corrected_force_SAITEC2MWFloating(self, c) RESULT(correct
     ! structure itself.
     ! -------------------------------------------------------------------------
 
-    USE MathUtils, ONLY: alpha_hankel
+    USE StructureModel, ONLY: alpha_hankel
 
     CLASS(SAITEC2MWFloating_t), INTENT(IN)  :: self                  ! [-] Turbine instance
     REAL(WP)                  , INTENT(IN)  :: c                     ! [m/s] Speed of sound in the fluid
@@ -769,339 +769,5 @@ FUNCTION get_impedance_corrected_force_SAITEC2MWFloating(self, c) RESULT(correct
     DEALLOCATE(k, alpha_floats)
 
 END FUNCTION get_impedance_corrected_force_SAITEC2MWFloating
-
-
-! ===============================================================================
-! SAITEC 2 MW DRIVETRAIN EXCITATION (PRIVATE HELPERS)
-! ===============================================================================
-SUBROUTINE drivetrain2MW_excitation_spectrum(rpm, path_barRB, path_barGB, fmin, fmax, tol, Normalised, &
-                                             freqs_amp, keys)
-    ! -------------------------------------------------------------------------
-    ! Constructs the excitation spectrum (frequencies + amplitudes) for the
-    ! SAITEC 2 MW variable-speed drivetrain described in Escaler & Mebarki
-    ! (2018), combining rotor-bearing and gearbox kinematic harmonics with
-    ! externally-supplied bar-chart amplitude data, merging near-duplicate
-    ! frequencies (keeping the larger amplitude) and optionally normalizing to
-    ! unit RMS.
-    ! -------------------------------------------------------------------------
-
-    REAL(WP)         , INTENT(IN)               :: rpm               ! [rpm] Rotor speed
-    CHARACTER(len=*) , INTENT(IN)               :: path_barRB        ! [-] Path to the rotor-bearing bar-chart CSV file
-    CHARACTER(len=*) , INTENT(IN)               :: path_barGB        ! [-] Path to the gearbox bar-chart CSV file
-    REAL(WP)         , INTENT(IN), OPTIONAL     :: fmin              ! [Hz] Lower frequency limit (inclusive)
-    REAL(WP)         , INTENT(IN), OPTIONAL     :: fmax              ! [Hz] Upper frequency limit (exclusive)
-    REAL(WP)         , INTENT(IN), OPTIONAL     :: tol               ! [Hz] Tolerance to merge close frequencies
-    LOGICAL          , INTENT(IN), OPTIONAL     :: Normalised        ! [-] Whether to normalize to unit RMS
-    REAL(WP)         , INTENT(OUT), ALLOCATABLE :: freqs_amp(:,:)    ! [-] Peaks (N, 2): frequency [Hz], amplitude
-    CHARACTER(len=20), INTENT(OUT), ALLOCATABLE :: keys(:)           ! [-] Peak labels (N)
-
-    ! Local variables
-    ! Kinematic peak frequencies (rotor-bearing RB1/RB2, gearbox GB1/GB2/GB3)
-    REAL(WP) :: RB1f(12), RB2f(11), GB1f(9), GB2f(9), GB3f(11)
-    REAL(WP) :: f3, f_em
-    REAL(WP) :: fmin_, fmax_, tol_
-    LOGICAL  :: normalised_
-
-    REAL(WP), ALLOCATABLE :: RB_data(:,:), GB_data(:,:)
-    REAL(WP), ALLOCATABLE :: RB1_amp(:), RB2_amp(:), GB1_amp(:), GB2_amp(:), GB3_amp(:)
-
-    REAL(WP)         , ALLOCATABLE :: freqs_raw(:), amps_raw(:)
-    CHARACTER(len=20), ALLOCATABLE :: keys_raw(:)
-
-    REAL(WP)         , ALLOCATABLE :: merged_freqs(:), merged_amps(:)
-    CHARACTER(len=20), ALLOCATABLE :: merged_keys(:)
-    LOGICAL          , ALLOCATABLE :: mask(:)
-
-    REAL(WP)          :: rms, fk, ak
-    CHARACTER(len=20) :: key_tmp
-    INTEGER(I32)      :: n_total, i, j, kk, best_idx, n_merged, n_kept
-
-
-    ! Defaults
-    fmin_       = 0.0_WP       ; if (present(fmin))       fmin_       = fmin
-    fmax_       = huge(1.0_WP) ; if (present(fmax))       fmax_       = fmax
-    tol_        = 1.0e-3_WP    ; if (present(tol))        tol_        = tol
-    normalised_ = .true.       ; if (present(Normalised)) normalised_ = Normalised
-
-    CALL compute_freqs2MW(rpm, RB1f, RB2f, GB1f, GB2f, GB3f, f3)
-
-    f_em = 84.0_WP * f3
-
-    ! --- 1. Read bar-chart amplitude data (CSV columns, "Nan" = missing) ---
-    CALL read_bar_csv(path_barRB, 2_I32, RB_data)
-    CALL read_bar_csv(path_barGB, 3_I32, GB_data)
-
-    RB1_amp = pack(RB_data(:, 1), .not. ieee_is_nan(RB_data(:, 1)))
-    RB2_amp = pack(RB_data(:, 2), .not. ieee_is_nan(RB_data(:, 2)))
-    GB1_amp = pack(GB_data(:, 1), .not. ieee_is_nan(GB_data(:, 1)))
-    GB2_amp = pack(GB_data(:, 2), .not. ieee_is_nan(GB_data(:, 2)))
-    GB3_amp = pack(GB_data(:, 3), .not. ieee_is_nan(GB_data(:, 3)))
-
-    if (size(RB1_amp) /= size(RB1f) .or. size(RB2_amp) /= size(RB2f) .or. &
-        size(GB1_amp) /= size(GB1f) .or. size(GB2_amp) /= size(GB2f) .or. &
-        size(GB3_amp) /= size(GB3f)) then
-        error stop "drivetrain2MW_excitation_spectrum: bar-chart CSV row counts do not match " // &
-                   "the expected kinematic peak counts"
-    end if
-
-    ! --- 2. Assemble raw (freq, amp, key) lists ---
-    ! (kinematic frequency order preserved; amplitude re-paired positionally
-    ! from each family's own frequency-sorted bar-chart column)
-    n_total = size(RB1f) + size(RB2f) + size(GB1f) + size(GB2f) + size(GB3f) + 1_I32
-    ALLOCATE(freqs_raw(n_total), amps_raw(n_total), keys_raw(n_total))
-
-    j = 0_I32
-    CALL append_family(RB1f, sorted_amps_by_freq(RB1f, RB1_amp), 'RB1_f_', freqs_raw, amps_raw, keys_raw, j)
-    CALL append_family(RB2f, sorted_amps_by_freq(RB2f, RB2_amp), 'RB2_f_', freqs_raw, amps_raw, keys_raw, j)
-    CALL append_family(GB1f, sorted_amps_by_freq(GB1f, GB1_amp), 'GB1_f_', freqs_raw, amps_raw, keys_raw, j)
-    CALL append_family(GB2f, sorted_amps_by_freq(GB2f, GB2_amp), 'GB2_f_', freqs_raw, amps_raw, keys_raw, j)
-    CALL append_family(GB3f, sorted_amps_by_freq(GB3f, GB3_amp), 'GB3_f_', freqs_raw, amps_raw, keys_raw, j)
-
-    ! Electromagnetic peak at 84xf3 (observed in generator)
-    j            = j + 1_I32
-    freqs_raw(j) = f_em
-    amps_raw(j)  = 0.2_WP
-    keys_raw(j)  = 'generator_84xf3'
-
-    DEALLOCATE(RB_data, GB_data, RB1_amp, RB2_amp, GB1_amp, GB2_amp, GB3_amp)
-
-    ! --- 3. Sort everything by frequency (carrying amps/keys along, insertion sort) ---
-    do i = 2, n_total
-        fk      = freqs_raw(i)
-        ak      = amps_raw(i)
-        key_tmp = keys_raw(i)
-        kk      = i - 1_I32
-        do while (kk >= 1_I32)
-            if (freqs_raw(kk) <= fk) exit
-            freqs_raw(kk+1) = freqs_raw(kk)
-            amps_raw(kk+1)  = amps_raw(kk)
-            keys_raw(kk+1)  = keys_raw(kk)
-            kk              = kk - 1_I32
-        end do
-        freqs_raw(kk+1) = fk
-        amps_raw(kk+1)  = ak
-        keys_raw(kk+1)  = key_tmp
-    end do
-
-    ! --- 4. Merge near-duplicate frequencies (within tol), keep larger amplitude ---
-    ALLOCATE(merged_freqs(n_total), merged_amps(n_total), merged_keys(n_total))
-    n_merged = 0_I32
-    i        = 1_I32
-    do while (i <= n_total)
-        kk = i
-        do while (kk + 1_I32 <= n_total)
-            if ((freqs_raw(kk+1) - freqs_raw(i)) < tol_) then
-                kk = kk + 1_I32
-            else
-                exit
-            end if
-        end do
-        best_idx               = i - 1_I32 + maxloc(amps_raw(i:kk), dim=1)
-        n_merged               = n_merged + 1_I32
-        merged_freqs(n_merged) = freqs_raw(best_idx)
-        merged_amps(n_merged)  = amps_raw(best_idx)
-        merged_keys(n_merged)  = keys_raw(best_idx)
-        i                      = kk + 1_I32
-    end do
-    DEALLOCATE(freqs_raw, amps_raw, keys_raw)
-
-    ! --- 5. Apply frequency range filter (fmin, fmax) ---
-    ALLOCATE(mask(n_merged))
-    mask   = (merged_freqs(1:n_merged) >= fmin_) .and. (merged_freqs(1:n_merged) < fmax_)
-    n_kept = count(mask)
-
-    ALLOCATE(freqs_amp(n_kept, 2), keys(n_kept))
-    j = 0_I32
-    do i = 1, n_merged
-        if (mask(i)) then
-            j               = j + 1_I32
-            freqs_amp(j, 1) = merged_freqs(i)
-            freqs_amp(j, 2) = merged_amps(i)
-            keys(j)         = merged_keys(i)
-        end if
-    end do
-    DEALLOCATE(merged_freqs, merged_amps, merged_keys, mask)
-
-    ! --- 6. Normalize to unit RMS: sqrt(sum(A^2/2)) = 1 ---
-    if (normalised_ .and. n_kept > 0_I32) then
-        rms             = sqrt(sum(freqs_amp(:, 2)**2) / 2.0_WP)
-        freqs_amp(:, 2) = freqs_amp(:, 2) / rms
-    end if
-
-END SUBROUTINE drivetrain2MW_excitation_spectrum
-
-
-SUBROUTINE compute_freqs2MW(rpm, RB1f, RB2f, GB1f, GB2f, GB3f, f3_out)
-    ! -------------------------------------------------------------------------
-    ! Computes the SAITEC 2 MW drivetrain kinematic peak frequencies (rotor
-    ! bearings RB1/RB2 and gearbox stages GB1/GB2/GB3) at the given rotor
-    ! speed, following the planetary+parallel gear-train kinematics of the
-    ! Escaler & Mebarki (2018) 2 MW drivetrain.
-    ! -------------------------------------------------------------------------
-
-    REAL(WP), INTENT(IN)  :: rpm         ! [rpm] Rotor speed
-    REAL(WP), INTENT(OUT) :: RB1f(12)    ! [Hz] Rotor bearing 1 kinematic peak frequencies
-    REAL(WP), INTENT(OUT) :: RB2f(11)    ! [Hz] Rotor bearing 2 kinematic peak frequencies
-    REAL(WP), INTENT(OUT) :: GB1f(9)     ! [Hz] Gearbox stage 1 kinematic peak frequencies
-    REAL(WP), INTENT(OUT) :: GB2f(9)     ! [Hz] Gearbox stage 2 kinematic peak frequencies
-    REAL(WP), INTENT(OUT) :: GB3f(11)    ! [Hz] Gearbox stage 3 kinematic peak frequencies
-    REAL(WP), INTENT(OUT) :: f3_out      ! [Hz] High-speed shaft rotation frequency
-
-    ! Local variables
-    REAL(WP), PARAMETER :: zs = 18.0_WP, zp = 34.0_WP, zr = 87.0_WP
-    REAL(WP), PARAMETER :: z12 = 70.0_WP, z21 = 16.0_WP, z23 = 84.0_WP, z32 = 19.0_WP
-    REAL(WP)            :: f0, f1, fp, f2, f3, gmfp, gmf12, gmf23, fb
-
-
-    f0    = rpm / 60.0_WP
-    f1    = f0 * (zs + zr) / zs
-    fp    = zs / zp * (f1 - f0)
-    f2    = z12 / z21 * f1
-    f3    = z23 / z32 * f2
-    gmfp  = zp * fp
-    gmf12 = z12 * f1
-    gmf23 = z23 * f2
-    fb    = 3.0_WP * f0
-
-    RB1f = [f0, fb, 2.0_WP * fb, 3.0_WP * fb, 4.0_WP * fb, gmfp, f3, 2.0_WP * gmfp, 2.0_WP * f3, &
-            3.0_WP * gmfp, 3.0_WP * f3, 4.0_WP * gmfp]
-    RB2f = [f0, fb,              3.0_WP * fb, 4.0_WP * fb, gmfp, f3, 2.0_WP * gmfp, 2.0_WP * f3, &
-            3.0_WP * gmfp, 3.0_WP * f3, 4.0_WP * gmfp]
-    GB1f = [gmfp, f3, 2.0_WP * gmfp, 2.0_WP * f3, 3.0_WP * gmfp, 3.0_WP * f3, 4.0_WP * gmfp, 5.0_WP * gmfp, &
-            6.0_WP * gmfp]
-    GB2f = [gmfp, f3, gmf12, 2.0_WP * gmf12, 3.0_WP * gmf12, 4.0_WP * gmf12, 5.0_WP * gmf12, 6.0_WP * gmf12, &
-            gmf23]
-    GB3f = [gmf12, 2.0_WP * gmf12, 3.0_WP * gmf12, 4.0_WP * gmf12, 5.0_WP * gmf12, 6.0_WP * gmf12, &
-            gmf23, 2.0_WP * gmf23, 3.0_WP * gmf23, 4.0_WP * gmf23, 5.0_WP * gmf23]
-
-    f3_out = f3
-
-END SUBROUTINE compute_freqs2MW
-
-
-FUNCTION sorted_amps_by_freq(freqs_kin, amp_col) RESULT(amps_sorted)
-    ! -------------------------------------------------------------------------
-    ! Pairs a kinematic frequency family with its bar-chart amplitude column
-    ! and sorts the pair by frequency, returning only the resulting amplitude
-    ! order (matching the validated reference implementation, which re-pairs
-    ! this frequency-sorted amplitude array positionally with the ORIGINAL,
-    ! unsorted kinematic frequency array).
-    ! -------------------------------------------------------------------------
-
-    REAL(WP), INTENT(IN)  :: freqs_kin(:)      ! [Hz] Kinematic frequency family
-    REAL(WP), INTENT(IN)  :: amp_col(:)        ! [-] Bar-chart amplitude column of the family
-    REAL(WP), ALLOCATABLE :: amps_sorted(:)    ! [-] Amplitudes sorted by their paired frequency
-
-    ! Local variables
-    REAL(WP)    , ALLOCATABLE :: f_sort(:)
-    INTEGER(I32)              :: n, i, k
-    REAL(WP)                  :: fk, ak
-
-
-    n = size(freqs_kin)
-    ALLOCATE(f_sort(n), amps_sorted(n))
-    f_sort      = freqs_kin
-    amps_sorted = amp_col
-
-    do i = 2, n
-        fk = f_sort(i)
-        ak = amps_sorted(i)
-        k  = i - 1_I32
-        do while (k >= 1_I32)
-            if (f_sort(k) <= fk) exit
-            f_sort(k+1)      = f_sort(k)
-            amps_sorted(k+1) = amps_sorted(k)
-            k                = k - 1_I32
-        end do
-        f_sort(k+1)      = fk
-        amps_sorted(k+1) = ak
-    end do
-
-    DEALLOCATE(f_sort)
-
-END FUNCTION sorted_amps_by_freq
-
-
-SUBROUTINE append_family(freqs_kin, amps_kin, prefix, freqs_raw, amps_raw, keys_raw, j)
-    ! -------------------------------------------------------------------------
-    ! Appends one kinematic-frequency family (with its already frequency-
-    ! sorted amplitudes) into the raw (freq, amp, key) accumulation arrays,
-    ! advancing the shared cursor j and building a "<prefix>f.ffHz" label key.
-    ! -------------------------------------------------------------------------
-
-    REAL(WP)         , INTENT(IN)    :: freqs_kin(:)    ! [Hz] Kinematic frequency family
-    REAL(WP)         , INTENT(IN)    :: amps_kin(:)     ! [-] Amplitudes paired with freqs_kin
-    CHARACTER(len=*) , INTENT(IN)    :: prefix          ! [-] Label prefix of the family (e.g. 'RB1_f_')
-    REAL(WP)         , INTENT(INOUT) :: freqs_raw(:)    ! [Hz] Accumulated frequencies
-    REAL(WP)         , INTENT(INOUT) :: amps_raw(:)     ! [-] Accumulated amplitudes
-    CHARACTER(len=20), INTENT(INOUT) :: keys_raw(:)     ! [-] Accumulated labels
-    INTEGER(I32)     , INTENT(INOUT) :: j               ! [-] Shared cursor: last filled position
-
-    ! Local variables
-    INTEGER(I32) :: i
-
-
-    do i = 1, size(freqs_kin)
-        j            = j + 1_I32
-        freqs_raw(j) = freqs_kin(i)
-        amps_raw(j)  = amps_kin(i)
-        write(keys_raw(j), '(A,F0.2,A)') trim(prefix), freqs_kin(i), 'Hz'
-    end do
-
-END SUBROUTINE append_family
-
-
-SUBROUTINE read_bar_csv(filename, ncols, data)
-    ! -------------------------------------------------------------------------
-    ! Reads a comma-separated bar-chart amplitude file (one header line
-    ! followed by ncols numeric columns, "Nan" marking a missing entry) into a
-    ! (nrows, ncols) array, preserving IEEE NaN for missing entries so callers
-    ! can strip them with ieee_is_nan. Blank lines are skipped in both passes,
-    ! and a data row that cannot be read stops the program.
-    ! -------------------------------------------------------------------------
-
-    USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_value, IEEE_QUIET_NAN
-
-    CHARACTER(len=*), INTENT(IN)               :: filename     ! [-] Path to the bar-chart CSV file
-    INTEGER(I32)    , INTENT(IN)               :: ncols        ! [-] Number of numeric columns to read
-    REAL(WP)        , INTENT(OUT), ALLOCATABLE :: data(:,:)    ! [-] Bar-chart amplitudes (nrows, ncols), NaN if missing
-
-    ! Local variables
-    INTEGER(I32)        :: fu, ios, i, nrows
-    CHARACTER(len=2048) :: line
-
-
-    open(newunit=fu, file=trim(filename), status='old', action='read', iostat=ios)
-    if (ios /= 0_I32) error stop "read_bar_csv: could not open file " // trim(filename)
-
-    read(fu, '(A)', iostat=ios) line    ! Header line
-
-    nrows = 0_I32
-    do
-        read(fu, '(A)', iostat=ios) line
-        if (ios /= 0_I32) exit
-        if (len_trim(line) == 0) cycle
-        nrows = nrows + 1_I32
-    end do
-
-    ALLOCATE(data(nrows, ncols))
-    data = ieee_value(1.0_WP, IEEE_QUIET_NAN)
-
-    rewind(fu)
-    read(fu, '(A)') line    ! Skip header again
-
-    i = 0_I32
-    do while (i < nrows)
-        read(fu, '(A)', iostat=ios) line
-        if (ios /= 0_I32) exit
-        if (len_trim(line) == 0) cycle
-        i = i + 1_I32
-        read(line, *, iostat=ios) data(i, 1:ncols)
-        if (ios /= 0_I32) error stop "read_bar_csv: could not read a data row of " // trim(filename)
-    end do
-
-    close(fu)
-
-END SUBROUTINE read_bar_csv
 
 END MODULE SAITEC2MWFloating

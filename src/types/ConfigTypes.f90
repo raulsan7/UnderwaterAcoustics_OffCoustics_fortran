@@ -1,25 +1,28 @@
 ! ===============================================================================
-! MODULE: Types
+! MODULE: ConfigTypes
 ! ===============================================================================
-! Defines the plain derived types shared across the whole off-coustics codebase:
-! the configuration types filled in from the input namelist files (turbine,
-! environment, solver, and the per-method solver settings), the abstract
-! source representation passed from a wind turbine model into an acoustic
-! solver, and the small helper types used internally by the Method of Images.
+! Defines the configuration types filled in from the input namelist files:
+! turbine, wind farm, environment, solver, the per-method solver settings
+! (Config_Method_t and its extensions), the per-step post-processing
+! settings, and the top-level Config_t that aggregates all of them.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
 ! Affil.  : ETSIAE, Universidad Politecnica de Madrid
 ! Project : ERC project off-coustics
-! Date    : 09/2026
+! Date    : 10/2026
 ! ===============================================================================
-MODULE Types
+MODULE ConfigTypes
 
-USE Kinds
+USE Kinds, ONLY: I32, WP
 
 IMPLICIT NONE
 
-PUBLIC
+PRIVATE
+PUBLIC :: Config_WindTurbine_t, Config_WindFarm_t, Config_Environment_t, Config_Solver_t, Config_Method_t,          &
+          Config_ImageMethod_t, Config_AnalyticalNormalModes_t, Config_DoRun_t, Config_Spectrums_t, Config_Polar_t, &
+          Config_Cylinder_t, Config_Decay_t, Config_Line_t, Config_SliceXY_t, Config_SliceXZ_t,                     &
+          Config_SliceVertical_t, Config_Sphere_t, Config_Computation_t, Config_t
 
 
 TYPE :: Config_WindTurbine_t
@@ -107,41 +110,6 @@ TYPE :: Config_Solver_t
 END TYPE Config_Solver_t
 
 
-TYPE :: GeometricData_t
-    ! -------------------------------------------------------------------------
-    ! Reference geometry and labels of whatever produced the acoustic sources
-    ! (a turbine, a wind farm or hand-made sources). Used by the automatic
-    ! defaults of the run_* routines and by the default output file, built as
-    ! out_dir // name_tag // <solver method tag> // name_suffix // ".hdf5".
-    ! -------------------------------------------------------------------------
-
-    REAL(WP)           :: center(2)   = 0.0_WP                ! [m] Reference centre (auto: polar, cylinder, sphere)
-    REAL(WP)           :: origin(2)   = 0.0_WP                ! [m] Reference origin (auto start of decay, y of sliceXZ)
-    REAL(WP)           :: direction   = 0.0_WP                ! [deg] Reference direction, anticlockwise from +x
-    CHARACTER(len=200) :: out_dir     = './acoustic_data/'    ! [-] Default output folder ('./farm_acoustic_data/')
-    CHARACTER(len=128) :: name_tag    = 'plot_sources'        ! [-] File name head ('plot_mn', 'Farm_2_DTU10MN')
-    CHARACTER(len=64)  :: name_suffix = ''                    ! [-] File name tail ('_ws11.4', '_ws8.0-11.4')
-
-END TYPE GeometricData_t
-
-
-TYPE :: AcousticSource_t
-    ! -------------------------------------------------------------------------
-    ! Abstract representation of the acoustic excitation produced by a wind
-    ! turbine: a set of point sources with their coordinates, complex nodal
-    ! forces per frequency, and the associated frequency vector. This is the
-    ! hand-off object between WindTurbine_t % turbine_to_source and the
-    ! acoustic solvers.
-    ! -------------------------------------------------------------------------
-
-    REAL(WP)   , ALLOCATABLE :: xyz(:,:)        ! [m] Acoustic source coordinates (Nsources, 3)
-    COMPLEX(WP), ALLOCATABLE :: Force(:,:,:)    ! [N] Complex source forces (Nfreqs, Nsources, 3)
-    REAL(WP)   , ALLOCATABLE :: Freqs(:)        ! [Hz] Frequency vector (Nfreqs)
-    TYPE(GeometricData_t)    :: geometry        ! [-] Reference geometry and labels of the emitter
-
-END TYPE AcousticSource_t
-
-
 TYPE, ABSTRACT :: Config_Method_t
     ! -------------------------------------------------------------------------
     ! Empty abstract base type used purely as a common label for every
@@ -170,23 +138,6 @@ TYPE, EXTENDS(Config_Method_t) :: Config_ImageMethod_t
     REAL(WP)     :: epsilon                ! [m] Minimum source-observer distance used to floor r
 
 END TYPE Config_ImageMethod_t
-
-
-TYPE :: ImageSystem_t
-    ! -------------------------------------------------------------------------
-    ! Helper type used internally by the Method of Images to hold the full set
-    ! of real and image sources built from the original AcousticSource_t: their
-    ! coordinates, complex forces (vertical component flipped and attenuation
-    ! applied once per reflection) and the accumulated boundary-condition sign
-    ! of each image (product of the BC signs of every plane it was reflected
-    ! across; +1 for the real sources).
-    ! -------------------------------------------------------------------------
-
-    REAL(WP)    , ALLOCATABLE :: xyz(:,:)        ! [m] Nodes coordinates (Nnodes, 3)
-    COMPLEX(WP) , ALLOCATABLE :: Force(:,:,:)    ! [N] Force array (Nfreqs, Nnodes, 3)
-    INTEGER(I32), ALLOCATABLE :: BC_all(:)       ! [-] Accumulated boundary-condition sign of each node
-
-END TYPE ImageSystem_t
 
 
 TYPE, EXTENDS(Config_Method_t) :: Config_AnalyticalNormalModes_t
@@ -403,4 +354,4 @@ TYPE :: Config_t
 
 END TYPE Config_t
 
-END MODULE Types
+END MODULE ConfigTypes

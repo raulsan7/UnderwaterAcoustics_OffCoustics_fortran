@@ -20,12 +20,14 @@
 MODULE AnalyticalNormalModes
 
 USE Kinds
-USE Types
-USE IOUtils
 USE omp_lib
 USE WindFarm, ONLY: WindFarm_t
+USE HDF5Utils, ONLY: save_variable
+USE FileUtils, ONLY: swap_extension
 USE WindTurbine, ONLY: WindTurbine_t
-USE MathUtils, ONLY: compute_hankel_complex
+USE SourceTypes, ONLY: AcousticSource_t
+USE SpecialFunctions, ONLY: compute_hankel_complex
+USE ConfigTypes, ONLY: Config_AnalyticalNormalModes_t, Config_t
 USE AcousticSolver, ONLY: AcousticSolver_t, save_emitter_params, write_emitter_txt
 
 IMPLICIT NONE

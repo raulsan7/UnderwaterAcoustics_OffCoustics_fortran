@@ -19,14 +19,16 @@
 PROGRAM main
 
 USE Kinds
-USE Types
 USE omp_lib
-USE MathUtils, ONLY: format_elapsed
+USE WindFarm, ONLY: WindFarm_t
+USE ConfigTypes, ONLY: Config_t
+USE Timing, ONLY: format_elapsed
 USE ImageMethod, ONLY: ImageMethod_t
 USE WindTurbine, ONLY: WindTurbine_t
+USE TurbineFactory, ONLY: new_turbine
+USE SourceTypes, ONLY: AcousticSource_t
 USE Args_parser, ONLY: read_input_files
 USE AcousticSolver, ONLY: AcousticSolver_t
-USE WindFarm, ONLY: WindFarm_t, new_turbine
 USE AnalyticalNormalModes, ONLY: AnalyticalNormalModes_t
 
 IMPLICIT NONE

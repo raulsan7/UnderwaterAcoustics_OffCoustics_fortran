@@ -2,7 +2,7 @@
 ! MODULE: DTU10MWMonopile
 ! ===============================================================================
 ! Defines DTU10MWMonopile_t, a concrete turbine type extending the abstract
-! WindTurbine_t (src/core/WindTurbine.f90) for the DTU 10 MW monopile-founded
+! WindTurbine_t (src/emitters/WindTurbine.f90) for the DTU 10 MW monopile-founded
 ! bottom-fixed platform. It implements the deferred procedures: force
 ! computation from OpenFAST accelerations, distributed dry/added mass along the
 ! monopile, drivetrain-based frequency filtering, saving/writing of platform-
@@ -17,8 +17,9 @@
 MODULE DTU10MWMonopile
 
 USE Kinds
-USE Types, ONLY: Config_WindTurbine_t
-USE WindTurbine, ONLY: WindTurbine_t, drivetrain10MW_excitation_spectrum, init
+USE WindTurbine, ONLY: WindTurbine_t, init
+USE ConfigTypes, ONLY: Config_WindTurbine_t
+USE DrivetrainExcitation, ONLY: drivetrain10MW_excitation_spectrum
 
 IMPLICIT NONE
 
@@ -98,7 +99,8 @@ SUBROUTINE compute_force_DTU10MWMonopile(self, config, verbose)
     ! relevant to the drivetrain excitation.
     ! -------------------------------------------------------------------------
 
-    USE MathUtils, ONLY: remove_duplicate_nodes, compute_rfft
+    USE SignalProcessing, ONLY: compute_rfft
+    USE StructureModel, ONLY: remove_duplicate_nodes
 
     CLASS(DTU10MWMonopile_t)  , INTENT(INOUT) :: self       ! [-] Turbine instance
     TYPE(Config_WindTurbine_t), INTENT(IN)    :: config     ! [-] Turbine configuration
@@ -243,7 +245,7 @@ SUBROUTINE compute_mass_DTU10MWMonopile(self, mass, added_mass)
     ! so they do not depend on the water depth of Environment.nml.
     ! -------------------------------------------------------------------------
 
-    USE MathUtils, ONLY: divide_span
+    USE StructureModel, ONLY: divide_span
 
     CLASS(DTU10MWMonopile_t), INTENT(INOUT)            :: self             ! [-] Turbine instance
     REAL(WP)                , INTENT(OUT), ALLOCATABLE :: mass(:)          ! [kg] Dry mass per wetted node
@@ -311,8 +313,8 @@ FUNCTION filter_frequencies_DTU10MWMonopile(self, freqs_over) RESULT(mask)
     ! physically relevant frequencies.
     ! -------------------------------------------------------------------------
 
-    USE IOUtils, ONLY: read_curve
-    USE MathUtils, ONLY: generate_timeseries_banded_sines, filter_non_useful_freqs
+    USE CSVReader, ONLY: read_curve
+    USE DrivetrainExcitation, ONLY: generate_timeseries_banded_sines, filter_non_useful_freqs
 
     CLASS(DTU10MWMonopile_t), INTENT(INOUT)        :: self          ! [-] Turbine instance
     REAL(WP)                , INTENT(IN), OPTIONAL :: freqs_over    ! [Hz] Frequencies below this are never filtered
@@ -356,7 +358,7 @@ SUBROUTINE save_specific_params_DTU10MWMonopile(self, save_path, istr)
     ! variable names with an optional instance suffix.
     ! -------------------------------------------------------------------------
 
-    USE IOUtils, ONLY: save_variable
+    USE HDF5Utils, ONLY: save_variable
 
     CLASS(DTU10MWMonopile_t), INTENT(IN)           :: self         ! [-] Turbine instance
     CHARACTER(len=*)        , INTENT(IN)           :: save_path    ! [-] Path to the HDF5 output file
@@ -405,7 +407,7 @@ FUNCTION get_impedance_corrected_force_DTU10MWMonopile(self, c) RESULT(corrected
     ! the magnitude of the scattering correction factor alpha(k, D).
     ! -------------------------------------------------------------------------
 
-    USE MathUtils, ONLY: alpha_hankel
+    USE StructureModel, ONLY: alpha_hankel
 
     CLASS(DTU10MWMonopile_t), INTENT(IN)  :: self                  ! [-] Turbine instance
     REAL(WP)                , INTENT(IN)  :: c                     ! [m/s] Speed of sound in the fluid

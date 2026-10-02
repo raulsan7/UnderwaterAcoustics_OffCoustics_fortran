@@ -17,14 +17,17 @@
 MODULE WindFarm
 
 USE Kinds
-USE Types
-USE IOUtils, ONLY: save_variable, to_upper
+USE StringUtils, ONLY: to_upper
+USE HDF5Utils, ONLY: save_variable
+USE TurbineFactory, ONLY: new_turbine
+USE SourceTypes, ONLY: AcousticSource_t
+USE ConfigTypes, ONLY: Config_WindFarm_t, Config_t
 USE WindTurbine, ONLY: WindTurbine_t, save_turbine_params, write_turbine_txt
 
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: WindFarm_t, new_turbine
+PUBLIC :: WindFarm_t
 
 
 TYPE :: TurbineSlot_t
@@ -63,35 +66,6 @@ END TYPE WindFarm_t
 
 
 CONTAINS
-
-
-SUBROUTINE new_turbine(case_type, wt)
-    ! -------------------------------------------------------------------------
-    ! Allocates a turbine of the concrete type named by case_type. Shared by
-    ! the single-turbine and the wind-farm paths.
-    ! -------------------------------------------------------------------------
-
-    USE DTU10MWMonopile  , ONLY: DTU10MWMonopile_t
-    USE DTU10MWFloating  , ONLY: DTU10MWFloating_t
-    USE SAITEC2MWFloating, ONLY: SAITEC2MWFloating_t
-
-    CHARACTER(len=*)    , INTENT(IN)               :: case_type    ! [-] Turbine model tag
-    CLASS(WindTurbine_t), INTENT(OUT), ALLOCATABLE :: wt           ! [-] New turbine instance
-
-
-    SELECT CASE (trim(case_type))
-    CASE ('DTU10MWMonopile')
-        ALLOCATE(DTU10MWMonopile_t :: wt)
-    CASE ('DTU10MWFloating')
-        ALLOCATE(DTU10MWFloating_t :: wt)
-    CASE ('SAITEC2MWFloating')
-        ALLOCATE(SAITEC2MWFloating_t :: wt)
-    CASE DEFAULT
-        write(*,*) 'Unsupported turbine type: ' // trim(case_type)
-        error stop
-    END SELECT
-
-END SUBROUTINE new_turbine
 
 
 SUBROUTINE init_WindFarm(self, config)

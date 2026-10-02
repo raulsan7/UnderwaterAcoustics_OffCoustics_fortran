@@ -2,7 +2,7 @@
 ! MODULE: DTU10MWFloating
 ! ===============================================================================
 ! Defines DTU10MWFloating_t, a concrete turbine type extending the abstract
-! WindTurbine_t (src/core/WindTurbine.f90) for the DTU 10 MW floating platform
+! WindTurbine_t (src/emitters/WindTurbine.f90) for the DTU 10 MW floating platform
 ! (CENER DeltaWind version). It implements the deferred procedures:
 ! compute_force, compute_mass, filter_frequencies, save/write_specific_params
 ! and get_impedance_corrected_force, using a representative column/pontoon
@@ -17,8 +17,9 @@
 MODULE DTU10MWFloating
 
 USE Kinds
-USE Types, ONLY: Config_WindTurbine_t
-USE WindTurbine, ONLY: WindTurbine_t, drivetrain10MW_excitation_spectrum, init
+USE WindTurbine, ONLY: WindTurbine_t, init
+USE ConfigTypes, ONLY: Config_WindTurbine_t
+USE DrivetrainExcitation, ONLY: drivetrain10MW_excitation_spectrum
 
 IMPLICIT NONE
 
@@ -119,7 +120,7 @@ SUBROUTINE compute_force_DTU10MWFloating(self, config, verbose)
     ! to be treated as an array of point dipoles.
     ! -------------------------------------------------------------------------
 
-    USE MathUtils, ONLY: compute_rfft
+    USE SignalProcessing, ONLY: compute_rfft
 
     CLASS(DTU10MWFloating_t)  , INTENT(INOUT) :: self       ! [-] Turbine instance
     TYPE(Config_WindTurbine_t), INTENT(IN)    :: config     ! [-] Turbine configuration
@@ -342,7 +343,7 @@ SUBROUTINE compute_mass_DTU10MWFloating(self, mass, added_mass)
     ! same geometry.
     ! -------------------------------------------------------------------------
 
-    USE MathUtils, ONLY: divide_span
+    USE StructureModel, ONLY: divide_span
 
     CLASS(DTU10MWFloating_t), INTENT(INOUT)            :: self             ! [-] Turbine instance
     REAL(WP)                , INTENT(OUT), ALLOCATABLE :: mass(:)          ! [kg] Dry mass per node (Nm*Nn)
@@ -489,8 +490,8 @@ FUNCTION filter_frequencies_DTU10MWFloating(self, freqs_over) RESULT(mask)
     ! can be trimmed to the physically relevant spectral content.
     ! -------------------------------------------------------------------------
 
-    USE IOUtils, ONLY: read_curve
-    USE MathUtils, ONLY: generate_timeseries_banded_sines, filter_non_useful_freqs
+    USE CSVReader, ONLY: read_curve
+    USE DrivetrainExcitation, ONLY: generate_timeseries_banded_sines, filter_non_useful_freqs
 
     CLASS(DTU10MWFloating_t), INTENT(INOUT)        :: self          ! [-] Turbine instance
     REAL(WP)                , INTENT(IN), OPTIONAL :: freqs_over    ! [Hz] Frequencies below this are never filtered
@@ -536,7 +537,7 @@ SUBROUTINE save_specific_params_DTU10MWFloating(self, save_path, istr)
     ! variable name with an instance tag (istr) when several turbines are saved.
     ! -------------------------------------------------------------------------
 
-    USE IOUtils, ONLY: save_variable
+    USE HDF5Utils, ONLY: save_variable
 
     CLASS(DTU10MWFloating_t), INTENT(IN)           :: self         ! [-] Turbine instance
     CHARACTER(len=*)        , INTENT(IN)           :: save_path    ! [-] Path to the HDF5 output file
@@ -605,7 +606,7 @@ FUNCTION get_impedance_corrected_force_DTU10MWFloating(self, c) RESULT(corrected
     ! shadowing effect of the structure itself.
     ! -------------------------------------------------------------------------
 
-    USE MathUtils, ONLY: alpha_hankel
+    USE StructureModel, ONLY: alpha_hankel
 
     CLASS(DTU10MWFloating_t), INTENT(IN)  :: self                  ! [-] Turbine instance
     REAL(WP)                , INTENT(IN)  :: c                     ! [m/s] Speed of sound in the fluid

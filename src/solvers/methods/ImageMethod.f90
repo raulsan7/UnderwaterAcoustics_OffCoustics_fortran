@@ -19,17 +19,36 @@
 MODULE ImageMethod
 
 USE Kinds
-USE Types
-USE IOUtils
 USE omp_lib
 USE WindFarm, ONLY: WindFarm_t
+USE HDF5Utils, ONLY: save_variable
+USE FileUtils, ONLY: swap_extension
 USE WindTurbine, ONLY: WindTurbine_t
+USE SourceTypes, ONLY: AcousticSource_t
+USE ConfigTypes, ONLY: Config_ImageMethod_t, Config_t
 USE AcousticSolver, ONLY: AcousticSolver_t, save_emitter_params, write_emitter_txt, pressure_norm
 
 IMPLICIT NONE
 
 PRIVATE
 PUBLIC :: ImageMethod_t
+
+
+TYPE :: ImageSystem_t
+    ! -------------------------------------------------------------------------
+    ! Helper type used internally by the Method of Images to hold the full set
+    ! of real and image sources built from the original AcousticSource_t: their
+    ! coordinates, complex forces (vertical component flipped and attenuation
+    ! applied once per reflection) and the accumulated boundary-condition sign
+    ! of each image (product of the BC signs of every plane it was reflected
+    ! across; +1 for the real sources).
+    ! -------------------------------------------------------------------------
+
+    REAL(WP)    , ALLOCATABLE :: xyz(:,:)        ! [m] Nodes coordinates (Nnodes, 3)
+    COMPLEX(WP) , ALLOCATABLE :: Force(:,:,:)    ! [N] Force array (Nfreqs, Nnodes, 3)
+    INTEGER(I32), ALLOCATABLE :: BC_all(:)       ! [-] Accumulated boundary-condition sign of each node
+
+END TYPE ImageSystem_t
 
 
 TYPE, EXTENDS(AcousticSolver_t) :: ImageMethod_t
