@@ -74,7 +74,7 @@ CHARACTER(len=8) :: tag
 
         ! --- 3. Solve the structural dynamics of every turbine, one after another --- !
         write(*,*) ">> Processing the dynamics and structural forces of every turbine..."
-        CALL active_farm % compute_forces(config=config % farm, verbose=.true.)
+        CALL active_farm % compute_forces(config=config % farm, verbose=.true.)     ! COntains read_input()
 
         ! --- 4. Merge every turbine into a single set of acoustic sources --- !
         write(*,*) ">> Merging every turbine into a single set of acoustic sources..."

@@ -50,10 +50,10 @@ TYPE, EXTENDS(Emitter_t) :: WindFarm_t
     ! contribution of every turbine can still be told apart after merging.
     ! -------------------------------------------------------------------------
 
-    INTEGER(I32)                     :: Nturbines        ! [-] Number of turbines in the farm
-    CHARACTER(len=100)               :: farm_name        ! [-] Label replacing the automatic file name ('None': auto)
-    TYPE(TurbineSlot_t), ALLOCATABLE :: turbines(:)      ! [-] Turbines (Nturbines)
-    INTEGER(I32)       , ALLOCATABLE :: src_offset(:)    ! [-] Source offset of every turbine (Nturbines + 1)
+    INTEGER(I32)                     :: Nturbines               ! [-] Number of turbines in the farm
+    CHARACTER(len=100)               :: farm_name               ! [-] Label replacing the automatic file name ('None': auto)
+    TYPE(TurbineSlot_t), ALLOCATABLE :: turbines(:)             ! [-] Turbines (Nturbines)
+    INTEGER(I32)       , ALLOCATABLE :: src_offset(:)           ! [-] Source offset of every turbine (Nturbines + 1)
 
     CONTAINS
 
