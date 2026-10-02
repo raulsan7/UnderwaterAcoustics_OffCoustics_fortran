@@ -37,12 +37,12 @@ TYPE, ABSTRACT :: Emitter_t
     CONTAINS
 
     ! --- Shared procedures --- !
-    PROCEDURE :: get_enbw    ! ENBW of the window applied to the forces (-1: no window)
+    PROCEDURE :: get_enbw                                   ! ENBW of the window applied to the forces (-1: no window)
 
     ! --- Deferred (abstract) procedures --- !
-    PROCEDURE(to_source_i)  , DEFERRED :: to_source      ! Fills the AcousticSource_t handed to the solver
-    PROCEDURE(save_params_i), DEFERRED :: save_params    ! Emitter parameters -> HDF5 output
-    PROCEDURE(write_txt_i)  , DEFERRED :: write_txt      ! Emitter block of the .dat summary
+    PROCEDURE(to_source_i)  , DEFERRED :: to_source         ! Fills the AcousticSource_t handed to the solver
+    PROCEDURE(save_params_i), DEFERRED :: save_params       ! Emitter parameters -> HDF5 output
+    PROCEDURE(write_txt_i)  , DEFERRED :: write_txt         ! Emitter block of the .dat summary
 
 END TYPE Emitter_t
 
