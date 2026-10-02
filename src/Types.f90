@@ -358,6 +358,7 @@ TYPE :: Config_Sphere_t
     REAL(WP)     :: r_sphere            ! [m] Sphere radius
     INTEGER(I32) :: n_theta_sphere      ! [-] Number of azimuthal observer points
     INTEGER(I32) :: nz_sphere           ! [-] Number of vertical observer levels
+    REAL(WP)     :: f_farfield_sphere   ! [-] Frequency from which all f> f_farfield are considered to be in far-field
     REAL(WP)     :: center_sphere(3)    ! [m] Sphere centre (x, y, z)
 
 END TYPE Config_Sphere_t

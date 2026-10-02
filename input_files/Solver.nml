@@ -5,7 +5,7 @@
 &solver_config
     simulation_type = 'turbine'         ! [-] 'turbine' (Turbine.nml) or 'farm' (WindFarm.nml) 
     method = 'ImageMethod'    ! [-] Acoustic solver: 'ImageMethod' or 'AnalyticalNormalModes'
-    save_path = 'SAITEC_acoustic_data/saitec_IM_full_resol'                  ! [-] Output file base path/name; 'None'/'Default' builds it from the turbine/solver settings
+    save_path = 'SAITEC_acoustic_data/saitec_IM'                  ! [-] Output file base path/name; 'None'/'Default' builds it from the turbine/solver settings
     extra_label = 'None'                ! [-] Appended to the file name as "_<extra_label>"; 'None' or '' adds nothing
     block_size = 128                    ! [-] Number of observers processed together per parallel block
     in_cluster = .true.                 ! [-] Whether to use multi-threaded/blocked pressure evaluation (cluster/HPC run)

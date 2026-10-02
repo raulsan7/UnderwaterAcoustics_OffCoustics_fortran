@@ -1438,7 +1438,7 @@ SUBROUTINE read_sphere_config(path, config)
     CHARACTER(len=200) :: iomsg
 
     ! Input variables
-    REAL(WP)     :: r_sphere, center_sphere(3)
+    REAL(WP)     :: r_sphere, center_sphere(3), f_farfield_sphere
     INTEGER(I32) :: n_theta_sphere, nz_sphere
 
     ! --- 1. Configuration namelist --- !
@@ -1446,14 +1446,16 @@ SUBROUTINE read_sphere_config(path, config)
         r_sphere,            &
         n_theta_sphere,      &
         nz_sphere,           &
+        f_farfield_sphere,   &
         center_sphere
 
 
     ! --- 2. Defaults --- !
-    r_sphere       = DEFAULT_R
-    n_theta_sphere = DEFAULT_I
-    nz_sphere      = DEFAULT_I
-    center_sphere  = DEFAULT_R
+    r_sphere          = DEFAULT_R
+    n_theta_sphere    = DEFAULT_I
+    nz_sphere         = DEFAULT_I
+    f_farfield_sphere = DEFAULT_R
+    center_sphere     = DEFAULT_R
 
     ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
@@ -1473,10 +1475,11 @@ SUBROUTINE read_sphere_config(path, config)
     close(unit_num)
 
     ! --- 4. Pack values into Config_t --- !
-    config % run_inputs % params_sphere % r_sphere       = r_sphere
-    config % run_inputs % params_sphere % n_theta_sphere = n_theta_sphere
-    config % run_inputs % params_sphere % nz_sphere      = nz_sphere
-    config % run_inputs % params_sphere % center_sphere  = center_sphere
+    config % run_inputs % params_sphere % r_sphere          = r_sphere
+    config % run_inputs % params_sphere % n_theta_sphere    = n_theta_sphere
+    config % run_inputs % params_sphere % nz_sphere         = nz_sphere
+    config % run_inputs % params_sphere % f_farfield_sphere = f_farfield_sphere
+    config % run_inputs % params_sphere % center_sphere     = center_sphere
 
 END SUBROUTINE read_sphere_config
 

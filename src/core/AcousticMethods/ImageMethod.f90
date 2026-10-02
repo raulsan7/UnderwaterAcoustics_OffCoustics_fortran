@@ -643,41 +643,36 @@ SUBROUTINE run_sphere(self)
     REAL(WP)    , ALLOCATABLE :: theta_deg_arr(:)
     REAL(WP)    , ALLOCATABLE :: z_centers(:)
     REAL(WP)    , ALLOCATABLE :: z_edges(:), theta_edges(:)
-    REAL(WP)                  :: r_, center_(3), max_dist, current_dist
-    REAL(WP)                  :: dz, dtheta, zc, r_xy, theta_c
-    REAL(WP)                  :: dA
+    REAL(WP)                  :: r_, center_(3)
+    REAL(WP)                  :: dz, dtheta, zc, r_xy, theta_c, a_max
+    REAL(WP)                  :: dA, f_farfield_, k_far
     INTEGER(I32)              :: n_theta_, nz_, i, j, idx, Nobs
 
 
     ! Defaults (resolved once, persisted back into run_inputs)
     associate(pp => self % run_inputs % params_sphere)
-        if (pp % r_sphere == DEFAULT_R)       pp % r_sphere       = 30.0_WP
-        if (pp % n_theta_sphere == DEFAULT_I) pp % n_theta_sphere = 72_I32
-        if (pp % nz_sphere == DEFAULT_I)      pp % nz_sphere      = 20_I32
+        if (pp % r_sphere == DEFAULT_R)          pp % r_sphere          = 0.0_WP
+        if (pp % n_theta_sphere == DEFAULT_I)    pp % n_theta_sphere    = 144_I32
+        if (pp % nz_sphere == DEFAULT_I)         pp % nz_sphere         = 40_I32
+        if (pp % f_farfield_sphere == DEFAULT_R) pp % f_farfield_sphere = 10.0_WP
         if (any(pp % center_sphere == DEFAULT_R)) &
-            pp % center_sphere = [self % sources % geometry % center(1), self % sources % geometry % center(2), &
-                      -self % env % depth_base / 2.0_WP]
+            pp % center_sphere = 0.5_WP * (minval(self % sources % xyz, dim=1) + maxval(self % sources % xyz, dim=1))
 
-        r_       = pp % r_sphere
-        n_theta_ = pp % n_theta_sphere
-        nz_      = pp % nz_sphere
-        center_  = pp % center_sphere
+        r_          = pp % r_sphere
+        n_theta_    = pp % n_theta_sphere
+        nz_         = pp % nz_sphere
+        f_farfield_ = pp % f_farfield_sphere
+        center_     = pp % center_sphere
     end associate
 
     ! Basic enclosure check
-    max_dist = 0.0_WP
+    a_max = 0.0_WP
     do i = 1, size(self % sources % xyz, 1)
-        current_dist = norm2(self % sources % xyz(i, :) - center_)
-        if (current_dist > max_dist) max_dist = current_dist
+        a_max = max(a_max, norm2(self % sources % xyz(i, :) - center_))
     end do
-    max_dist = max_dist * 1.1_WP
 
-    if (r_ < max_dist) then
-        write(*, '(A,F8.2,A)') '   requested radius r=', r_, ' m is smaller than max dist.'
-        write(*, '(A,F8.2,A)') '   radius increased to ', max_dist * 1.05_WP, ' m'
-        r_                                           = max_dist * 1.05_WP
-        self % run_inputs % params_sphere % r_sphere = r_    ! Persist the radius actually used
-    end if
+    k_far = 2.0_WP * PI * f_farfield_ / self % env % speed_sound_base
+    r_ = a_max + 3.0_WP / k_far     ! [-] Farfield criterion: 3 wavelengths at f_farfield
 
     Nobs = n_theta_ * nz_
     ALLOCATE(observers_(Nobs, 3))
