@@ -4,8 +4,9 @@
 ! Defines AcousticSolver_t, the abstract parent type for all acoustic
 ! propagation solvers (ImageMethod_t and AnalyticalNormalModes_t). It holds
 ! the shared solver state (sources and their reference geometry,
-! environment, save path, block size, debug/cluster flags) and the observer
-! masking, and declares the generic observer-geometry post-processing
+! environment, save path, block size, debug/cluster flags), the observer
+! masking and the water-column queries (z_surface, z_seabed, in_water), and
+! declares the generic observer-geometry post-processing
 ! routines (spectrums, polar, cylinder, decay, line, sliceXY, sliceXZ,
 ! sliceVertical, sphere) shared by every concrete solver, implemented in the
 ! submodule AcousticSolver_steps, and the output-file management,
@@ -23,21 +24,14 @@
 MODULE AcousticSolver
 
 USE Kinds
-USE WindFarm, ONLY: WindFarm_t
-USE WindTurbine, ONLY: WindTurbine_t
+USE Emitter, ONLY: Emitter_t
 USE SourceTypes, ONLY: AcousticSource_t
 USE ConfigTypes, ONLY: Config_Environment_t, Config_Computation_t, Config_t
 
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: AcousticSolver_t, save_emitter_params, write_emitter_txt, pressure_norm
-
-
-! ===============================================================================
-! OBSERVER MASKING
-! ===============================================================================
-REAL(WP), PARAMETER :: MASK_DISTANCE = 5.0_WP    ! [m] Observers closer than this to a source node get NaN pressure
+PUBLIC :: AcousticSolver_t, pressure_norm
 
 
 TYPE, ABSTRACT :: AcousticSolver_t
@@ -56,6 +50,7 @@ TYPE, ABSTRACT :: AcousticSolver_t
     LOGICAL                    :: debug                   ! [-] Whether to print extra debug info (e.g. pressure norms)
     LOGICAL                    :: in_cluster              ! [-] Whether the solver runs on a cluster
     LOGICAL                    :: update_existing         ! [-] Whether an existing output file of the same case is updated
+    REAL(WP)                   :: mask_distance           ! [m] Observers closer than this to a source node get NaN
     CHARACTER(len=50)          :: solver_name = 'None'    ! [-] Solver name
     CHARACTER(len=512)         :: save_path   = 'None'    ! [-] Path to save acoustics
     CHARACTER(len=100)         :: extra_label = 'None'    ! [-] Label appended to the file name ('None' or '': none)
@@ -63,10 +58,11 @@ TYPE, ABSTRACT :: AcousticSolver_t
     CONTAINS
 
     ! --- Public type-bound procedures --- !
-    PROCEDURE :: check_observers_distances    ! Observer mask: .false. closer than MASK_DISTANCE to a source
+    PROCEDURE :: check_observers_distances    ! Observer mask: .false. closer than mask_distance to a source
     PROCEDURE :: compute_pressure_masked      ! compute_pressure with NaN at the masked observers
     PROCEDURE :: resolve_save_path            ! Output path shared by every solver (build_save_path helper)
     PROCEDURE :: check_update                 ! Keeps an existing output only if it holds the same case
+    PROCEDURE :: save_shared_parameters       ! Datasets written by every solver (Method, ENBW)
     PROCEDURE :: update_parameters            ! Appends run_* parameters actually used to the .dat
     PROCEDURE :: run                          ! Config-driven entry point: every enabled do_* step
     PROCEDURE :: run_spectrums                ! Subroutines to compute acoustic pressure
@@ -78,6 +74,11 @@ TYPE, ABSTRACT :: AcousticSolver_t
     PROCEDURE :: run_sliceXZ
     PROCEDURE :: run_sliceVertical
     PROCEDURE :: run_sphere => dummy_run_sphere
+
+    ! --- Water-column queries (a method overrides them to publish its boundaries) --- !
+    PROCEDURE :: z_surface => default_z_surface    ! z of the water surface at (x, y)
+    PROCEDURE :: z_seabed  => default_z_seabed     ! z of the seabed at (x, y)
+    PROCEDURE :: in_water  => default_in_water     ! Observer mask: .true. inside the water column
 
     ! --- Deferred (abstract) procedures --- !
     PROCEDURE(init_i)             , DEFERRED :: init
@@ -136,17 +137,16 @@ ABSTRACT INTERFACE
 
     END SUBROUTINE compute_pressure_i
 
-    SUBROUTINE save_parameters_i(self, turbine, farm)
+    SUBROUTINE save_parameters_i(self, emitter)
         ! -------------------------------------------------------------------------
-        ! Saves the solver, environment and turbine parameters to the HDF5
+        ! Saves the solver, environment and emitter parameters to the HDF5
         ! output file and writes the .dat text summary.
         ! -------------------------------------------------------------------------
 
-        IMPORT :: AcousticSolver_t, WindTurbine_t, WindFarm_t
+        IMPORT :: AcousticSolver_t, Emitter_t
 
-        CLASS(AcousticSolver_t), INTENT(IN)           :: self       ! [-] Solver instance
-        CLASS(WindTurbine_t)   , INTENT(IN), OPTIONAL :: turbine    ! [-] Turbine instance (optional)
-        TYPE(WindFarm_t)       , INTENT(IN), OPTIONAL :: farm       ! [-] Wind farm instance (optional)
+        CLASS(AcousticSolver_t), INTENT(IN) :: self       ! [-] Solver instance
+        CLASS(Emitter_t)       , INTENT(IN) :: emitter    ! [-] Emitter that produced the sources
 
     END SUBROUTINE save_parameters_i
 
@@ -161,16 +161,15 @@ ABSTRACT INTERFACE
 
     END SUBROUTINE build_save_path_i
 
-    SUBROUTINE write_txt_summary_i(self, turbine, farm)
+    SUBROUTINE write_txt_summary_i(self, emitter)
         ! -------------------------------------------------------------------------
         ! Writes the human-readable .dat summary next to the HDF5 output file.
         ! -------------------------------------------------------------------------
 
-        IMPORT :: AcousticSolver_t, WindTurbine_t, WindFarm_t
+        IMPORT :: AcousticSolver_t, Emitter_t
 
-        CLASS(AcousticSolver_t), INTENT(IN)           :: self       ! [-] Solver instance
-        CLASS(WindTurbine_t)   , INTENT(IN), OPTIONAL :: turbine    ! [-] Turbine instance (optional)
-        TYPE(WindFarm_t)       , INTENT(IN), OPTIONAL :: farm       ! [-] Wind farm instance (optional)
+        CLASS(AcousticSolver_t), INTENT(IN) :: self       ! [-] Solver instance
+        CLASS(Emitter_t)       , INTENT(IN) :: emitter    ! [-] Emitter that produced the sources
 
     END SUBROUTINE write_txt_summary_i
 
@@ -179,7 +178,7 @@ END INTERFACE
 
 ! ===============================================================================
 ! INTERFACES OF THE PROCEDURES IMPLEMENTED IN SUBMODULES
-! AcousticSolver_output: output path, update of an existing output, emitter blocks
+! AcousticSolver_output: output path, update of an existing output, shared datasets
 ! AcousticSolver_steps  : run() and the run_* post-processing steps
 ! ===============================================================================
 INTERFACE
@@ -207,7 +206,7 @@ INTERFACE
 
     END SUBROUTINE resolve_save_path
 
-    MODULE SUBROUTINE check_update(self, turbine, farm)
+    MODULE SUBROUTINE check_update(self, emitter)
         ! -------------------------------------------------------------------------
         ! Called by save_parameters before anything is written. If resolve_save_path
         ! kept an existing output file (update_existing), it is updated only if it
@@ -218,9 +217,8 @@ INTERFACE
         ! .dat.prev are deleted with a warning and the output is rebuilt.
         ! -------------------------------------------------------------------------
 
-        CLASS(AcousticSolver_t), INTENT(IN)           :: self       ! [-] Solver instance
-        CLASS(WindTurbine_t)   , INTENT(IN), OPTIONAL :: turbine    ! [-] Turbine instance (optional)
-        TYPE(WindFarm_t)       , INTENT(IN), OPTIONAL :: farm       ! [-] Wind farm instance (optional)
+        CLASS(AcousticSolver_t), INTENT(IN) :: self       ! [-] Solver instance
+        CLASS(Emitter_t)       , INTENT(IN) :: emitter    ! [-] Emitter that produced the sources
 
     END SUBROUTINE check_update
 
@@ -241,29 +239,19 @@ INTERFACE
 
     END SUBROUTINE update_parameters
 
-    MODULE SUBROUTINE save_emitter_params(save_path, turbine, farm)
+    MODULE SUBROUTINE save_shared_parameters(self, emitter)
         ! -------------------------------------------------------------------------
-        ! Saves the parameters of whatever produced the sources into the HDF5
-        ! output file. Nothing is saved for hand-made sources.
-        ! -------------------------------------------------------------------------
-
-        CHARACTER(len=*)    , INTENT(IN)           :: save_path    ! [-] Path to the HDF5 output file
-        CLASS(WindTurbine_t), INTENT(IN), OPTIONAL :: turbine      ! [-] Turbine instance (optional)
-        TYPE(WindFarm_t)    , INTENT(IN), OPTIONAL :: farm         ! [-] Wind farm instance (optional)
-
-    END SUBROUTINE save_emitter_params
-
-    MODULE SUBROUTINE write_emitter_txt(unit, turbine, farm)
-        ! -------------------------------------------------------------------------
-        ! Writes the block of whatever produced the sources into the .dat
-        ! summary file. Nothing is written for hand-made sources.
+        ! Writes the datasets shared by every solver, called by each solver's
+        ! save_parameters right after its own datasets: the solver name (Method,
+        ! from get_name) and, only when the emitter forces come from a windowed
+        ! FFT (get_enbw > 0), the equivalent noise bandwidth of that window in
+        ! bins (ENBW). Neither is written in the .dat summary.
         ! -------------------------------------------------------------------------
 
-        INTEGER(I32)        , INTENT(IN)           :: unit       ! [-] Unit of the open .dat file
-        CLASS(WindTurbine_t), INTENT(IN), OPTIONAL :: turbine    ! [-] Turbine instance (optional)
-        TYPE(WindFarm_t)    , INTENT(IN), OPTIONAL :: farm       ! [-] Wind farm instance (optional)
+        CLASS(AcousticSolver_t), INTENT(IN) :: self       ! [-] Solver instance
+        CLASS(Emitter_t)       , INTENT(IN) :: emitter    ! [-] Emitter that produced the sources
 
-    END SUBROUTINE write_emitter_txt
+    END SUBROUTINE save_shared_parameters
 
     MODULE SUBROUTINE run_spectrums(self)
         ! -------------------------------------------------------------------------
@@ -411,7 +399,7 @@ CONTAINS
 ! ===============================================================================
 FUNCTION check_observers_distances(self, observers) RESULT(valid)
     ! -------------------------------------------------------------------------
-    ! Flags the observers lying closer than MASK_DISTANCE to any source node.
+    ! Flags the observers lying closer than mask_distance to any source node.
     ! At such distances the observer sits inside (or right on) the structure,
     ! where the point-dipole field is meaningless and nearly singular. Returns
     ! .true. for every valid observer; the run continues either way.
@@ -428,7 +416,7 @@ FUNCTION check_observers_distances(self, observers) RESULT(valid)
 
     n_nodes = size(self % sources % xyz, 1)
     n_obs   = size(observers, 1)
-    d2_mask = MASK_DISTANCE**2
+    d2_mask = self % mask_distance**2
 
     ALLOCATE(valid(n_obs))
     valid = .true.
@@ -454,11 +442,12 @@ END FUNCTION check_observers_distances
 SUBROUTINE compute_pressure_masked(self, label, observers, block_size, total_pressure)
     ! -------------------------------------------------------------------------
     ! Wrapper of compute_pressure used by every run_* routine. Observers lying
-    ! closer than MASK_DISTANCE to any source node are not computed: their
-    ! pressure is set to NaN (real and imaginary parts) and a warning reports
-    ! how many were masked. The observer grid keeps its regular shape, so the
-    ! masked points show up as holes when plotted. Without masked observers
-    ! it is a plain call to compute_pressure (identical results).
+    ! closer than mask_distance to any source node, or outside the water
+    ! column (in_water), are not computed: their pressure is set to NaN (real
+    ! and imaginary parts) and one warning per criterion reports how many were
+    ! masked. The observer grid keeps its regular shape, so the masked points
+    ! show up as holes when plotted. Without masked observers it is a plain
+    ! call to compute_pressure (identical results).
     ! -------------------------------------------------------------------------
 
     USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_value, IEEE_QUIET_NAN
@@ -470,15 +459,19 @@ SUBROUTINE compute_pressure_masked(self, label, observers, block_size, total_pre
     COMPLEX(WP)            , INTENT(OUT), ALLOCATABLE :: total_pressure(:,:)    ! [Pa] Pressure (Nf, Nobs); masked: NaN
 
     ! Local variables
-    LOGICAL     , ALLOCATABLE :: valid(:)
+    LOGICAL     , ALLOCATABLE :: valid(:), wet(:)
     REAL(WP)    , ALLOCATABLE :: obs_valid(:,:)
     COMPLEX(WP) , ALLOCATABLE :: p_valid(:,:)
-    INTEGER(I32)              :: n_obs, n_valid, i, j
+    INTEGER(I32)              :: n_obs, n_valid, n_close, n_dry, i, j
     REAL(WP)                  :: nan
 
 
     n_obs   = size(observers, 1)
     valid   = self % check_observers_distances(observers)
+    wet     = self % in_water(observers)
+    n_close = int(count(.not. valid), I32)    ! Masked by distance
+    n_dry   = int(count(.not. wet), I32)      ! Masked by in_water
+    valid   = valid .and. wet
     n_valid = int(count(valid), I32)
 
     ! No masked observer: plain call
@@ -487,8 +480,13 @@ SUBROUTINE compute_pressure_masked(self, label, observers, block_size, total_pre
         return
     end if
 
-    write(*, '(A,I0,A,I0,A,F4.1,A)') ' WARNING [' // label // '] ', n_obs - n_valid, ' of ', n_obs, &
-                                     ' observers closer than ', MASK_DISTANCE, ' m to a source node: masked (NaN)'
+    if (n_close > 0_I32) &
+        write(*, '(A,I0,A,I0,A,F4.1,A)') ' WARNING [' // label // '] ', n_close, ' of ', n_obs, &
+                                         ' observers closer than ', self % mask_distance, &
+                                         ' m to a source node: masked (NaN)'
+    if (n_dry > 0_I32) &
+        write(*, '(A,I0,A,I0,A)') ' WARNING [' // label // '] ', n_dry, ' of ', n_obs, &
+                                  ' observers outside the water column: masked (NaN)'
 
     nan = ieee_value(1.0_WP, IEEE_QUIET_NAN)
     ALLOCATE(total_pressure(size(self % sources % Freqs), n_obs))
@@ -539,5 +537,73 @@ FUNCTION pressure_norm(p) RESULT(pnorm)
     end if
 
 END FUNCTION pressure_norm
+
+
+! ===============================================================================
+! WATER-COLUMN QUERIES
+! Defaults: flat surface at z = 0 and flat seabed at z = -depth_base
+! ===============================================================================
+FUNCTION default_z_surface(self, x, y) RESULT(z)
+    ! -------------------------------------------------------------------------
+    ! Default water-column query: z of the water surface at (x, y), the plane
+    ! z = 0.
+    ! A method overrides z_surface, z_seabed and in_water to publish its own
+    ! boundaries (a surface not at z = 0, a variable bathymetry, ...). The
+    ! run_* steps never read depth_base directly: they only ask these
+    ! queries, so they stay generic for every method.
+    ! -------------------------------------------------------------------------
+
+    CLASS(AcousticSolver_t), INTENT(IN) :: self    ! [-] Solver instance
+    REAL(WP)               , INTENT(IN) :: x       ! [m] x-coordinate
+    REAL(WP)               , INTENT(IN) :: y       ! [m] y-coordinate
+    REAL(WP)                            :: z       ! [m] z-coordinate of the water surface
+
+
+    z = 0.0_WP
+
+END FUNCTION default_z_surface
+
+
+FUNCTION default_z_seabed(self, x, y) RESULT(z)
+    ! -------------------------------------------------------------------------
+    ! Default water-column query: z of the seabed at (x, y), the plane
+    ! z = -depth_base.
+    ! A method overrides z_surface, z_seabed and in_water to publish its own
+    ! boundaries (a surface not at z = 0, a variable bathymetry, ...). The
+    ! run_* steps never read depth_base directly: they only ask these
+    ! queries, so they stay generic for every method.
+    ! -------------------------------------------------------------------------
+
+    CLASS(AcousticSolver_t), INTENT(IN) :: self    ! [-] Solver instance
+    REAL(WP)               , INTENT(IN) :: x       ! [m] x-coordinate
+    REAL(WP)               , INTENT(IN) :: y       ! [m] y-coordinate
+    REAL(WP)                            :: z       ! [m] z-coordinate of the seabed
+
+
+    z = -self % env % depth_base
+
+END FUNCTION default_z_seabed
+
+
+FUNCTION default_in_water(self, observers) RESULT(valid)
+    ! -------------------------------------------------------------------------
+    ! Default water-column query: flags the observers inside the water
+    ! column. Every observer is valid by default, so compute_pressure_masked
+    ! never masks an observer for this reason.
+    ! A method overrides z_surface, z_seabed and in_water to publish its own
+    ! boundaries (a surface not at z = 0, a variable bathymetry, ...). The
+    ! run_* steps never read depth_base directly: they only ask these
+    ! queries, so they stay generic for every method.
+    ! -------------------------------------------------------------------------
+
+    CLASS(AcousticSolver_t), INTENT(IN)  :: self              ! [-] Solver instance
+    REAL(WP)               , INTENT(IN)  :: observers(:,:)    ! [m] Observers coords (Nobs, 3)
+    LOGICAL                , ALLOCATABLE :: valid(:)          ! [-] Observer mask (Nobs), .true. inside the water
+
+
+    ALLOCATE(valid(size(observers, 1)))
+    valid = .true.
+
+END FUNCTION default_in_water
 
 END MODULE AcousticSolver

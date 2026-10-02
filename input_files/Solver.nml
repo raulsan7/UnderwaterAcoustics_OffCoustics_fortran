@@ -11,6 +11,7 @@
     in_cluster = .true.                 ! [-] Whether to use multi-threaded/blocked pressure evaluation (cluster/HPC run)
     debug = .true.                      ! [-] Whether to print extra diagnostic info (e.g. pressure norms) during the run
     update_existing = .true.            ! [-] If the .hdf5 exists and holds the same case: .true. rewrites only the steps run now, .false. deletes and rebuilds it
+    mask_distance = 5.0                 ! [m] Observers closer than this to a source node get NaN pressure (0 = no masking)
 /
 
 

@@ -2,11 +2,13 @@
 ! MODULE: WindTurbine
 ! ===============================================================================
 ! Defines WindTurbine_t, the abstract parent type for all wind turbine models
-! (Monopile, Floating, etc.). It centralizes every shared parameter, the
-! standard OpenFAST output/SubDyn reading pipeline, and the translation of
-! structural nodes into acoustic point-dipole sources, so that each concrete
-! turbine type only has to implement its own force/mass computation and
-! platform-specific saved parameters.
+! (Monopile, Floating, etc.), an extension of Emitter_t. It centralizes every
+! shared parameter, the standard OpenFAST output/SubDyn reading pipeline,
+! the drivetrain frequency filtering and the Emitter_t procedures
+! (translation of the structural nodes into acoustic point-dipole sources,
+! HDF5 and .dat blocks), so that each concrete turbine type only has to
+! implement its own force/mass computation, drivetrain excitation spectrum
+! and platform-specific saved parameters.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -17,10 +19,12 @@
 MODULE WindTurbine
 
 USE Kinds
+USE Emitter, ONLY: Emitter_t
 USE StringUtils, ONLY: to_upper
 USE HDF5Utils, ONLY: save_variable
-USE SourceTypes, ONLY: AcousticSource_t
+USE SignalProcessing, ONLY: HANN_ENBW
 USE ConfigTypes, ONLY: Config_WindTurbine_t, Config_t
+USE SourceTypes, ONLY: AcousticSource_t, SOURCE_DIPOLE
 
 IMPLICIT NONE
 
@@ -28,7 +32,7 @@ PRIVATE
 PUBLIC :: WindTurbine_t, init, save_turbine_params, write_turbine_txt
 
 
-TYPE, ABSTRACT :: WindTurbine_t
+TYPE, ABSTRACT, EXTENDS(Emitter_t) :: WindTurbine_t
     ! -------------------------------------------------------------------------
     ! This acts as the parent class for all turbine types (Monopile, Floating, etc.).
     ! It encapsulates all shared parameters, configuration, and standard OpenFAST
@@ -71,12 +75,18 @@ TYPE, ABSTRACT :: WindTurbine_t
     PROCEDURE :: init                            ! Constructor
     PROCEDURE :: read_input                      ! Reads OpenFAST outputs
     PROCEDURE :: translate_align_with_WindDir    ! Places nodes correctly
-    PROCEDURE :: turbine_to_source               ! Translates turbine to source abstraction
+    PROCEDURE :: filter_frequencies              ! Keeps the frequencies near the drivetrain excitation peaks
+
+    ! --- Emitter_t procedures --- !
+    PROCEDURE :: to_source   => turbine_to_source      ! Translates turbine to source abstraction
+    PROCEDURE :: save_params => save_params_turbine    ! Generic and type-specific parameters -> HDF5
+    PROCEDURE :: write_txt   => write_txt_turbine      ! Generic and type-specific blocks of the .dat
+    PROCEDURE :: get_enbw    => get_enbw_turbine       ! Hann window of compute_rfft (HANN_ENBW)
 
     ! --- Deferred (abstract) procedures --- !
     PROCEDURE(compute_force_i)                , DEFERRED :: compute_force
     PROCEDURE(compute_mass_i)                 , DEFERRED :: compute_mass
-    PROCEDURE(filter_frequencies_i)           , DEFERRED :: filter_frequencies
+    PROCEDURE(excitation_spectrum_i)          , DEFERRED :: excitation_spectrum
     PROCEDURE(save_specific_params_i)         , DEFERRED :: save_specific_params
     PROCEDURE(write_specific_params_txt_i)    , DEFERRED :: write_specific_params_txt
     PROCEDURE(get_impedance_corrected_force_i), DEFERRED :: get_impedance_corrected_force
@@ -116,19 +126,21 @@ ABSTRACT INTERFACE
 
     END SUBROUTINE compute_mass_i
 
-    FUNCTION filter_frequencies_i(self, freqs_over) RESULT(mask)
+    SUBROUTINE excitation_spectrum_i(self, rpm, freqs_amp, keys)
         ! -------------------------------------------------------------------------
-        ! Builds the mask of the frequencies to keep, based on the turbine's
-        ! drivetrain excitation spectrum.
+        ! Builds the drivetrain excitation spectrum of the turbine type (peak
+        ! frequencies and amplitudes, with their labels) at the given rotor
+        ! speed. filter_frequencies keeps only the frequencies near those peaks.
         ! -------------------------------------------------------------------------
 
         IMPORT :: WindTurbine_t, WP
 
-        CLASS(WindTurbine_t), INTENT(INOUT)        :: self          ! [-] Turbine instance
-        REAL(WP)            , INTENT(IN), OPTIONAL :: freqs_over    ! [Hz] Frequencies below this are never filtered
-        LOGICAL             , ALLOCATABLE          :: mask(:)       ! [-] Frequency mask (Nfreqs), .true. to keep
+        CLASS(WindTurbine_t), INTENT(IN)               :: self              ! [-] Turbine instance
+        REAL(WP)            , INTENT(IN)               :: rpm               ! [rpm] Rotor speed
+        REAL(WP)            , INTENT(OUT), ALLOCATABLE :: freqs_amp(:,:)    ! [-] Peaks (N, 2): freq [Hz], amplitude
+        CHARACTER(len=20)   , INTENT(OUT), ALLOCATABLE :: keys(:)           ! [-] Peak labels (N)
 
-    END FUNCTION filter_frequencies_i
+    END SUBROUTINE excitation_spectrum_i
 
     SUBROUTINE save_specific_params_i(self, save_path, istr)
         ! -------------------------------------------------------------------------
@@ -372,6 +384,52 @@ SUBROUTINE translate_align_with_WindDir(self)
 END SUBROUTINE translate_align_with_WindDir
 
 
+FUNCTION filter_frequencies(self, freqs_over) RESULT(mask)
+    ! -------------------------------------------------------------------------
+    ! Builds a logical mask selecting only the frequencies close to the
+    ! drivetrain excitation peaks of the turbine type (its excitation_spectrum)
+    ! at the current wind speed's rpm, so the force spectrum can be restricted
+    ! to the physically relevant frequencies. Shared by every turbine type.
+    ! -------------------------------------------------------------------------
+
+    USE CSVReader, ONLY: read_curve
+    USE DrivetrainExcitation, ONLY: generate_timeseries_banded_sines, filter_non_useful_freqs
+
+    CLASS(WindTurbine_t), INTENT(INOUT)        :: self          ! [-] Turbine instance
+    REAL(WP)            , INTENT(IN), OPTIONAL :: freqs_over    ! [Hz] Frequencies below this are never filtered
+    LOGICAL             , ALLOCATABLE          :: mask(:)       ! [-] Frequency mask (Nfreqs), .true. to keep
+
+    ! Local variables
+    CHARACTER(len=20), ALLOCATABLE :: keys(:)
+    REAL(WP)         , ALLOCATABLE :: freqs_amp(:,:)
+    REAL(WP)         , ALLOCATABLE :: freqs_to_use(:)
+    REAL(WP)         , ALLOCATABLE :: tmp_signal(:)
+    REAL(WP)                       :: rpm, freqs_over_
+
+
+    freqs_over_ = 10.0_WP ; if (present(freqs_over)) freqs_over_ = freqs_over
+
+    ! Read rpm at current wind speed
+    rpm = read_curve(self % path_rpm, self % WindSpeed)
+
+    ! Generate drivetrain excitation spectrum
+    CALL self % excitation_spectrum(rpm=rpm, freqs_amp=freqs_amp, keys=keys)
+
+    ! Get allowed frequencies
+    CALL generate_timeseries_banded_sines(peaks=freqs_amp, keys=keys, t=self % Time, &
+                                          zeta=0.02_WP, used_freqs=.true., a=tmp_signal, &
+                                          freqs_out=freqs_to_use)
+
+    ! Build mask
+    mask = filter_non_useful_freqs(self % Freqs, freqs_to_use, freqs_over_)
+
+    DEALLOCATE(tmp_signal)
+
+    DEALLOCATE(freqs_amp, keys, freqs_to_use)
+
+END FUNCTION filter_frequencies
+
+
 SUBROUTINE turbine_to_source(self, config, sources)
     ! -------------------------------------------------------------------------
     ! Translates the physical turbine (nodes + nodal forces) into the abstract
@@ -400,6 +458,9 @@ SUBROUTINE turbine_to_source(self, config, sources)
     ! Copy coordinates and active frequencies
     sources % xyz   = self % xyz
     sources % Freqs = self % Freqs
+
+    ! Every node radiates as a point dipole
+    ALLOCATE(sources % order(size(sources % xyz, 1)), source=SOURCE_DIPOLE)
 
     ! Radiation-impedance correction of the forces; the turbine forces are consumed
     sources % Force = self % get_impedance_corrected_force(config % env % speed_sound_base)
@@ -478,5 +539,52 @@ SUBROUTINE write_turbine_txt(turbine, unit)
     write(unit, *)
 
 END SUBROUTINE write_turbine_txt
+
+
+SUBROUTINE save_params_turbine(self, save_path)
+    ! -------------------------------------------------------------------------
+    ! Emitter_t % save_params of a single turbine: saves its generic
+    ! parameters (save_turbine_params) and then its type-specific ones
+    ! (save_specific_params) into the HDF5 output file.
+    ! -------------------------------------------------------------------------
+
+    CLASS(WindTurbine_t), INTENT(IN) :: self         ! [-] Turbine instance
+    CHARACTER(len=*)    , INTENT(IN) :: save_path    ! [-] Path to the HDF5 output file
+
+
+    CALL save_turbine_params(self, save_path)
+    CALL self % save_specific_params(save_path)
+
+END SUBROUTINE save_params_turbine
+
+
+SUBROUTINE write_txt_turbine(self, unit)
+    ! -------------------------------------------------------------------------
+    ! Emitter_t % write_txt of a single turbine: writes its generic and
+    ! type-specific blocks of the .dat summary file (write_turbine_txt).
+    ! -------------------------------------------------------------------------
+
+    CLASS(WindTurbine_t), INTENT(IN) :: self    ! [-] Turbine instance
+    INTEGER(I32)        , INTENT(IN) :: unit    ! [-] Unit of the open .dat file
+
+
+    CALL write_turbine_txt(self, unit)
+
+END SUBROUTINE write_txt_turbine
+
+
+FUNCTION get_enbw_turbine(self) RESULT(enbw)
+    ! -------------------------------------------------------------------------
+    ! Emitter_t % get_enbw of a single turbine: its forces come from
+    ! compute_rfft, so their window is the Hann window (HANN_ENBW).
+    ! -------------------------------------------------------------------------
+
+    CLASS(WindTurbine_t), INTENT(IN) :: self    ! [-] Turbine instance
+    REAL(WP)                         :: enbw    ! [-] Equivalent noise bandwidth in bins
+
+
+    enbw = HANN_ENBW
+
+END FUNCTION get_enbw_turbine
 
 END MODULE WindTurbine

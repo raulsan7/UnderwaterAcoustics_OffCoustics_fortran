@@ -2,7 +2,8 @@
 ! MODULE: SignalProcessing
 ! ===============================================================================
 ! Defines the signal-processing helpers: the FFTW-based real FFT of the
-! nodal time series, with mean removal and Hann windowing (compute_rfft).
+! nodal time series, with mean removal and Hann windowing (compute_rfft),
+! and the equivalent noise bandwidth of that window (HANN_ENBW).
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -19,7 +20,15 @@ USE, INTRINSIC :: iso_c_binding, ONLY: C_INT, C_PTR, c_associated
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: compute_rfft
+PUBLIC :: compute_rfft, HANN_ENBW
+
+
+! ===============================================================================
+! WINDOW CONSTANTS
+! Equivalent noise bandwidth (ENBW), in bins, of the Hann window applied by
+! compute_rfft: N*sum(w^2)/sum(w)^2, which tends to 1.5 for large N
+! ===============================================================================
+REAL(WP), PARAMETER :: HANN_ENBW = 1.5_WP    ! [-] ENBW of the Hann window of compute_rfft, in bins
 
 
 CONTAINS

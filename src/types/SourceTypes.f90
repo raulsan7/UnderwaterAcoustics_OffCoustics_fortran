@@ -3,9 +3,10 @@
 ! ===============================================================================
 ! Defines the source representation handed from an emitter (a wind turbine,
 ! a wind farm or hand-made sources) to an acoustic solver: the point sources
-! with their coordinates, complex forces and frequency vector
-! (AcousticSource_t), and the reference geometry and output labels of the
-! emitter (GeometricData_t).
+! with their coordinates, complex forces, frequency vector and multipole
+! order (AcousticSource_t, labelled with SOURCE_MONOPOLE, SOURCE_DIPOLE, ...),
+! and the reference geometry and output labels of the emitter
+! (GeometricData_t).
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -15,12 +16,20 @@
 ! ===============================================================================
 MODULE SourceTypes
 
-USE Kinds, ONLY: WP
+USE Kinds, ONLY: I32, WP
 
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: GeometricData_t, AcousticSource_t
+PUBLIC :: GeometricData_t, AcousticSource_t, SOURCE_MONOPOLE, SOURCE_DIPOLE
+
+
+! ===============================================================================
+! MULTIPOLE ORDER LABELS
+! A label per source, so that higher orders can be added later without new arrays
+! ===============================================================================
+INTEGER(I32), PARAMETER :: SOURCE_MONOPOLE = 0_I32    ! [-] Monopole source (order 0)
+INTEGER(I32), PARAMETER :: SOURCE_DIPOLE   = 1_I32    ! [-] Dipole source (order 1)
 
 
 TYPE :: GeometricData_t
@@ -45,15 +54,16 @@ TYPE :: AcousticSource_t
     ! -------------------------------------------------------------------------
     ! Abstract representation of the acoustic excitation produced by a wind
     ! turbine: a set of point sources with their coordinates, complex nodal
-    ! forces per frequency, and the associated frequency vector. This is the
-    ! hand-off object between WindTurbine_t % turbine_to_source and the
-    ! acoustic solvers.
+    ! forces per frequency, the associated frequency vector and the multipole
+    ! order of every source. This is the hand-off object between
+    ! Emitter_t % to_source and the acoustic solvers.
     ! -------------------------------------------------------------------------
 
-    REAL(WP)   , ALLOCATABLE :: xyz(:,:)        ! [m] Acoustic source coordinates (Nsources, 3)
-    COMPLEX(WP), ALLOCATABLE :: Force(:,:,:)    ! [N] Complex source forces (Nfreqs, Nsources, 3)
-    REAL(WP)   , ALLOCATABLE :: Freqs(:)        ! [Hz] Frequency vector (Nfreqs)
-    TYPE(GeometricData_t)    :: geometry        ! [-] Reference geometry and labels of the emitter
+    REAL(WP)    , ALLOCATABLE :: xyz(:,:)        ! [m] Acoustic source coordinates (Nsources, 3)
+    COMPLEX(WP) , ALLOCATABLE :: Force(:,:,:)    ! [N] Complex source forces (Nfreqs, Nsources, 3)
+    REAL(WP)    , ALLOCATABLE :: Freqs(:)        ! [Hz] Frequency vector (Nfreqs)
+    INTEGER(I32), ALLOCATABLE :: order(:)        ! [-] Multipole order per source (SOURCE_MONOPOLE, SOURCE_DIPOLE, ...)
+    TYPE(GeometricData_t)     :: geometry        ! [-] Reference geometry and labels of the emitter
 
 END TYPE AcousticSource_t
 

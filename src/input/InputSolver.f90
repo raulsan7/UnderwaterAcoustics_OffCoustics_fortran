@@ -31,8 +31,9 @@ SUBROUTINE read_solver_config(path, config)
     ! -------------------------------------------------------------------------
     ! Reads the "solver_config" namelist from Solver.nml (simulation type,
     ! which acoustic solver method to use, output save path and its optional
-    ! extra label, block size, cluster/debug flags and whether an existing
-    ! output file is updated) and packs the values into config % solver.
+    ! extra label, block size, cluster/debug flags, whether an existing
+    ! output file is updated and the observer masking distance) and packs the
+    ! values into config % solver.
     ! Strings are read into long buffers and rejected when they do not fit in
     ! Config_Solver_t, so a long save_path is never cut.
     ! -------------------------------------------------------------------------
@@ -53,6 +54,7 @@ SUBROUTINE read_solver_config(path, config)
     LOGICAL             :: in_cluster
     LOGICAL             :: debug
     LOGICAL             :: update_existing
+    REAL(WP)            :: mask_distance
 
     ! --- 1. Configuration namelist --- !
     NAMELIST /solver_config/    &
@@ -63,7 +65,8 @@ SUBROUTINE read_solver_config(path, config)
         block_size,             &
         in_cluster,             &
         debug,                  &
-        update_existing
+        update_existing,        &
+        mask_distance
 
 
     ! --- 2. Defaults --- !
@@ -75,6 +78,7 @@ SUBROUTINE read_solver_config(path, config)
     in_cluster      = .true.
     debug           = .false.
     update_existing = .true.
+    mask_distance   = 5.0_WP
 
     ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
@@ -98,6 +102,7 @@ SUBROUTINE read_solver_config(path, config)
     CALL check_fits(method, config % solver % method, 'method')
     CALL check_fits(save_path, config % solver % save_path, 'save_path')
     CALL check_fits(extra_label, config % solver % extra_label, 'extra_label')
+    if (mask_distance < 0.0_WP) error stop "read_solver_config(): mask_distance must be >= 0 (0 = no masking)"
 
     ! --- 5. Pack values into Config_t --- !
     config % solver % simulation_type = trim(simulation_type)
@@ -108,6 +113,7 @@ SUBROUTINE read_solver_config(path, config)
     config % solver % in_cluster      = in_cluster
     config % solver % debug           = debug
     config % solver % update_existing = update_existing
+    config % solver % mask_distance   = mask_distance
 
 END SUBROUTINE read_solver_config
 

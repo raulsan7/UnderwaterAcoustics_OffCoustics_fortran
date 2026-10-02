@@ -4,7 +4,7 @@
 ! Defines SAITEC2MWFloating_t, a concrete turbine type extending the abstract
 ! WindTurbine_t (src/emitters/WindTurbine.f90) for the SAITEC SENVION 2 MW floating
 ! platform (SATH dual-hull concrete technology). It implements the deferred
-! procedures: compute_force, compute_mass, filter_frequencies,
+! procedures: compute_force, compute_mass, excitation_spectrum,
 ! save/write_specific_params and get_impedance_corrected_force, treating the
 ! twin horizontal elliptical concrete hulls as the only structural members
 ! that generate acoustic point-dipole sources; the virtual rigid-link "joint"
@@ -64,7 +64,7 @@ TYPE, EXTENDS(WindTurbine_t) :: SAITEC2MWFloating_t
     ! --- Deferred (abstract) procedures --- !
     PROCEDURE :: compute_force                 => compute_force_SAITEC2MWFloating
     PROCEDURE :: compute_mass                  => compute_mass_SAITEC2MWFloating
-    PROCEDURE :: filter_frequencies            => filter_frequencies_SAITEC2MWFloating
+    PROCEDURE :: excitation_spectrum           => excitation_spectrum_SAITEC2MWFloating
     PROCEDURE :: save_specific_params          => save_specific_params_SAITEC2MWFloating
     PROCEDURE :: write_specific_params_txt     => write_specific_params_txt_SAITEC2MWFloating
     PROCEDURE :: get_impedance_corrected_force => get_impedance_corrected_force_SAITEC2MWFloating
@@ -602,54 +602,24 @@ SUBROUTINE compute_mass_SAITEC2MWFloating(self, mass, added_mass)
 END SUBROUTINE compute_mass_SAITEC2MWFloating
 
 
-FUNCTION filter_frequencies_SAITEC2MWFloating(self, freqs_over) RESULT(mask)
+SUBROUTINE excitation_spectrum_SAITEC2MWFloating(self, rpm, freqs_amp, keys)
     ! -------------------------------------------------------------------------
-    ! Builds a mask that keeps only the computed frequencies lying close to the
-    ! SAITEC 2 MW drivetrain excitation peaks (rotor-bearing and gearbox bar-
-    ! chart harmonics at the rpm corresponding to the current wind speed), so
-    ! downstream force arrays can be trimmed to the physically relevant
-    ! spectral content.
+    ! Builds the SAITEC 2 MW drivetrain excitation spectrum (rotor-bearing and
+    ! gearbox bar-chart harmonics) at the given rotor speed, capped at the
+    ! maximum resolved frequency, used by filter_frequencies.
     ! -------------------------------------------------------------------------
 
-    USE CSVReader, ONLY: read_curve
-    USE DrivetrainExcitation, ONLY: generate_timeseries_banded_sines, filter_non_useful_freqs
-
-    CLASS(SAITEC2MWFloating_t), INTENT(INOUT)        :: self          ! [-] Turbine instance
-    REAL(WP)                  , INTENT(IN), OPTIONAL :: freqs_over    ! [Hz] Frequencies below this are never filtered
-    LOGICAL                   , ALLOCATABLE          :: mask(:)       ! [-] Frequency mask (Nfreqs), .true. to keep
-
-    ! Local variables
-    CHARACTER(len=20), ALLOCATABLE :: keys(:)
-    REAL(WP)         , ALLOCATABLE :: freqs_amp(:,:)
-    REAL(WP)         , ALLOCATABLE :: freqs_to_use(:)
-    REAL(WP)                       :: rpm, freqs_over_
-
-    REAL(WP), ALLOCATABLE :: tmp_signal(:)
+    CLASS(SAITEC2MWFloating_t), INTENT(IN)               :: self              ! [-] Turbine instance
+    REAL(WP)                  , INTENT(IN)               :: rpm               ! [rpm] Rotor speed
+    REAL(WP)                  , INTENT(OUT), ALLOCATABLE :: freqs_amp(:,:)    ! [-] Peaks (N, 2): freq [Hz], amplitude
+    CHARACTER(len=20)         , INTENT(OUT), ALLOCATABLE :: keys(:)           ! [-] Peak labels (N)
 
 
-    freqs_over_ = 10.0_WP ; if (present(freqs_over)) freqs_over_ = freqs_over
-
-    ! Read rpm at current wind speed
-    rpm = read_curve(self % path_rpm, self % WindSpeed)
-
-    ! Generate drivetrain excitation spectrum, capped at the max resolved frequency
     CALL drivetrain2MW_excitation_spectrum(rpm=rpm, path_barRB=self % path_barRB, path_barGB=self % path_barGB, &
                                            fmax=maxval(self % Freqs), Normalised=.false., &
                                            freqs_amp=freqs_amp, keys=keys)
 
-    ! Get allowed frequencies
-    CALL generate_timeseries_banded_sines(peaks=freqs_amp, keys=keys, t=self % Time, &
-                                          zeta=0.02_WP, used_freqs=.true., a=tmp_signal, &
-                                          freqs_out=freqs_to_use)
-
-    ! Build mask
-    mask = filter_non_useful_freqs(self % Freqs, freqs_to_use, freqs_over_)
-
-    DEALLOCATE(tmp_signal)
-
-    DEALLOCATE(freqs_amp, keys, freqs_to_use)
-
-END FUNCTION filter_frequencies_SAITEC2MWFloating
+END SUBROUTINE excitation_spectrum_SAITEC2MWFloating
 
 
 SUBROUTINE save_specific_params_SAITEC2MWFloating(self, save_path, istr)

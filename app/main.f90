@@ -20,16 +20,16 @@ PROGRAM main
 
 USE Kinds
 USE omp_lib
+USE Emitter, ONLY: Emitter_t
 USE WindFarm, ONLY: WindFarm_t
 USE ConfigTypes, ONLY: Config_t
 USE Timing, ONLY: format_elapsed
-USE ImageMethod, ONLY: ImageMethod_t
+USE SolverFactory, ONLY: new_solver
 USE WindTurbine, ONLY: WindTurbine_t
 USE TurbineFactory, ONLY: new_turbine
 USE SourceTypes, ONLY: AcousticSource_t
 USE Args_parser, ONLY: read_input_files
 USE AcousticSolver, ONLY: AcousticSolver_t
-USE AnalyticalNormalModes, ONLY: AnalyticalNormalModes_t
 
 IMPLICIT NONE
 
@@ -38,6 +38,7 @@ TYPE(AcousticSource_t) , ALLOCATABLE :: active_sources
 TYPE(WindFarm_t)       , ALLOCATABLE :: active_farm
 CLASS(WindTurbine_t)   , ALLOCATABLE :: active_turbine
 CLASS(AcousticSolver_t), ALLOCATABLE :: active_solver
+CLASS(Emitter_t)       , ALLOCATABLE :: active_emitter
 
 REAL(WP)         :: start_time, elapsed_display
 CHARACTER(len=8) :: tag
@@ -63,7 +64,7 @@ CHARACTER(len=8) :: tag
 
         ! --- 4. Translate physical forces to mathematical acoustic sources --- !
         write(*,*) ">> Translating physical forces to mathematical acoustic sources..."
-        CALL active_turbine % turbine_to_source(config, active_sources)
+        CALL active_turbine % to_source(config, active_sources)
 
     CASE ('farm')
         ! --- 2. Wind farm instance: one polymorphic turbine per &turbine block --- !
@@ -77,29 +78,24 @@ CHARACTER(len=8) :: tag
 
         ! --- 4. Merge every turbine into a single set of acoustic sources --- !
         write(*,*) ">> Merging every turbine into a single set of acoustic sources..."
-        CALL active_farm % farm_to_source(config, active_sources)
+        CALL active_farm % to_source(config, active_sources)
     END SELECT
 
     ! --- 5. Execute generic solver --- !
-    SELECT CASE (trim(config % solver % method))
-    CASE ("ImageMethod")
-        ALLOCATE(ImageMethod_t :: active_solver)
-    CASE ("AnalyticalNormalModes")
-        ALLOCATE(AnalyticalNormalModes_t :: active_solver)
-    END SELECT
+    CALL new_solver(trim(config % solver % method), active_solver)
     write(*,*) ">> Launching acoustic propagation solver: ", trim(config % solver % method)
 
     ! --- 6. Set acoustic solver (init frees config: active_farm tells both paths apart) --- !
     CALL active_solver % init(active_sources, config)
     if (ALLOCATED(active_farm)) then
-        CALL active_solver % save_parameters(farm=active_farm)
+        CALL MOVE_ALLOC(active_farm, active_emitter)
     else
-        CALL active_solver % save_parameters(turbine=active_turbine)
+        CALL MOVE_ALLOC(active_turbine, active_emitter)
     end if
+    CALL active_solver % save_parameters(active_emitter)
 
     ! --- 7. Run acoustic propagation --- !
-    if (ALLOCATED(active_turbine)) DEALLOCATE(active_turbine)    ! Memory cleanup
-    if (ALLOCATED(active_farm))    DEALLOCATE(active_farm)
+    DEALLOCATE(active_emitter)    ! Memory cleanup
     CALL active_solver % run()
     CALL active_solver % update_parameters()
 

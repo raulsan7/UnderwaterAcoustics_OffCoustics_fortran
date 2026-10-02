@@ -1,12 +1,12 @@
 ! ===============================================================================
 ! MODULE: WindFarm
 ! ===============================================================================
-! Defines WindFarm_t, a container of wind turbines of any type placed at
-! arbitrary positions and operating points. It builds every turbine from its
-! own configuration, computes their forces one after another and merges all
-! of them into a single AcousticSource_t, relying on the linearity of the
-! Helmholtz equation: the farm field is the coherent superposition of the
-! fields radiated by every turbine.
+! Defines WindFarm_t, an extension of Emitter_t that contains wind turbines
+! of any type placed at arbitrary positions and operating points. It builds
+! every turbine from its own configuration, computes their forces one after
+! another and merges all of them into a single AcousticSource_t, relying on
+! the linearity of the Helmholtz equation: the farm field is the coherent
+! superposition of the fields radiated by every turbine.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -17,11 +17,13 @@
 MODULE WindFarm
 
 USE Kinds
+USE Emitter, ONLY: Emitter_t
 USE StringUtils, ONLY: to_upper
 USE HDF5Utils, ONLY: save_variable
 USE TurbineFactory, ONLY: new_turbine
-USE SourceTypes, ONLY: AcousticSource_t
+USE SignalProcessing, ONLY: HANN_ENBW
 USE ConfigTypes, ONLY: Config_WindFarm_t, Config_t
+USE SourceTypes, ONLY: AcousticSource_t, SOURCE_DIPOLE
 USE WindTurbine, ONLY: WindTurbine_t, save_turbine_params, write_turbine_txt
 
 IMPLICIT NONE
@@ -41,7 +43,7 @@ TYPE :: TurbineSlot_t
 END TYPE TurbineSlot_t
 
 
-TYPE :: WindFarm_t
+TYPE, EXTENDS(Emitter_t) :: WindFarm_t
     ! -------------------------------------------------------------------------
     ! Container of heterogeneous wind turbines. Turbine i owns the sources
     ! src_offset(i)+1 : src_offset(i+1) of the merged AcousticSource_t, so the
@@ -58,9 +60,10 @@ TYPE :: WindFarm_t
     ! --- Public type-bound procedures --- !
     PROCEDURE :: init           => init_WindFarm                ! Allocates and initializes every turbine
     PROCEDURE :: compute_forces => compute_forces_WindFarm      ! Reads OpenFAST outputs and computes forces
-    PROCEDURE :: farm_to_source => farm_to_source_WindFarm      ! Merges every turbine into one source set
+    PROCEDURE :: to_source      => farm_to_source_WindFarm      ! Merges every turbine into one source set
     PROCEDURE :: save_params    => save_params_WindFarm         ! Farm and per-turbine parameters -> HDF5
     PROCEDURE :: write_txt      => write_txt_WindFarm           ! Farm and per-turbine blocks of the .dat
+    PROCEDURE :: get_enbw       => get_enbw_WindFarm            ! Hann window of compute_rfft (HANN_ENBW)
 
 END TYPE WindFarm_t
 
@@ -187,10 +190,11 @@ SUBROUTINE farm_to_source_WindFarm(self, config, sources)
     ALLOCATE(sources)
     ALLOCATE(sources % xyz (Ns, 3), sources % Force(nf, Ns, 3), sources % Freqs(nf))
     sources % Force = (0.0_WP, 0.0_WP)
+    ALLOCATE(sources % order(Ns), source=SOURCE_DIPOLE)    ! Every source radiates as a point dipole
 
     ! --- 4. Scatter every turbine into the farm arrays --- !
     do i = 1, self % Nturbines
-        CALL self % turbines(i) % wt % turbine_to_source(config, src_i)
+        CALL self % turbines(i) % wt % to_source(config, src_i)
 
         off   = self % src_offset(i)
         n_i   = size(src_i % xyz, 1)
@@ -301,6 +305,21 @@ SUBROUTINE write_txt_WindFarm(self, unit)
     end do
 
 END SUBROUTINE write_txt_WindFarm
+
+
+FUNCTION get_enbw_WindFarm(self) RESULT(enbw)
+    ! -------------------------------------------------------------------------
+    ! Emitter_t % get_enbw of a wind farm: the forces of every turbine come
+    ! from compute_rfft, so their window is the Hann window (HANN_ENBW).
+    ! -------------------------------------------------------------------------
+
+    CLASS(WindFarm_t), INTENT(IN) :: self    ! [-] Farm instance
+    REAL(WP)                      :: enbw    ! [-] Equivalent noise bandwidth in bins
+
+
+    enbw = HANN_ENBW
+
+END FUNCTION get_enbw_WindFarm
 
 
 ! ===============================================================================

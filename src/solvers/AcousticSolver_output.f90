@@ -5,8 +5,8 @@
 ! path (resolve_save_path), the update of an existing output of the same
 ! case (check_update, then update_parameters with the merge of the
 ! previous .dat), the .dat block of every post-processing step that ran
-! (update_parameters), and the emitter blocks of the HDF5 and .dat outputs
-! (save_emitter_params, write_emitter_txt).
+! (update_parameters), and the datasets shared by every solver
+! (save_shared_parameters).
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -17,8 +17,7 @@
 SUBMODULE (AcousticSolver) AcousticSolver_output
 
 USE StringUtils, ONLY: to_upper
-USE HDF5Utils, ONLY: read_hdf5_real_1d
-USE WindTurbine, ONLY: save_turbine_params, write_turbine_txt
+USE HDF5Utils, ONLY: save_variable, read_hdf5_real_1d
 USE FileUtils, ONLY: read_full_line, swap_extension, ensure_parent_dir, move_text_file, delete_file
 
 IMPLICIT NONE
@@ -97,7 +96,7 @@ MODULE SUBROUTINE resolve_save_path(self, method_tag)
 END SUBROUTINE resolve_save_path
 
 
-MODULE SUBROUTINE check_update(self, turbine, farm)
+MODULE SUBROUTINE check_update(self, emitter)
     ! -------------------------------------------------------------------------
     ! Called by save_parameters before anything is written. If resolve_save_path
     ! kept an existing output file (update_existing), it is updated only if it
@@ -108,9 +107,8 @@ MODULE SUBROUTINE check_update(self, turbine, farm)
     ! .dat.prev are deleted with a warning and the output is rebuilt.
     ! -------------------------------------------------------------------------
 
-    CLASS(AcousticSolver_t), INTENT(IN)           :: self       ! [-] Solver instance
-    CLASS(WindTurbine_t)   , INTENT(IN), OPTIONAL :: turbine    ! [-] Turbine instance (optional)
-    TYPE(WindFarm_t)       , INTENT(IN), OPTIONAL :: farm       ! [-] Wind farm instance (optional)
+    CLASS(AcousticSolver_t), INTENT(IN) :: self       ! [-] Solver instance
+    CLASS(Emitter_t)       , INTENT(IN) :: emitter    ! [-] Emitter that produced the sources
 
     ! Local variables
     CHARACTER(len=:), ALLOCATABLE :: dat_path, prev_path, reason
@@ -141,7 +139,7 @@ MODULE SUBROUTINE check_update(self, turbine, farm)
         if (.not. prev_exists) then
             reason = 'no previous .dat to compare with'
         else
-            CALL self % write_txt_summary(turbine, farm)
+            CALL self % write_txt_summary(emitter)
             CALL compare_dat_headers(dat_path, prev_path, reason)
         end if
     end if
@@ -434,43 +432,30 @@ END SUBROUTINE update_parameters
 
 
 ! ===============================================================================
-! EMITTER BLOCKS OF THE OUTPUTS
+! DATASETS SHARED BY EVERY SOLVER
 ! ===============================================================================
-MODULE SUBROUTINE save_emitter_params(save_path, turbine, farm)
+MODULE SUBROUTINE save_shared_parameters(self, emitter)
     ! -------------------------------------------------------------------------
-    ! Saves the parameters of whatever produced the sources into the HDF5
-    ! output file. Nothing is saved for hand-made sources.
-    ! -------------------------------------------------------------------------
-
-    CHARACTER(len=*)    , INTENT(IN)           :: save_path    ! [-] Path to the HDF5 output file
-    CLASS(WindTurbine_t), INTENT(IN), OPTIONAL :: turbine      ! [-] Turbine instance (optional)
-    TYPE(WindFarm_t)    , INTENT(IN), OPTIONAL :: farm         ! [-] Wind farm instance (optional)
-
-
-    if (present(turbine)) then
-        CALL save_turbine_params(turbine, save_path)
-        CALL turbine % save_specific_params(save_path)
-    end if
-
-    if (present(farm)) CALL farm % save_params(save_path)
-
-END SUBROUTINE save_emitter_params
-
-
-MODULE SUBROUTINE write_emitter_txt(unit, turbine, farm)
-    ! -------------------------------------------------------------------------
-    ! Writes the block of whatever produced the sources into the .dat
-    ! summary file. Nothing is written for hand-made sources.
+    ! Writes the datasets shared by every solver, called by each solver's
+    ! save_parameters right after its own datasets: the solver name (Method,
+    ! from get_name) and, only when the emitter forces come from a windowed
+    ! FFT (get_enbw > 0), the equivalent noise bandwidth of that window in
+    ! bins (ENBW). Neither is written in the .dat summary.
     ! -------------------------------------------------------------------------
 
-    INTEGER(I32)        , INTENT(IN)           :: unit       ! [-] Unit of the open .dat file
-    CLASS(WindTurbine_t), INTENT(IN), OPTIONAL :: turbine    ! [-] Turbine instance (optional)
-    TYPE(WindFarm_t)    , INTENT(IN), OPTIONAL :: farm       ! [-] Wind farm instance (optional)
+    CLASS(AcousticSolver_t), INTENT(IN) :: self       ! [-] Solver instance
+    CLASS(Emitter_t)       , INTENT(IN) :: emitter    ! [-] Emitter that produced the sources
+
+    ! Local variables
+    REAL(WP) :: enbw
 
 
-    if (present(turbine)) CALL write_turbine_txt(turbine, unit)
-    if (present(farm)) CALL farm % write_txt(unit)
+    CALL save_variable(self % save_path, "Method", trim(self % solver_name))
 
-END SUBROUTINE write_emitter_txt
+    ! Window of the forces: only when they come from a windowed FFT
+    enbw = emitter % get_enbw()
+    if (enbw > 0.0_WP) CALL save_variable(self % save_path, "ENBW", enbw)
+
+END SUBROUTINE save_shared_parameters
 
 END SUBMODULE AcousticSolver_output

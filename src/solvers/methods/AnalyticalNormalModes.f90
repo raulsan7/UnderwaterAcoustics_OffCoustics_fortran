@@ -21,14 +21,13 @@ MODULE AnalyticalNormalModes
 
 USE Kinds
 USE omp_lib
-USE WindFarm, ONLY: WindFarm_t
+USE Emitter, ONLY: Emitter_t
 USE HDF5Utils, ONLY: save_variable
 USE FileUtils, ONLY: swap_extension
-USE WindTurbine, ONLY: WindTurbine_t
-USE SourceTypes, ONLY: AcousticSource_t
+USE AcousticSolver, ONLY: AcousticSolver_t
 USE SpecialFunctions, ONLY: compute_hankel_complex
+USE SourceTypes, ONLY: AcousticSource_t, SOURCE_DIPOLE
 USE ConfigTypes, ONLY: Config_AnalyticalNormalModes_t, Config_t
-USE AcousticSolver, ONLY: AcousticSolver_t, save_emitter_params, write_emitter_txt
 
 IMPLICIT NONE
 
@@ -101,6 +100,12 @@ SUBROUTINE init_AnalyticalNormalModes(self, sources, config)
     CALL MOVE_ALLOC(sources % xyz  , self % sources % xyz)
     CALL MOVE_ALLOC(sources % Force, self % sources % Force)
     CALL MOVE_ALLOC(sources % Freqs, self % sources % Freqs)
+    CALL MOVE_ALLOC(sources % order, self % sources % order)
+
+    ! Only the dipole kernel is implemented
+    if (any(self % sources % order /= SOURCE_DIPOLE)) &
+        error stop "AnalyticalNormalModes % init(): only dipole sources (order 1) are implemented"
+
     self % sources % geometry = sources % geometry
     self % env                = config % env
     self % run_inputs         = config % run_inputs
@@ -110,6 +115,7 @@ SUBROUTINE init_AnalyticalNormalModes(self, sources, config)
     self % debug              = config % solver % debug
     self % in_cluster         = config % solver % in_cluster
     self % update_existing    = config % solver % update_existing
+    self % mask_distance      = config % solver % mask_distance
 
     ! Child-specific variables
     SELECT TYPE (m => config % method)
@@ -264,22 +270,20 @@ SUBROUTINE compute_pressure_AnalyticalNormalModes(self, observers, block_size, t
 END SUBROUTINE compute_pressure_AnalyticalNormalModes
 
 
-SUBROUTINE save_parameters_AnalyticalNormalModes(self, turbine, farm)
+SUBROUTINE save_parameters_AnalyticalNormalModes(self, emitter)
     ! -------------------------------------------------------------------------
-    ! Saves the solver, environment and generic turbine parameters to the
-    ! HDF5 output file, delegates the turbine-specific parameters to
-    ! turbine % save_specific_params, and triggers the human-readable .dat
-    ! text summary via write_txt_summary. An existing output kept for update is
-    ! checked first (check_update).
+    ! Saves the solver and environment parameters to the HDF5 output file,
+    ! delegates the emitter parameters to emitter % save_params, and triggers
+    ! the human-readable .dat text summary via write_txt_summary. An existing
+    ! output kept for update is checked first (check_update).
     ! -------------------------------------------------------------------------
 
-    CLASS(AnalyticalNormalModes_t), INTENT(IN)           :: self       ! [-] Solver instance
-    CLASS(WindTurbine_t)          , INTENT(IN), OPTIONAL :: turbine    ! [-] Turbine instance (optional)
-    TYPE(WindFarm_t)              , INTENT(IN), OPTIONAL :: farm       ! [-] Wind farm instance (optional)
+    CLASS(AnalyticalNormalModes_t), INTENT(IN) :: self       ! [-] Solver instance
+    CLASS(Emitter_t)              , INTENT(IN) :: emitter    ! [-] Emitter that produced the sources
 
 
     ! Existing output of another case: deleted here, before anything is written
-    CALL self % check_update(turbine, farm)
+    CALL self % check_update(emitter)
 
     ! Solver / environment / generic turbine data -> HDF5
     CALL save_variable(self % save_path, "Nmodes"   , self % Nmodes)
@@ -290,11 +294,14 @@ SUBROUTINE save_parameters_AnalyticalNormalModes(self, turbine, farm)
     CALL save_variable(self % save_path, "Lower_HBC", self % Lower_HBC)
     CALL save_variable(self % save_path, "p_ref"    , self % env % reference_pressure)
 
+    ! Datasets shared by every solver (Method, ENBW) -> HDF5
+    CALL self % save_shared_parameters(emitter)
+
     ! Emitter data -> HDF5
-    CALL save_emitter_params(self % save_path, turbine, farm)
+    CALL emitter % save_params(self % save_path)
 
     ! Human-readable .dat summary, delegated to the solver-specific implementation
-    CALL self % write_txt_summary(turbine, farm)
+    CALL self % write_txt_summary(emitter)
 
 END SUBROUTINE save_parameters_AnalyticalNormalModes
 
@@ -319,17 +326,16 @@ SUBROUTINE build_save_path_AnalyticalNormalModes(self)
 END SUBROUTINE build_save_path_AnalyticalNormalModes
 
 
-SUBROUTINE write_txt_summary_AnalyticalNormalModes(self, turbine, farm)
+SUBROUTINE write_txt_summary_AnalyticalNormalModes(self, emitter)
     ! -------------------------------------------------------------------------
     ! Writes a plain-text (.dat) summary next to the HDF5 output, mirroring
-    ! the saved turbine, environment and Analytical Normal Modes solver
+    ! the saved emitter, environment and Analytical Normal Modes solver
     ! parameters in a human-readable form for quick inspection without
     ! opening the HDF5 file.
     ! -------------------------------------------------------------------------
 
-    CLASS(AnalyticalNormalModes_t), INTENT(IN)           :: self       ! [-] Solver instance
-    CLASS(WindTurbine_t)          , INTENT(IN), OPTIONAL :: turbine    ! [-] Turbine instance (optional)
-    TYPE(WindFarm_t)              , INTENT(IN), OPTIONAL :: farm       ! [-] Wind farm instance (optional)
+    CLASS(AnalyticalNormalModes_t), INTENT(IN) :: self       ! [-] Solver instance
+    CLASS(Emitter_t)              , INTENT(IN) :: emitter    ! [-] Emitter that produced the sources
 
     ! Local variables
     CHARACTER(len=:), ALLOCATABLE :: dat_path
@@ -346,7 +352,7 @@ SUBROUTINE write_txt_summary_AnalyticalNormalModes(self, turbine, farm)
     write(u, '(A)') 'HDF5 file: ' // trim(self % save_path)
     write(u, *)
 
-    CALL write_emitter_txt(u, turbine, farm)
+    CALL emitter % write_txt(u)
 
     write(u, '(A)') repeat('-', 70)
     write(u, '(A)') 'ENVIRONMENT'

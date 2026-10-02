@@ -106,6 +106,7 @@ TYPE :: Config_Solver_t
     CHARACTER(len=50)  :: method            ! [-] Acoustic method to use
     CHARACTER(len=20)  :: simulation_type   ! [-] turbine (Turbine.nml) or farm (WindFarm.nml)
     INTEGER(I32)       :: block_size        ! [-] Block size for each CPU in parallel computations
+    REAL(WP)           :: mask_distance     ! [m] Observers closer than this to a source node get NaN (0: none)
 
 END TYPE Config_Solver_t
 

@@ -38,7 +38,8 @@ MODULE SUBROUTINE run_spectrums(self)
     ! Local variables
     COMPLEX(WP) , ALLOCATABLE :: p(:,:)
     REAL(WP)    , ALLOCATABLE :: observers_(:,:)
-    INTEGER(I32)              :: bs
+    REAL(WP)                  :: z_top, z_bot
+    INTEGER(I32)              :: bs, i
 
 
     write(*, '(A)') '>> [Spectrums] computing pressure at observer points...'
@@ -49,7 +50,11 @@ MODULE SUBROUTINE run_spectrums(self)
             ALLOCATE(observers_(3, 3))
             observers_(:, 1) = [10.0_WP, 250.0_WP, 500.0_WP]
             observers_(:, 2) = 0.0_WP
-            observers_(:, 3) = -self % env % depth_base  / 2.0_WP
+            do i = 1, 3
+                z_top            = self % z_surface(observers_(i, 1), observers_(i, 2))
+                z_bot            = self % z_seabed(observers_(i, 1), observers_(i, 2))
+                observers_(i, 3) = 0.5_WP * (z_top + z_bot)    ! Mid-depth at every default point
+            end do
         else
             ALLOCATE(observers_(pp % n_observers, 3))
             observers_(:, 1) = pp % observers_x
@@ -91,19 +96,22 @@ MODULE SUBROUTINE run_polar(self)
     ! Local variables
     COMPLEX(WP) , ALLOCATABLE :: p(:,:)
     REAL(WP)    , ALLOCATABLE :: observers(:,:), theta_deg_polar(:)
-    REAL(WP)                  :: r, z, center(2), theta_deg, theta_rad, d_theta, Depth
+    REAL(WP)                  :: r, z, center(2), theta_deg, theta_rad, d_theta, z_top, z_bot
     INTEGER(I32)              :: n_theta, bs, i
 
 
-    Depth = self % env % depth_base
-    bs    = self % block_size
+    bs = self % block_size
 
     ! Defaults (resolved once, persisted back into run_inputs)
     associate(pp => self % run_inputs % params_polar)
         if (pp % r_polar == DEFAULT_R) pp % r_polar = 500.0_WP
-        if (pp % z_polar == DEFAULT_R) pp % z_polar = -Depth / 2.0_WP
         if (pp % n_polar == DEFAULT_I) pp % n_polar = 72_I32
         if (all(pp % center_polar == DEFAULT_R)) pp % center_polar = self % sources % geometry % center
+
+        ! Water column at the circle centre
+        z_top = self % z_surface(pp % center_polar(1), pp % center_polar(2))
+        z_bot = self % z_seabed(pp % center_polar(1), pp % center_polar(2))
+        if (pp % z_polar == DEFAULT_R) pp % z_polar = 0.5_WP * (z_top + z_bot)
 
         r       = pp % r_polar
         z       = pp % z_polar
@@ -152,9 +160,9 @@ MODULE SUBROUTINE run_cylinder(self)
     ! n_cyl azimuth points x nz_cyl depth levels) around the turbine
     ! barycenter. Saves the reshaped pressure/observer grids and the cylinder
     ! geometry metadata to the solver's HDF5 file. The depth levels include
-    ! both ends (z = -Depth and z = 0), so dA_cylinder is the area of an
-    ! interior cell: a surface integral must weight the first and last
-    ! levels by 1/2 (trapezoid rule).
+    ! both ends (z_seabed and z_surface at the axis, z = -Depth and z = 0 by
+    ! default), so dA_cylinder is the area of an interior cell: a surface
+    ! integral must weight the first and last levels by 1/2 (trapezoid rule).
     ! -------------------------------------------------------------------------
 
     CLASS(AcousticSolver_t), INTENT(INOUT) :: self    ! [-] Solver instance
@@ -162,7 +170,7 @@ MODULE SUBROUTINE run_cylinder(self)
     ! Local variables
     COMPLEX(WP) , ALLOCATABLE :: p(:,:)
     REAL(WP)    , ALLOCATABLE :: observers(:,:)
-    REAL(WP)                  :: r, center(2), theta_rad, d_theta, z_val, dz, Depth
+    REAL(WP)                  :: r, center(2), theta_rad, d_theta, z_val, dz, z_top, z_bot
     INTEGER(I32)              :: n_theta, nz, bs, i, j, idx, Nobs
 
     REAL(WP)   , ALLOCATABLE :: theta_deg_arr(:)
@@ -172,8 +180,7 @@ MODULE SUBROUTINE run_cylinder(self)
     REAL(WP)                 :: dA
 
 
-    Depth = self % env % depth_base
-    bs    = self % block_size
+    bs = self % block_size
 
     ! Defaults (resolved once, persisted back into run_inputs)
     associate(pp => self % run_inputs % params_cylinder)
@@ -189,17 +196,21 @@ MODULE SUBROUTINE run_cylinder(self)
         center  = pp % center_cyl
     end associate
 
+    ! Water column at the cylinder axis
+    z_top = self % z_surface(center(1), center(2))
+    z_bot = self % z_seabed(center(1), center(2))
+
     Nobs = n_theta * nz
     ALLOCATE(observers(Nobs, 3))
 
     d_theta = 360.0_WP / real(n_theta, WP)
-    dz      = (0.0_WP - (-Depth)) / max(real(nz - 1_I32, WP), 1.0_WP)
+    dz      = (z_top - z_bot) / max(real(nz - 1_I32, WP), 1.0_WP)
 
     ALLOCATE(theta_deg_arr(n_theta))
     ALLOCATE(z_cylinder(nz))
 
     do j = 1, nz
-        z_cylinder(j) = -Depth + real(j - 1_I32, WP) * dz
+        z_cylinder(j) = z_bot + real(j - 1_I32, WP) * dz
     end do
 
     idx = 1_I32
@@ -268,18 +279,21 @@ MODULE SUBROUTINE run_decay(self)
     REAL(WP)    , ALLOCATABLE :: observers(:,:)
     REAL(WP)    , ALLOCATABLE :: distances(:)
     REAL(WP)                  :: distance(2), z, wind_unit(2), d_val, WindDir_rad
-    REAL(WP)                  :: d_log1, d_log2, d_step, linear_step, Depth
+    REAL(WP)                  :: d_log1, d_log2, d_step, linear_step, z_top, z_bot
     INTEGER(I32)              :: n_points, bs, i
     LOGICAL                   :: logspace
     INTEGER(I32)              :: logspace_int
 
 
-    Depth = self % env % depth_base
-    bs    = self % block_size
+    bs = self % block_size
+
+    ! Water column at the start of the line (turbine axis or mean farm axis)
+    z_top = self % z_surface(self % sources % geometry % origin(1), self % sources % geometry % origin(2))
+    z_bot = self % z_seabed(self % sources % geometry % origin(1), self % sources % geometry % origin(2))
 
     ! Defaults (resolved once, persisted back into run_inputs)
     associate(pp => self % run_inputs % params_decay)
-        if (pp % z_decay == DEFAULT_R)             pp % z_decay        = -Depth / 2.0_WP
+        if (pp % z_decay == DEFAULT_R)             pp % z_decay        = 0.5_WP * (z_top + z_bot)
         if (any(pp % distance_decay == DEFAULT_R)) pp % distance_decay = [10.0_WP, 500.0_WP]
         if (pp % n_decay == DEFAULT_I)             pp % n_decay        = 200_I32
         ! logspace_decay has no sentinel: it is read directly as a LOGICAL from the .nml
@@ -372,20 +386,23 @@ MODULE SUBROUTINE run_line(self)
     REAL(WP)    , ALLOCATABLE :: observers(:,:)
     REAL(WP)    , ALLOCATABLE :: distances(:)
     REAL(WP)                  :: p1(3), p2(3), dir_vec(3), dist_total, d_val
-    REAL(WP)                  :: d_log1, d_log2, d_step, linear_step, Depth
+    REAL(WP)                  :: d_log1, d_log2, d_step, linear_step, z_top, z_bot
     INTEGER(I32)              :: n_points, i, bs
     LOGICAL                   :: logspace
     INTEGER(I32)              :: logspace_int
 
 
-    Depth = self % env % depth_base
-    bs    = self % block_size
+    bs = self % block_size
+
+    ! Water column at the default end points (x, y) = (100, 0) m
+    z_top = self % z_surface(100.0_WP, 0.0_WP)
+    z_bot = self % z_seabed(100.0_WP, 0.0_WP)
 
     ! Defaults (resolved once, persisted back into run_inputs)
     associate(pp => self % run_inputs % params_line)
         ! Per coordinate: only the components left at -999 take the default point's value
-        WHERE (pp % p1_line == DEFAULT_R) pp % p1_line = [100.0_WP, 0.0_WP, 0.0_WP]
-        WHERE (pp % p2_line == DEFAULT_R) pp % p2_line = [100.0_WP, 0.0_WP, -Depth]
+        WHERE (pp % p1_line == DEFAULT_R) pp % p1_line = [100.0_WP, 0.0_WP, z_top]
+        WHERE (pp % p2_line == DEFAULT_R) pp % p2_line = [100.0_WP, 0.0_WP, z_bot]
         ! logspace_line has no sentinel: it is read directly as a LOGICAL from the .nml
 
         p1       = pp % p1_line
@@ -472,19 +489,22 @@ MODULE SUBROUTINE run_sliceXY(self)
     REAL(WP)    , ALLOCATABLE :: observers(:,:)
     REAL(WP)    , ALLOCATABLE :: obs_reshaped(:,:,:)
     REAL(WP)    , ALLOCATABLE :: xs(:), ys(:)
-    REAL(WP)                  :: z, xlim(2), ylim(2), center(2), Depth
+    REAL(WP)                  :: z, xlim(2), ylim(2), center(2), z_top, z_bot
     REAL(WP)                  :: mid_x, mid_y, dx, dy, x_val, y_val
     INTEGER(I32)              :: nx, ny, i, j, idx, bs
     REAL(WP)    , PARAMETER   :: tol = 1.0e-5_WP
 
 
-    Depth = self % env % depth_base
-    bs    = self % block_size
+    bs = self % block_size
+
+    ! Water column at the emitter centre
+    z_top = self % z_surface(self % sources % geometry % center(1), self % sources % geometry % center(2))
+    z_bot = self % z_seabed(self % sources % geometry % center(1), self % sources % geometry % center(2))
 
     ! Defaults (resolved once, persisted back into run_inputs)
     associate(pp => self % run_inputs % params_sliceXY)
-        if (pp % z_xy == DEFAULT_R) pp % z_xy = -Depth / 2.0_WP
-        if (pp % z_xy > 0.0_WP) then
+        if (pp % z_xy == DEFAULT_R) pp % z_xy = 0.5_WP * (z_top + z_bot)
+        if (pp % z_xy > z_top) then
             write(*,*) "AcousticSolver.run_sliceXY(): z must be <= 0. Switching to -z"
             pp % z_xy = -pp % z_xy
         end if
@@ -590,12 +610,11 @@ MODULE SUBROUTINE run_sliceXZ(self)
     REAL(WP)    , ALLOCATABLE :: observers(:,:)
     REAL(WP)    , ALLOCATABLE :: obs_reshaped(:,:,:)
     REAL(WP)    , ALLOCATABLE :: xs(:), zs(:)
-    REAL(WP)                  :: y, xlim(2), zlim(2), dx, dz, x_val, z_val, Depth
+    REAL(WP)                  :: y, xlim(2), zlim(2), dx, dz, x_val, z_val, z_top, z_bot
     INTEGER(I32)              :: nx, nz, i, j, idx, bs
 
 
-    Depth = self % env % depth_base
-    bs    = self % block_size
+    bs = self % block_size
 
     ! Defaults (resolved once, persisted back into run_inputs)
     associate(pp => self % run_inputs % params_sliceXZ)
@@ -604,7 +623,11 @@ MODULE SUBROUTINE run_sliceXZ(self)
         if (pp % nz_xz == DEFAULT_I)        pp % nz_xz   = 26_I32
         if (any(pp % xlim_xz == DEFAULT_R)) &
             pp % xlim_xz = self % sources % geometry % center(1) + [-500.0_WP, 500.0_WP]
-        WHERE (pp % zlim_xz == DEFAULT_R)   pp % zlim_xz = [0.0_WP, -Depth]    ! Per limit, as documented
+
+        ! Water column at the middle of the slice
+        z_top = self % z_surface(0.5_WP * (pp % xlim_xz(1) + pp % xlim_xz(2)), pp % y_xz)
+        z_bot = self % z_seabed(0.5_WP * (pp % xlim_xz(1) + pp % xlim_xz(2)), pp % y_xz)
+        WHERE (pp % zlim_xz == DEFAULT_R) pp % zlim_xz = [z_top, z_bot]    ! Per limit, as documented
 
         y    = pp % y_xz
         nx   = pp % nx_xz
@@ -696,12 +719,11 @@ MODULE SUBROUTINE run_sliceVertical(self)
     REAL(WP)    , ALLOCATABLE :: obs_reshaped(:,:,:)
     REAL(WP)    , ALLOCATABLE :: us(:), zs(:), proj(:)
     REAL(WP)                  :: azimuth, az_rad, normal(2), span(2), center(2), ulim(2), zlim(2)
-    REAL(WP)                  :: du, dz, Depth, y_xz
+    REAL(WP)                  :: du, dz, z_top, z_bot, y_xz
     INTEGER(I32)              :: nu, nz, i, j, idx, bs
 
 
-    Depth = self % env % depth_base
-    bs    = self % block_size
+    bs = self % block_size
 
     ! Defaults (resolved once, persisted back into run_inputs)
     associate(pp => self % run_inputs % params_sliceVertical)
@@ -727,11 +749,13 @@ MODULE SUBROUTINE run_sliceVertical(self)
             end if
         end if
 
-        ! --- 3. Depth extent, clipped to the water column --- !
-        if (pp % zlim_sv(1) == DEFAULT_R) pp % zlim_sv(1) = -Depth
-        if (pp % zlim_sv(2) == DEFAULT_R) pp % zlim_sv(2) = 0.0_WP
-        pp % zlim_sv(1) = max(pp % zlim_sv(1), -Depth)
-        pp % zlim_sv(2) = min(pp % zlim_sv(2), 0.0_WP)
+        ! --- 3. Depth extent, clipped to the water column at the plane centre --- !
+        z_top = self % z_surface(pp % center_sv(1), pp % center_sv(2))
+        z_bot = self % z_seabed(pp % center_sv(1), pp % center_sv(2))
+        if (pp % zlim_sv(1) == DEFAULT_R) pp % zlim_sv(1) = z_bot
+        if (pp % zlim_sv(2) == DEFAULT_R) pp % zlim_sv(2) = z_top
+        pp % zlim_sv(1) = max(pp % zlim_sv(1), z_bot)
+        pp % zlim_sv(2) = min(pp % zlim_sv(2), z_top)
 
         ! --- 4. Span: every source projected onto the span axis (auto), or symmetric width --- !
         if (pp % width_sv == DEFAULT_R) then
@@ -784,7 +808,7 @@ MODULE SUBROUTINE run_sliceVertical(self)
     write(*, '(A,F6.2,A,F6.2,A,F6.2,A,F6.2,A)') &
         '   normal=(', normal(1), ', ', normal(2), ') | span=(', span(1), ', ', span(2), ')'
 
-    ! --- 7. Compute pressure (observers closer than MASK_DISTANCE to a node get NaN) --- !
+    ! --- 7. Compute pressure (observers closer than mask_distance to a node get NaN) --- !
     CALL self % compute_pressure_masked('SliceVert', observers, bs, p)
     if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', pressure_norm(p)
 

@@ -5,7 +5,7 @@
  Agreed  : 09/2026
  Scope   : Every .f90 file of the project. Any new or modified Fortran code
            MUST follow these rules exactly. When in doubt, copy the pattern
-           already used in the existing files (e.g. src/utils/MathUtils.f90).
+           already used in the existing files (e.g. src/utils/SignalProcessing.f90).
 
  GOLDEN RULE: a style change must NEVER change a calculation, the program
  flow, or a single byte of the outputs (HDF5 datasets, .dat summaries,

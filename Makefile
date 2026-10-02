@@ -97,6 +97,7 @@ OBJS := \
     $(BUILD)/OpenFASTReader.o \
     $(BUILD)/StructureModel.o \
     $(BUILD)/DrivetrainExcitation.o \
+    $(BUILD)/Emitter.o \
     $(BUILD)/WindTurbine.o \
     $(BUILD)/DTU10MWMonopile.o \
     $(BUILD)/DTU10MWFloating.o \
@@ -107,7 +108,8 @@ OBJS := \
     $(BUILD)/AcousticSolver_output.o \
     $(BUILD)/AcousticSolver_steps.o \
     $(BUILD)/ImageMethod.o \
-    $(BUILD)/AnalyticalNormalModes.o
+    $(BUILD)/AnalyticalNormalModes.o \
+    $(BUILD)/SolverFactory.o
 
 .PHONY: all run clean
 all: $(EXE)
@@ -175,39 +177,45 @@ $(BUILD)/StructureModel.o: $(SRC_DIR)/emitters/StructureModel.f90 $(BUILD)/Kinds
 $(BUILD)/DrivetrainExcitation.o: $(SRC_DIR)/emitters/DrivetrainExcitation.f90 $(BUILD)/Kinds.o $(BUILD)/Sorting.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/WindTurbine.o: $(SRC_DIR)/emitters/WindTurbine.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/StringUtils.o $(BUILD)/HDF5Utils.o $(BUILD)/OpenFASTReader.o | $(BUILD)
+$(BUILD)/Emitter.o: $(SRC_DIR)/emitters/Emitter.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/DTU10MWMonopile.o: $(SRC_DIR)/emitters/TurbineTypes/DTU10MWMonopile.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/HDF5Utils.o $(BUILD)/CSVReader.o $(BUILD)/SignalProcessing.o $(BUILD)/StructureModel.o $(BUILD)/DrivetrainExcitation.o $(BUILD)/WindTurbine.o | $(BUILD)
+$(BUILD)/WindTurbine.o: $(SRC_DIR)/emitters/WindTurbine.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/StringUtils.o $(BUILD)/HDF5Utils.o $(BUILD)/CSVReader.o $(BUILD)/SignalProcessing.o $(BUILD)/OpenFASTReader.o $(BUILD)/DrivetrainExcitation.o $(BUILD)/Emitter.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/DTU10MWFloating.o: $(SRC_DIR)/emitters/TurbineTypes/DTU10MWFloating.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/HDF5Utils.o $(BUILD)/CSVReader.o $(BUILD)/SignalProcessing.o $(BUILD)/StructureModel.o $(BUILD)/DrivetrainExcitation.o $(BUILD)/WindTurbine.o | $(BUILD)
+$(BUILD)/DTU10MWMonopile.o: $(SRC_DIR)/emitters/TurbineTypes/DTU10MWMonopile.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/HDF5Utils.o $(BUILD)/SignalProcessing.o $(BUILD)/StructureModel.o $(BUILD)/DrivetrainExcitation.o $(BUILD)/WindTurbine.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/SAITEC2MWFloating.o: $(SRC_DIR)/emitters/TurbineTypes/SAITEC2MWFloating.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/HDF5Utils.o $(BUILD)/CSVReader.o $(BUILD)/SignalProcessing.o $(BUILD)/OpenFASTReader.o $(BUILD)/StructureModel.o $(BUILD)/DrivetrainExcitation.o $(BUILD)/WindTurbine.o | $(BUILD)
+$(BUILD)/DTU10MWFloating.o: $(SRC_DIR)/emitters/TurbineTypes/DTU10MWFloating.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/HDF5Utils.o $(BUILD)/SignalProcessing.o $(BUILD)/StructureModel.o $(BUILD)/DrivetrainExcitation.o $(BUILD)/WindTurbine.o | $(BUILD)
+	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
+
+$(BUILD)/SAITEC2MWFloating.o: $(SRC_DIR)/emitters/TurbineTypes/SAITEC2MWFloating.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/HDF5Utils.o $(BUILD)/SignalProcessing.o $(BUILD)/OpenFASTReader.o $(BUILD)/StructureModel.o $(BUILD)/DrivetrainExcitation.o $(BUILD)/WindTurbine.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/TurbineFactory.o: $(SRC_DIR)/emitters/TurbineFactory.f90 $(BUILD)/WindTurbine.o $(BUILD)/DTU10MWMonopile.o $(BUILD)/DTU10MWFloating.o $(BUILD)/SAITEC2MWFloating.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/WindFarm.o: $(SRC_DIR)/emitters/WindFarm.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/StringUtils.o $(BUILD)/HDF5Utils.o $(BUILD)/WindTurbine.o $(BUILD)/TurbineFactory.o | $(BUILD)
+$(BUILD)/WindFarm.o: $(SRC_DIR)/emitters/WindFarm.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/StringUtils.o $(BUILD)/HDF5Utils.o $(BUILD)/SignalProcessing.o $(BUILD)/Emitter.o $(BUILD)/WindTurbine.o $(BUILD)/TurbineFactory.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/AcousticSolver.o: $(SRC_DIR)/solvers/AcousticSolver.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/WindTurbine.o $(BUILD)/WindFarm.o | $(BUILD)
+$(BUILD)/AcousticSolver.o: $(SRC_DIR)/solvers/AcousticSolver.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/Emitter.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 # Submodules depend on their parent's object (gfortran writes their .smod
 # files into $(BUILD) through -J)
-$(BUILD)/AcousticSolver_output.o: $(SRC_DIR)/solvers/AcousticSolver_output.f90 $(BUILD)/StringUtils.o $(BUILD)/FileUtils.o $(BUILD)/HDF5Utils.o $(BUILD)/WindTurbine.o $(BUILD)/AcousticSolver.o | $(BUILD)
+$(BUILD)/AcousticSolver_output.o: $(SRC_DIR)/solvers/AcousticSolver_output.f90 $(BUILD)/StringUtils.o $(BUILD)/FileUtils.o $(BUILD)/HDF5Utils.o $(BUILD)/AcousticSolver.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/AcousticSolver_steps.o: $(SRC_DIR)/solvers/AcousticSolver_steps.f90 $(BUILD)/HDF5Utils.o $(BUILD)/AcousticSolver.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/ImageMethod.o: $(SRC_DIR)/solvers/methods/ImageMethod.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/FileUtils.o $(BUILD)/HDF5Utils.o $(BUILD)/WindTurbine.o $(BUILD)/WindFarm.o $(BUILD)/AcousticSolver.o | $(BUILD)
+$(BUILD)/ImageMethod.o: $(SRC_DIR)/solvers/methods/ImageMethod.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/FileUtils.o $(BUILD)/HDF5Utils.o $(BUILD)/Emitter.o $(BUILD)/AcousticSolver.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/AnalyticalNormalModes.o: $(SRC_DIR)/solvers/methods/AnalyticalNormalModes.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/FileUtils.o $(BUILD)/HDF5Utils.o $(BUILD)/SpecialFunctions.o $(BUILD)/WindTurbine.o $(BUILD)/WindFarm.o $(BUILD)/AcousticSolver.o | $(BUILD)
+$(BUILD)/AnalyticalNormalModes.o: $(SRC_DIR)/solvers/methods/AnalyticalNormalModes.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/FileUtils.o $(BUILD)/HDF5Utils.o $(BUILD)/SpecialFunctions.o $(BUILD)/Emitter.o $(BUILD)/AcousticSolver.o | $(BUILD)
+	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
+
+$(BUILD)/SolverFactory.o: $(SRC_DIR)/solvers/SolverFactory.f90 $(BUILD)/AcousticSolver.o $(BUILD)/ImageMethod.o $(BUILD)/AnalyticalNormalModes.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/main.o: $(APP_DIR)/main.f90 $(OBJS) | $(BUILD)
