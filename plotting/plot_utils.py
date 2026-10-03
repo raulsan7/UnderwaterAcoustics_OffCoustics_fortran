@@ -42,10 +42,14 @@ STEPS = {
     "sphere"       : "P_sphere",
 }
 
-# Type-specific turbine parameters (save_specific_params of FORTRAN/src/core/TurbineTypes/*.f90)
+# Type-specific turbine parameters (save_specific_params of FORTRAN/src/emitters/TurbineTypes/*.f90)
 SPECIFIC_KEYS = ["D", "rho_mat", "wet_area",                                      # DTU10MWMonopile (+ the rest)
                  "col_D", "XsecA", "XsecB", "t", "col_members", "pon_members",    # DTU10MWFloating
                  "Diam_y", "Diam_z", "float_members", "joint_members"]            # SAITEC2MWFloating
+
+# Name written by the Fortran get_name() of every method ("Method" dataset), for the files that lack it
+METHOD_NAMES = {"ImageMethod"          : "Images Method",
+                "AnalyticalNormalModes": "Analytical Normal Modes"}
 
 
 # ---------- TURBINE UTILITIES ---------- #
@@ -351,7 +355,7 @@ def describe_hdf5(f):     # [-] Open h5py.File
     elif "N_images" in f:
         method = f"IM{read_ds(f, 'N_images')}"
     else:
-        method = "unknown method"
+        method = read_ds(f, "Method") or "unknown method"
 
     if "Nturbines" in f:
         n_turb = int(read_ds(f, "Nturbines"))
@@ -461,10 +465,18 @@ def read_float(f,          # [-] Open h5py.File
 def read_solver_params(f,                   # [-] Open h5py.File
                        case: dict = None):  # [-] Dictionary where the parameters are stored
     """
-    Reads the solver and environment parameters. The acoustic method is autodetected (Nmodes: Analytical
-    Normal Modes, N_images: Image Method) and the water depth is Upper_HBC - Lower_HBC, valid for turbines
-    and farms.
+    Reads the solver and environment parameters, valid for turbines and farms:
+
+    - Method_name: the "Method" dataset (Fortran get_name(), e.g. "Images Method"), written in every file
+      since 10/2026. Older files lack it: their method is told by its parameters (Nmodes: Analytical Normal
+      Modes, N_images: Image Method). Method ("ImageMethod", "AnalyticalNormalModes") and Method_tag
+      ("IM30", "ANM24") keep the names used so far; any other method gets its name without blanks and its
+      initials (e.g. "Parabolic Equation" -> "ParabolicEquation", "PE").
+    - ENBW: equivalent noise bandwidth of the FFT window of the forces, in bins (see read_enbw).
+    - Water depth: Upper_HBC - Lower_HBC.
     """
+
+    method_name = read_ds(f, "Method")
 
     if "Nmodes" in f:
         case["Method"]     = "AnalyticalNormalModes"
@@ -475,9 +487,15 @@ def read_solver_params(f,                   # [-] Open h5py.File
         case["Method"]     = "ImageMethod"
         case["N_images"]   = int(read_ds(f, "N_images"))
         case["Method_tag"] = f"IM{case['N_images']}"
+    elif method_name is not None:
+        case["Method"]     = method_name.replace(" ", "")
+        case["Method_tag"] = "".join(word[0] for word in method_name.split()).upper()
     else:
         raise ValueError(f"plot_utils.read_solver_params(): unknown acoustic method in {case['Path']} "
-                         f"(neither Nmodes nor N_images found)")
+                         f"(none of Method, Nmodes or N_images found)")
+
+    case["Method_name"] = method_name if method_name is not None else METHOD_NAMES[case["Method"]]
+    case["ENBW"]        = read_enbw(f)
 
     case["c_wat"]     = float(read_ds(f, "c_wat"))
     case["rho_wat"]   = float(read_ds(f, "rho_wat"))
@@ -485,6 +503,29 @@ def read_solver_params(f,                   # [-] Open h5py.File
     case["Upper_HBC"] = float(read_ds(f, "Upper_HBC"))
     case["Lower_HBC"] = float(read_ds(f, "Lower_HBC"))
     case["Depth"]     = case["Upper_HBC"] - case["Lower_HBC"]     # [m] Water depth
+
+def read_enbw(f):     # [-] Open h5py.File
+    """
+    Equivalent noise bandwidth, in bins, of the FFT window applied to the forces. Every bin holds the
+    amplitude of a tone, so the sums over bins (OASPL, PSD, band powers) are divided by it. The Fortran
+    save_shared_parameters writes "ENBW" only when the forces come from a windowed FFT:
+
+    - "ENBW" in the file: that value (1.5, Hann window of compute_rfft);
+    - neither "ENBW" nor "Method": file written before 10/2026, always a turbine or a farm whose forces come
+      from compute_rfft, so au.HANN_ENBW;
+    - "Method" without "ENBW": forces without a window (e.g. manual sources given in frequency), so 1.0, i.e.
+      no correction.
+
+    Returns
+    -------
+    enbw : float
+    """
+
+    enbw = read_ds(f, "ENBW")
+    if enbw is not None:
+        return float(enbw)
+
+    return au.HANN_ENBW if "Method" not in f else 1.0
 
 def read_turbine_params(f,                  # [-] Open h5py.File
                         suffix: str = ""):  # [-] "" for a single turbine, "_i" for turbine i of a farm
@@ -889,9 +930,10 @@ def get_bin_width(freqs):               # [Hz] Frequency array shape(NFreqs,)
 
     return np.min(np.diff(freqs))
 
-def convert_to(p,                       # [Pa] Pressure array shape(NFreqs, Nobs)
-               mode: str   = "SPL",     # [-] What to convert to
-               df  : float = None):     # [Hz] Frequency bin width, only needed for 'PSD'
+def convert_to(p,                               # [Pa] Pressure array shape(NFreqs, Nobs)
+               mode: str   = "SPL",             # [-] What to convert to
+               df  : float = None,              # [Hz] Frequency bin width, only needed for 'PSD'
+               enbw: float = au.HANN_ENBW):     # [bins] ENBW of the FFT window (case["ENBW"]), only used by 'PSD'
     """
     Converts pressure into desired units.
     """
@@ -903,7 +945,7 @@ def convert_to(p,                       # [Pa] Pressure array shape(NFreqs, Nobs
         unit_label = r"SPL [dB re 1 $\mu$Pa]"
     elif mode == "PSD":
         if df is None: raise ValueError("convert_to(): mode 'PSD' needs the frequency bin width 'df'")
-        vals = au.pressure_to_PSD(p, df)
+        vals = au.pressure_to_PSD(p, df, enbw=enbw)
         unit_label = r"PSD [dB re 1 $\mu$Pa$^2$/Hz]"
     elif mode == "ABS":
         vals = np.abs(p)

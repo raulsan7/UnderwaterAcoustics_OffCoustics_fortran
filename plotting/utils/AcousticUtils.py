@@ -4,7 +4,8 @@ Description: Acoustic conversions used by the plots (SPL, PSD, OASPL, band OASPL
              1/3 octave bands). Copy of PYTHON/utils/AcousticUtils.py, so the plots do not depend on it.
              Masked observers (NaN pressure at every frequency, see plot_utils.is_valid) stay NaN through
              every conversion: frequency sums use np.sum, never np.nansum (which would turn them into a
-             fake -60 dB OASPL).
+             fake -60 dB OASPL). Sums over bins (OASPL, PSD) are divided by the equivalent noise bandwidth
+             (enbw) of the FFT window of the forces: every bin holds the amplitude of a tone.
 
 Author: Raul Sanz Ramirez (raul.sanz.ramirez@upm.es / raul.sanz.ramirez@gmail.com)
 Institution: Universidad Politecnica de Madrid - ETSIAE
@@ -12,6 +13,8 @@ Date: 09/2026
 """
 
 import numpy as np
+
+HANN_ENBW = 1.5    # [bins] Equivalent noise bandwidth of the Hann window of the Fortran compute_rfft
 
 
 def pressure_to_SPL(p, p_ref=1e-6, absorption=False, freq=None, distance=None):
@@ -49,7 +52,7 @@ def pressure_to_SPL(p, p_ref=1e-6, absorption=False, freq=None, distance=None):
 
     return spl
 
-def SPL_to_OASPL(spl, axis=0, Hanning_correction=True):
+def SPL_to_OASPL(spl, axis=0, enbw=HANN_ENBW):
     """
     Convert narrowband SPL [dB] to OASPL [dB] by summing over frequency.
 
@@ -59,6 +62,10 @@ def SPL_to_OASPL(spl, axis=0, Hanning_correction=True):
         SPL values in dB. Frequency axis must match ``axis``.
     axis : int, optional
         Axis to sum over (frequency axis). Default is 0.
+    enbw : float, optional
+        Equivalent noise bandwidth of the FFT window, in bins. Every bin holds the amplitude of a tone, so
+        the sum over bins of a broadband signal is enbw times its power and is divided by it. Default
+        HANN_ENBW (Hann window of the Fortran compute_rfft); 1.0 for spectra without a window.
 
     Returns
     -------
@@ -67,12 +74,9 @@ def SPL_to_OASPL(spl, axis=0, Hanning_correction=True):
     """
     spl = np.asarray(spl, dtype=float)
 
-    if Hanning_correction:
-        return 10.0 * np.log10(np.sum(10 ** (spl / 10), axis=axis)+1e-6) - 10.0 * np.log10(1.5)  # Correction for Hanning window (1.5 factor)
-    else:
-        return 10.0 * np.log10(np.sum(10 ** (spl / 10), axis=axis)+1e-6)
+    return 10.0 * np.log10(np.sum(10 ** (spl / 10), axis=axis)+1e-6) - 10.0 * np.log10(enbw)  # Window correction (ENBW)
 
-def pressure_to_OASPL(p, p_ref=1e-6, absorption=False, freq=None, distance=None, axis=0):
+def pressure_to_OASPL(p, p_ref=1e-6, absorption=False, freq=None, distance=None, axis=0, enbw=HANN_ENBW):
     """
     Convert complex pressure amplitudes (Helmholtz) to OASPL [dB re p_ref].
 
@@ -92,6 +96,8 @@ def pressure_to_OASPL(p, p_ref=1e-6, absorption=False, freq=None, distance=None,
         Frequencies in Hz. Required if ``absorption=True``.
     distance : float, optional
         Wave travel distance in m. Required if ``absorption=True``.
+    enbw : float, optional
+        Equivalent noise bandwidth of the FFT window, in bins (see :func:`SPL_to_OASPL`).
 
     Returns
     -------
@@ -101,9 +107,9 @@ def pressure_to_OASPL(p, p_ref=1e-6, absorption=False, freq=None, distance=None,
     p = np.asarray(p)
     spl = pressure_to_SPL(p, p_ref=p_ref, absorption=absorption, freq=freq, distance=distance)
 
-    return SPL_to_OASPL(spl, axis=axis)
+    return SPL_to_OASPL(spl, axis=axis, enbw=enbw)
 
-def OASPL_band(p, mask, p_ref=1e-6, absorption=False, freq=None, distance=None, axis=0):
+def OASPL_band(p, mask, p_ref=1e-6, absorption=False, freq=None, distance=None, axis=0, enbw=HANN_ENBW):
     """
     OASPL restricted to a frequency-band boolean mask.
 
@@ -123,6 +129,8 @@ def OASPL_band(p, mask, p_ref=1e-6, absorption=False, freq=None, distance=None, 
         Frequencies in Hz. Required if ``absorption=True``.
     distance : float, optional
         Wave travel distance in m. Required if ``absorption=True``.
+    enbw : float, optional
+        Equivalent noise bandwidth of the FFT window, in bins (see :func:`SPL_to_OASPL`).
 
     Returns
     -------
@@ -136,7 +144,8 @@ def OASPL_band(p, mask, p_ref=1e-6, absorption=False, freq=None, distance=None, 
     else:
         freq = None
 
-    return pressure_to_OASPL(p_band, p_ref=p_ref, axis=axis, absorption=absorption, freq=freq, distance=distance)
+    return pressure_to_OASPL(p_band, p_ref=p_ref, axis=axis, absorption=absorption, freq=freq, distance=distance,
+                             enbw=enbw)
 
 def add_absorption(freq, SPL, distance):
     """
@@ -397,15 +406,16 @@ def smooth_fractional_octave(freqs, spectrum, fraction=12, domain='db'):
 
     return out.reshape(spectrum.shape)
 
-def pressure_to_PSD(p, df, p_ref=1e-6, absorption=False, freq=None, distance=None, Hanning_correction=True):
+def pressure_to_PSD(p, df, p_ref=1e-6, absorption=False, freq=None, distance=None, enbw=HANN_ENBW):
     """
     Convert complex pressure amplitudes to Power Spectral Density (PSD) in dB
     re (p_ref²/Hz).
 
     The PSD is obtained from the SPL of each frequency bin by subtracting
-    ``10·log10(df)``, which accounts for the bin bandwidth. This assumes that
-    the input complex pressure ``p`` represents the peak amplitude at each
-    frequency (the same convention used by :func:`pressure_to_SPL`).
+    ``10·log10(enbw·df)``, which accounts for the bin bandwidth and the window
+    of the FFT. This assumes that the input complex pressure ``p`` represents
+    the peak amplitude at each frequency (the same convention used by
+    :func:`pressure_to_SPL`).
 
     Parameters
     ----------
@@ -423,6 +433,9 @@ def pressure_to_PSD(p, df, p_ref=1e-6, absorption=False, freq=None, distance=Non
         Frequencies in Hz. Required if ``absorption=True``.
     distance : float, optional
         Wave travel distance in m. Required if ``absorption=True``.
+    enbw : float, optional
+        Equivalent noise bandwidth of the FFT window, in bins (see :func:`SPL_to_OASPL`). Default
+        HANN_ENBW; 1.0 for spectra without a window.
 
     Returns
     -------
@@ -431,10 +444,10 @@ def pressure_to_PSD(p, df, p_ref=1e-6, absorption=False, freq=None, distance=Non
 
     Notes
     -----
-    The conversion is simply ``PSD [dB] = SPL [dB] - 10·log10(df)``, where
-    SPL is computed by :func:`pressure_to_SPL`. For broadband signals, this
-    yields a density that is independent of the frequency resolution of the
-    original FFT.
+    The conversion is simply ``PSD [dB] = SPL [dB] - 10·log10(enbw·df)``,
+    where SPL is computed by :func:`pressure_to_SPL`. For broadband signals,
+    this yields a density that is independent of the frequency resolution and
+    of the window of the original FFT.
     """
     # Ensure df is array-like and broadcastable
     df = np.asarray(df)
@@ -454,9 +467,6 @@ def pressure_to_PSD(p, df, p_ref=1e-6, absorption=False, freq=None, distance=Non
         df = df.reshape(shape)
     # else if scalar, it will broadcast automatically
 
-    if Hanning_correction:
-        psd = spl - 10.0 * np.log10(1.5 * df) # Correction for Hanning window (1.5 factor)
-    else:
-        psd = spl - 10.0 * np.log10(df)
+    psd = spl - 10.0 * np.log10(enbw * df)    # Bin width and window correction (ENBW)
 
     return psd

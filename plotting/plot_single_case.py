@@ -233,7 +233,7 @@ def plot_spectrum(case         : dict  = None,      # [-] Dictionary containing 
     elif mode == "PSD":
         df = pu.get_bin_width(Freqs)
         if df is None: raise ValueError("plot_spectrum(): mode 'PSD' needs at least two frequencies to get the bin width")
-        spl = au.pressure_to_PSD(p, df, p_ref, absorption, Freqs, distances)
+        spl = au.pressure_to_PSD(p, df, p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
         ylabel = r"PSD [dB re 1 $\mu$Pa$^2$/Hz]"
     else:
         raise RuntimeError(f"plot_spectrum(): mode {mode} not implemented yet")
@@ -251,7 +251,7 @@ def plot_spectrum(case         : dict  = None,      # [-] Dictionary containing 
 
     Freqs = Freqs[mask]
     spl   = spl[mask]
-    oaspl = au.pressure_to_OASPL(p[mask], p_ref, absorption, Freqs, distances)
+    oaspl = au.pressure_to_OASPL(p[mask], p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
 
     if octave:
         Freqs, spl = au.to_third_octave(Freqs, spl, fmin=Freqs.min(), fmax=Freqs.max())
@@ -446,7 +446,7 @@ def plot_polar(case             : dict  = None,        # [-] Dictionary containi
                 print(f"plot_polar(): no frequencies in band {label}, skipping it")
                 continue
 
-            oaspl = au.OASPL_band(p, mask, p_ref, absorption, Freqs, distances)
+            oaspl = au.OASPL_band(p, mask, p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
             all_oaspl_vals.append((oaspl, label, color))
 
         if all_oaspl_vals:
@@ -472,7 +472,7 @@ def plot_polar(case             : dict  = None,        # [-] Dictionary containi
         p = p[idx, :]
         name_extra = f"{f:.2f}Hz"
 
-        vals, unit_label = pu.convert_to(p, mode, df)
+        vals, unit_label = pu.convert_to(p, mode, df, enbw=case["ENBW"])
 
         if absorption and mode in ("SPL", "PSD"): vals = au.add_absorption(f, vals, distances)
 
@@ -581,7 +581,7 @@ def plot_cylinder(case            : dict = None,        # [-] Dictionary contain
     title_extra = ""
     # Select mode
     if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances)
+        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
         unit_label = r"OASPL [dB re 1$\mu$ Pa]"
 
     elif mode == 'SWL':
@@ -592,7 +592,7 @@ def plot_cylinder(case            : dict = None,        # [-] Dictionary contain
         p = p[idx,:]
         title_extra = f"at {f:.2f} Hz"
 
-        vals, unit_label = pu.convert_to(p, mode, df)
+        vals, unit_label = pu.convert_to(p, mode, df, enbw=case["ENBW"])
 
         if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, distances)
 
@@ -695,7 +695,7 @@ def plot_distance_decay(case            : dict  = None,         # [-] Dictionary
 
     # Select mode
     if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, r)
+        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, r, enbw=case["ENBW"])
         unit_label = r"OASPL [dB re $\mu$ Pa]"
     else:
         idx = np.argmin(np.abs(Freqs - target_frequency))
@@ -703,7 +703,7 @@ def plot_distance_decay(case            : dict  = None,         # [-] Dictionary
         p   = p[idx,:]
         title_extra = f"at {f:.2f} Hz"
 
-        vals, unit_label = pu.convert_to(p, mode, df)
+        vals, unit_label = pu.convert_to(p, mode, df, enbw=case["ENBW"])
         if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, r)
 
     # Plot
@@ -829,7 +829,7 @@ def plot_line(case            : dict  = None,         # [-] Dictionary containin
 
     # Select mode
     if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, r)
+        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, r, enbw=case["ENBW"])
         unit_label = r"OASPL [dB re $\mu$ Pa]"
     else:
         idx = np.argmin(np.abs(Freqs - target_frequency))
@@ -837,7 +837,7 @@ def plot_line(case            : dict  = None,         # [-] Dictionary containin
         p_f = p[idx, :]
         title_extra = f"at {f:.2f} Hz"
 
-        vals, unit_label = pu.convert_to(p_f, mode, df)
+        vals, unit_label = pu.convert_to(p_f, mode, df, enbw=case["ENBW"])
         if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, r)
 
     # Plot
@@ -939,7 +939,7 @@ def plot_sliceXY(case            : dict  = None,         # [-] Dictionary contai
 
     # Select mode
     if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances)
+        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
         unit_label = r"OASPL [dB re 1$\mu$ Pa]"
     elif mode == 'SWL':
         print("WARNING PLot_sliceXY(): SWL not yet implemented")
@@ -950,7 +950,7 @@ def plot_sliceXY(case            : dict  = None,         # [-] Dictionary contai
         p_f = p[idx, :]
         title_extra = f"at {f:.2f} Hz"
 
-        vals, unit_label = pu.convert_to(p_f, mode, df)
+        vals, unit_label = pu.convert_to(p_f, mode, df, enbw=case["ENBW"])
         if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, distances)
 
     # Plot (NaN: holes)
@@ -1049,7 +1049,7 @@ def plot_sliceXZ(case            : dict  = None,         # [-] Dictionary contai
 
     # Select mode
     if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances)
+        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
         unit_label = r"OASPL [dB re 1$\mu$ Pa]"
     elif mode == 'SWL':
         print("WARNING plot_sliceXZ(): SWL not yet implemented")
@@ -1060,7 +1060,7 @@ def plot_sliceXZ(case            : dict  = None,         # [-] Dictionary contai
         p_f = p[idx, :, :]
         title_extra = f"at {f:.2f} Hz"
 
-        vals, unit_label = pu.convert_to(p_f, mode, df)
+        vals, unit_label = pu.convert_to(p_f, mode, df, enbw=case["ENBW"])
         if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, distances)
 
     # Plot
@@ -1170,7 +1170,7 @@ def plot_sliceVertical(case            : dict  = None,         # [-] Dictionary 
 
     # Select mode
     if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances)
+        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
         unit_label = r"OASPL [dB re 1$\mu$ Pa]"
     elif mode == 'SWL':
         print("WARNING plot_sliceVertical(): SWL not yet implemented")
@@ -1181,7 +1181,7 @@ def plot_sliceVertical(case            : dict  = None,         # [-] Dictionary 
         p_f = p[idx, :, :]
         title_extra = f"at {f:.2f} Hz"
 
-        vals, unit_label = pu.convert_to(p_f, mode, df)
+        vals, unit_label = pu.convert_to(p_f, mode, df, enbw=case["ENBW"])
         if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, distances)
 
     # Plot
@@ -1285,7 +1285,7 @@ def compute_sphere_metrics(case            : dict  = None,         # [-] Diction
     distances = np.full((n_theta, nz), r)
 
     # --- 1. Compute OASPL and Directional SL --- #
-    oaspl = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances)
+    oaspl = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
     sl    = oaspl + 20 * np.log10(r)
 
     # --- 2. Compute Radiated Power (W) --- #
@@ -1506,7 +1506,7 @@ def compute_cylinder_metrics(case            : dict  = None,         # [-] Dicti
 def compute_point_source(case            : dict  = None,         # [-] Dictionary containing simulation data
                          filter_under    : float = None,         # [Hz] Lower frequency cutoff (f >= filter_under)
                          filter_over     : float = None,         # [Hz] Upper frequency cutoff (f <= filter_over)
-                         enbw            : float = 1.5,          # [bins] Equivalent noise bandwidth of the FFT window (Hann: 1.5)
+                         enbw            : float = None,         # [bins] Equivalent noise bandwidth of the FFT window (None: case["ENBW"], from the file)
                          smooth_fraction : int   = 12,           # [-] Plots only: narrowband curves smoothed over 1/N octave (None: raw)
                          rho_water       : float = 1025.0,       # [kg/m³] Water density (if not in the file)
                          c_water         : float = 1500.0,       # [m/s] Speed of sound in water (if not in the file)
@@ -1529,7 +1529,8 @@ def compute_point_source(case            : dict  = None,         # [-] Dictionar
 
     The FFT of the Fortran code (compute_rfft) is a Hann window scaled for amplitude, so |p|^2/2 per bin is the
     power of a tone on that bin while sums over bins are ENBW times too large: densities and band/total
-    powers are divided by enbw, the per-bin tone level is not.
+    powers are divided by enbw, the per-bin tone level is not. By default enbw is the one of the file
+    (case["ENBW"], see plot_utils.read_enbw): 1.5 for forces from compute_rfft, 1 for forces without a window.
 
     Also computed:
     - Directivity index per 1/3 octave band on the sphere, DI = 10 log10(max I / mean I).
@@ -1557,6 +1558,7 @@ def compute_point_source(case            : dict  = None,         # [-] Dictionar
     p_ref   = case["p_ref"]
     tag     = case["Case_type"]
     Freqs   = case["Freqs"]
+    enbw    = case["ENBW"] if enbw is None else enbw
     df      = pu.get_bin_width(Freqs)     # [Hz] Bin width, from the full grid
     if df is None:
         print("compute_point_source(): needs at least two frequencies, skipping")

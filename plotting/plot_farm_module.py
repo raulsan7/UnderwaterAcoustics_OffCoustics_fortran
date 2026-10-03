@@ -292,7 +292,7 @@ def plot_spectrums(case         : dict     = None,      # [-] Dictionary contain
 
     Freqs = Freqs[mask]
     spl   = spl[mask]
-    oaspl = au.pressure_to_OASPL(p[mask], p_ref)
+    oaspl = au.pressure_to_OASPL(p[mask], p_ref, enbw=case["ENBW"])
 
     if octave:
         Freqs, spl = au.to_third_octave(Freqs, spl, fmin=Freqs.min(), fmax=Freqs.max())
@@ -452,7 +452,7 @@ def plot_polar(case             : dict  = None,        # [-] Dictionary containi
                 continue
 
             # p shape is (Nfreqs, Ntheta)
-            oaspl = au.OASPL_band(p, mask, p_ref, absorption, Freqs, distances)
+            oaspl = au.OASPL_band(p, mask, p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
             all_oaspl_vals.append((oaspl, label, color))
 
         if all_oaspl_vals:
@@ -477,7 +477,7 @@ def plot_polar(case             : dict  = None,        # [-] Dictionary containi
         p_f = p[idx, :]
         name_extra = f"{f:.2f}Hz"
 
-        vals, unit_label = pu.convert_to(p_f, mode=mode)
+        vals, unit_label = pu.convert_to(p_f, mode=mode, enbw=case["ENBW"])
 
         if absorption and mode == "SPL":
             vals = au.add_absorption(f, vals, distances)
@@ -576,7 +576,7 @@ def plot_cylinder(case            : dict = None,        # [-] Dictionary contain
 
     # Select mode
     if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref)
+        vals = au.pressure_to_OASPL(p, p_ref, enbw=case["ENBW"])
         unit_label = r"OASPL [dB re 1$\mu$ Pa]"
 
     elif mode == 'SWL':
@@ -588,7 +588,7 @@ def plot_cylinder(case            : dict = None,        # [-] Dictionary contain
         p_f = p[idx, :]
         title_extra = f"at {f:.2f} Hz"
 
-        vals, unit_label = pu.convert_to(p_f, mode=mode)
+        vals, unit_label = pu.convert_to(p_f, mode=mode, enbw=case["ENBW"])
 
     # Plot Setup: close the cylinder at 360 degrees
     theta_plot = np.append(theta, 360.)
@@ -684,7 +684,7 @@ def plot_line(case            : dict = None,        # [-] Dictionary containing 
 
     # Select mode
     if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref)
+        vals = au.pressure_to_OASPL(p, p_ref, enbw=case["ENBW"])
         unit_label = r"OASPL [dB re 1$\mu$ Pa]"
 
     elif mode == 'SWL':
@@ -696,7 +696,7 @@ def plot_line(case            : dict = None,        # [-] Dictionary containing 
         p_f = p[idx, :]
         title_extra = f"at {f:.2f} Hz"
 
-        vals, unit_label = pu.convert_to(p_f, mode=mode)
+        vals, unit_label = pu.convert_to(p_f, mode=mode, enbw=case["ENBW"])
 
     # Plot Setup
     ax.plot(distances, vals, '-', color='teal', linewidth=2.0, marker='o', markersize=4, markerfacecolor='white')
@@ -790,7 +790,7 @@ def plot_sliceXY(case            : dict  = None,         # [-] Dictionary contai
 
     # Select mode
     if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref)
+        vals = au.pressure_to_OASPL(p, p_ref, enbw=case["ENBW"])
         unit_label = r"OASPL [dB re 1$\mu$ Pa]"
     elif mode == 'SWL':
         print("WARNING plot_sliceXY(): SWL not yet implemented")
@@ -801,7 +801,7 @@ def plot_sliceXY(case            : dict  = None,         # [-] Dictionary contai
         p_f = p[idx, :]
         title_extra = f"at {f:.2f} Hz"
 
-        vals, unit_label = pu.convert_to(p_f, mode=mode)
+        vals, unit_label = pu.convert_to(p_f, mode=mode, enbw=case["ENBW"])
 
     # Plot (NaN: holes)
     contour_set = ax.contourf(X, Y, vals, levels=60, cmap=cmap)
@@ -897,7 +897,7 @@ def plot_sliceXZ(case            : dict  = None,         # [-] Dictionary contai
 
     # Select mode
     if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref)
+        vals = au.pressure_to_OASPL(p, p_ref, enbw=case["ENBW"])
         unit_label = r"OASPL [dB re 1$\mu$ Pa]"
     elif mode == 'SWL':
         print("WARNING plot_sliceXZ(): SWL not yet implemented")
@@ -908,7 +908,7 @@ def plot_sliceXZ(case            : dict  = None,         # [-] Dictionary contai
         p_f = p[idx, :, :]
         title_extra = f"at {f:.2f} Hz"
 
-        vals, unit_label = pu.convert_to(p_f, mode=mode)
+        vals, unit_label = pu.convert_to(p_f, mode=mode, enbw=case["ENBW"])
 
     # Plot (NaN: holes)
     contour_set = ax.contourf(X, Z, vals, levels=60, cmap=cmap)
@@ -1016,7 +1016,7 @@ def plot_sliceVertical(case            : dict  = None,         # [-] Dictionary 
 
     # Select mode
     if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref)
+        vals = au.pressure_to_OASPL(p, p_ref, enbw=case["ENBW"])
         unit_label = r"OASPL [dB re 1$\mu$ Pa]"
     elif mode == 'SWL':
         print("WARNING plot_sliceVertical(): SWL not yet implemented")
@@ -1027,7 +1027,7 @@ def plot_sliceVertical(case            : dict  = None,         # [-] Dictionary 
         p_f = p[idx, :, :]
         title_extra = f"at {f:.2f} Hz"
 
-        vals, unit_label = pu.convert_to(p_f, mode=mode)
+        vals, unit_label = pu.convert_to(p_f, mode=mode, enbw=case["ENBW"])
 
     # Plot (NaN: holes)
     contour_set = ax.contourf(U, Z, vals, levels=60, cmap=cmap)

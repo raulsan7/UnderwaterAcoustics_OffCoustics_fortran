@@ -6,20 +6,17 @@ The order below goes from small and unblocking to large. Items 2 and 3 need a de
 
 ---
 
-## 1. Next step: the plotting reads `Method` and `ENBW` from the HDF5
+## 1. Done (2026-10-03): the plotting reads `Method` and `ENBW` from the HDF5
 
-**Why first.** It is small and Python-only. It also removes two hard-coded assumptions that break as soon as manual sources or a third method exist:
-- `plot_utils.read_solver_params` detects the method from `Nmodes` / `N_images` and raises `ValueError` for anything else.
-- The Hann correction is a hard-coded 1.5 in `AcousticUtils.SPL_to_OASPL` and `AcousticUtils.pressure_to_PSD` (flag `Hanning_correction=True`), and the `enbw=1.5` default of `plot_single_case.compute_point_source`. Forces given in the frequency domain will have no window, so this correction must then be skipped.
+- **Method.** `plot_utils.read_solver_params` stores `case["Method_name"]`: the `Method` dataset, or, in files written before 10/2026, the name of the method detected from `Nmodes` / `N_images`. `Method` and `Method_tag` keep their values. Any other method gets its name without blanks and its initials (e.g. `ParabolicEquation`, `PE`) instead of a `ValueError`; `--list` shows it too.
+- **ENBW.** `plot_utils.read_enbw` sets `case["ENBW"]`:
+  - the `ENBW` dataset when present;
+  - 1.5 for files with neither `ENBW` nor `Method`;
+  - 1.0 (no correction) for files with `Method` but no `ENBW`.
+- **Correction.** `AcousticUtils.SPL_to_OASPL`, `pressure_to_OASPL`, `OASPL_band`, `pressure_to_PSD` and `plot_utils.convert_to` take `enbw` (default `HANN_ENBW = 1.5`) instead of the fixed 1.5 / `Hanning_correction`. Every plot passes `case["ENBW"]`, and `compute_point_source` uses it by default.
+- **Checked.** Figures (PNG bytes) and printed numbers are identical to before, for old files and for a new one (`saitec_IM.hdf5`).
 
-**What to do:**
-1. In `read_solver_params`, read `Method` when it exists (bytes: `b"Images Method"`, `b"Analytical Normal Modes"`). Keep the current detection only as a fallback for files written before 10/2026. Today `case["Method"]` holds `"ImageMethod"` / `"AnalyticalNormalModes"`, so either map the dataset to those names or store it in a new key (e.g. `case["Method_name"]`). Check every place that compares `case["Method"]`.
-2. Store `case["ENBW"]` with this rule (decision needed, this is the proposal):
-   - `ENBW` in the file: use it;
-   - no `ENBW` and no `Method` (file written before 10/2026, always a turbine or a farm, always Hann): 1.5;
-   - `Method` but no `ENBW` (forces without a window): 1.0, i.e. no correction.
-3. Use `case["ENBW"]` instead of the hard-coded 1.5 in `SPL_to_OASPL`, `pressure_to_PSD` (and its 1/3 octave PSD) and `compute_point_source`.
-4. **Check:** the plots and numbers of an old file and of a new one are exactly the ones obtained now, since both give 1.5.
+Also done the same day: `plot_comparison.compute_point_source` (several cases overlaid, plus a table of broadband totals).
 
 ---
 

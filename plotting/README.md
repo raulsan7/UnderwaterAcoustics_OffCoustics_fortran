@@ -55,7 +55,7 @@ function keeps the signature of the Python version (`mode`, `filter_under`, `abs
 | `plot_turbine.py`, `plot_farm.py` | entry scripts: CLI, loading and list of plots |
 | `plot_utils.py` | CLI, `.hdf5` discovery and loading (`read_ds`, `load_turbine`, `load_farm`), saving, helpers |
 | `plot_single_case.py` | single-turbine plots and sphere/cylinder metrics |
-| `plot_comparison.py` | several turbines side by side (up to 3 panels per row) |
+| `plot_comparison.py` | several turbines side by side (up to 3 panels per row); the equivalent point source overlays them |
 | `plot_farm_module.py` | wind farm plots |
 | `plot_style.py` | `AcademicStyle` (fonts, colormaps, colors, line styles) |
 | `utils/` | copies of `AcousticUtils` and `EnvironmentalData` (hearing thresholds, Ge 2025 data) |
@@ -66,3 +66,19 @@ The Fortran code writes NaN (every frequency) at the observers closer than 5 m t
 the structure. The plots treat them as points without data: holes in the contours, gaps in the curves, left
 out of the spectra (with a message) and of the sphere/cylinder metrics (the excluded area is reported). The
 OASPL of such an observer stays NaN (frequency sums use `np.sum`, not `np.nansum`).
+
+## Window correction (ENBW) and method
+
+The pressure of every frequency bin is the amplitude of a tone: the Fortran FFT (`compute_rfft`) applies a
+Hann window scaled for amplitude. Every sum over bins (OASPL, PSD, band powers of the equivalent point source)
+is therefore divided by the equivalent noise bandwidth of the window, read from the file (`case["ENBW"]`,
+`plot_utils.read_enbw`):
+
+| File | ENBW [bins] |
+|---|---|
+| with the `ENBW` dataset (written since 10/2026 when the forces come from a windowed FFT) | its value, 1.5 |
+| without `ENBW` nor `Method` (written before 10/2026: always turbines or farms) | 1.5 |
+| with `Method` but without `ENBW` (forces without a window, e.g. manual sources given in frequency) | 1.0, no correction |
+
+The acoustic method is the `Method` dataset (`case["Method_name"]`, e.g. "Images Method"); older files are
+recognised by `N_images` / `Nmodes`.

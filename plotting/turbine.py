@@ -40,8 +40,8 @@ def main():
         p.compute_cylinder_metrics(case)
         p.compute_point_source(case)
     else:
-        pc.plot_spectrum(cases, do_thresholds=False, absorption=False, filter_under=10.0, mode='PSD')
-        pc.plot_spectrum(cases, do_thresholds=False, absorption=False, filter_under=10.0, octave=False, mode='PSD')
+        pc.plot_spectrum(cases, do_thresholds=False, absorption=False, filter_under=0.0, mode='PSD')
+        pc.plot_spectrum(cases, do_thresholds=False, absorption=False, filter_under=0.0, octave=False, mode='PSD', smooth=False)
         pc.plot_polar(cases)
         pc.plot_cylinder(cases)
         pc.plot_distance_decay(cases, turbine_data=True)
@@ -51,7 +51,7 @@ def main():
         pc.plot_sliceVertical(cases)
         pc.compute_sphere_metrics(cases)
         pc.compute_cylinder_metrics(cases)
-        # pc.compute_point_source(cases)
+        pc.compute_point_source(cases)
 
 
     # 2. Save (only with --save) and show
