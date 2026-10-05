@@ -13,7 +13,8 @@
 __pycache__/
 review/
 refactor*
-farm_cases*
+cases_farm*
+NEXT_STEP*
 
 # 2. Permite explorar dentro de las carpetas (necesario para que
 #    Git entre en subdirectorios y aplique las reglas siguientes)

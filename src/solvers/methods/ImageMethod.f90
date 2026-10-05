@@ -62,8 +62,7 @@ TYPE, EXTENDS(AcousticSolver_t) :: ImageMethod_t
     INTEGER(I32) :: default_N_images = 30_I32       ! [-] N_images read from config, restored after temporary changes
     INTEGER(I32) :: Upper_BC         = -1_I32       ! [-] Upper boundary condition, -1 for p = 0
     INTEGER(I32) :: Lower_BC         = +1_I32       ! [-] Lower boundary condition, +1 for dp = 0
-    REAL(WP)     :: Upper_HBC        = 0.0_WP       ! [m] z-coordinate of the upper reflecting plane (e.g. free surface)
-    REAL(WP)     :: Lower_HBC        = -30.0_WP     ! [m] z-coordinate of the lower plane, Upper_HBC - depth_base
+    REAL(WP)     :: Lower_HBC        = -30.0_WP     ! [m] z-coordinate of the lower plane, - depth_base
     REAL(WP)     :: up_R             = 1.0_WP       ! [-] Attenuation coefficient for upper boundary reflections
     REAL(WP)     :: lw_R             = 0.5_WP       ! [-] Attenuation coefficient for lower boundary reflections
     REAL(WP)     :: eps              = 1.0e-6_WP    ! [m] Minimum source-observer distance used to floor r
@@ -139,7 +138,6 @@ SUBROUTINE init_ImageMethod(self, sources, config)
         self % default_N_images = m % N_images
         self % Upper_BC         = m % UpperBC
         self % Lower_BC         = m % LowerBC
-        self % Upper_HBC        = m % UpperHBC
         self % up_R             = m % attenuation_surface
         self % lw_R             = m % attenuation_bottom
         self % eps              = m % epsilon
@@ -147,7 +145,7 @@ SUBROUTINE init_ImageMethod(self, sources, config)
 
     ! Seabed plane built from the environment depth (single source of truth)
     if (self % env % depth_base <= 0.0_WP) error stop "ImageMethod % init(): depth_base must be strictly positive"
-    self % Lower_HBC = self % Upper_HBC - self % env % depth_base
+    self % Lower_HBC = - self % env % depth_base
 
     ! Build save_path
     CALL self % build_save_path()
@@ -289,7 +287,6 @@ SUBROUTINE save_parameters_ImageMethod(self, emitter_obj)
     CALL save_variable(self % save_path, "N_images" , self % N_images)
     CALL save_variable(self % save_path, "c_wat"    , self % env % speed_sound_base)
     CALL save_variable(self % save_path, "rho_wat"  , self % env % density_base)
-    CALL save_variable(self % save_path, "Upper_HBC", self % Upper_HBC)
     CALL save_variable(self % save_path, "Lower_HBC", self % Lower_HBC)
     CALL save_variable(self % save_path, "p_ref"    , self % env % reference_pressure)
 
@@ -364,7 +361,6 @@ SUBROUTINE write_txt_summary_ImageMethod(self, emitter_obj)
     write(u, '(A)') 'SOLVER: ' // trim(self % solver_name)
     write(u, '(A)') repeat('-', 70)
     write(u, '(A,I0)')     'N images     : ', self % N_images
-    write(u, '(A,F8.2,A)') 'Upper HBC    : ', self % Upper_HBC, ' m'
     write(u, '(A,F8.2,A)') 'Lower HBC    : ', self % Lower_HBC, ' m'
     write(u, '(A,F8.4)')   'Upper atten. : ', self % up_R
     write(u, '(A,F8.4)')   'Lower atten. : ', self % lw_R
@@ -495,12 +491,12 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
 
     ! Local variables
     INTEGER(I32)                  :: Nnodes, NFreqs, total_nodes, idx, i_node, img_lvl
-    REAL(WP)                      :: z_upper, z_lower, att_u, att_l
+    REAL(WP)                      :: z_upper, z_lower, att_u, att_l, Upper_HBC
     COMPLEX(WP)     , ALLOCATABLE :: F_upper(:,:), F_lower(:,:)
     CHARACTER(len=5)              :: last_plane_upper, last_plane_lower
     INTEGER(I32)                  :: BC_u, BC_l
 
-
+    Upper_HBC   = 0.0_WP
     Nnodes      = size(zi)
     NFreqs      = size(Force, 1)
     total_nodes = Nnodes * (1_I32 + 2_I32 * self % N_images)
@@ -539,7 +535,7 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
                 att_u            = self % lw_R
                 last_plane_upper = "lower"
             else
-                z_upper          = 2.0_WP * self % Upper_HBC - z_upper
+                z_upper          = 2.0_WP * Upper_HBC - z_upper
                 BC_u             = BC_u * self % Upper_BC
                 att_u            = self % up_R
                 last_plane_upper = "upper"
@@ -556,7 +552,7 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
 
             ! --- 2. Lower reflection chain ---
             if (last_plane_lower == "lower") then
-                z_lower          = 2.0_WP * self % Upper_HBC - z_lower
+                z_lower          = 2.0_WP * Upper_HBC - z_lower
                 BC_l             = BC_l * self % Upper_BC
                 att_l            = self % up_R
                 last_plane_lower = "upper"

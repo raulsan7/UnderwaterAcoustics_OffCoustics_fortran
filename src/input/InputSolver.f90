@@ -210,7 +210,6 @@ SUBROUTINE read_ImageMethod_config(path, config)
     INTEGER(I32) :: N_images
     INTEGER(I32) :: UpperBC
     INTEGER(I32) :: LowerBC
-    REAL(WP)     :: UpperHBC
     REAL(WP)     :: attenuation_surface
     REAL(WP)     :: attenuation_bottom
     REAL(WP)     :: epsilon
@@ -220,7 +219,6 @@ SUBROUTINE read_ImageMethod_config(path, config)
         N_images,                  &
         UpperBC,                   &
         LowerBC,                   &
-        UpperHBC,                  &
         attenuation_surface,       &
         attenuation_bottom,        &
         epsilon
@@ -230,7 +228,6 @@ SUBROUTINE read_ImageMethod_config(path, config)
     N_images            = 30_I32
     UpperBC             = -1_I32
     LowerBC             = 1_I32
-    UpperHBC            = 0.0_WP
     attenuation_surface = 1.0_WP
     attenuation_bottom  = 0.5_WP
     epsilon             = 1.0e-6_WP
@@ -258,7 +255,6 @@ SUBROUTINE read_ImageMethod_config(path, config)
         m % N_images            = N_images
         m % UpperBC             = UpperBC
         m % LowerBC             = LowerBC
-        m % UpperHBC            = UpperHBC
         m % attenuation_surface = attenuation_surface
         m % attenuation_bottom  = attenuation_bottom
         m % epsilon             = epsilon
@@ -285,19 +281,16 @@ SUBROUTINE read_AnalyticalNormalModes_config(path, config)
 
     ! Input variables
     INTEGER(I32) :: Nmodes
-    REAL(WP)     :: UpperHBC
     REAL(WP)     :: epsilon
 
     ! --- 1. Configuration namelist --- !
     NAMELIST /AnalyticalNormalModes_config/ &
         Nmodes,                             &
-        UpperHBC,                           &
         epsilon
 
 
     ! --- 2. Defaults --- !
     Nmodes   = DEFAULT_I
-    UpperHBC = 0.0_WP
     epsilon  = 1.0e-12_WP
 
     ! --- 3. Open and read namelist file --- !
@@ -321,7 +314,6 @@ SUBROUTINE read_AnalyticalNormalModes_config(path, config)
     SELECT TYPE (m => config % method)
     TYPE IS (Config_AnalyticalNormalModes_t)
         m % Nmodes   = Nmodes
-        m % UpperHBC = UpperHBC
         m % epsilon  = epsilon
     END SELECT
 

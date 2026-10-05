@@ -647,7 +647,7 @@ def read_solver_params(f,                   # [-] Open h5py.File
       ("IM30", "ANM24") keep the names used so far; any other method gets its name without blanks and its
       initials (e.g. "Parabolic Equation" -> "ParabolicEquation", "PE").
     - ENBW: equivalent noise bandwidth of the FFT window of the forces, in bins (see read_enbw).
-    - Water depth: Upper_HBC - Lower_HBC.
+    - Water depth: - Lower_HBC.
     """
 
     method_name = read_ds(f, "Method")
@@ -674,9 +674,8 @@ def read_solver_params(f,                   # [-] Open h5py.File
     case["c_wat"]     = float(read_ds(f, "c_wat"))
     case["rho_wat"]   = float(read_ds(f, "rho_wat"))
     case["p_ref"]     = float(read_ds(f, "p_ref"))
-    case["Upper_HBC"] = float(read_ds(f, "Upper_HBC"))
     case["Lower_HBC"] = float(read_ds(f, "Lower_HBC"))
-    case["Depth"]     = case["Upper_HBC"] - case["Lower_HBC"]     # [m] Water depth
+    case["Depth"]     = -case["Lower_HBC"]     # [m] Water depth
 
 def read_enbw(f):     # [-] Open h5py.File
     """

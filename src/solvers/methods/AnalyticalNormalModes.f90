@@ -38,7 +38,7 @@ PUBLIC :: AnalyticalNormalModes_t
 TYPE, EXTENDS(AcousticSolver_t) :: AnalyticalNormalModes_t
     ! -------------------------------------------------------------------------
     ! Concrete acoustic solver implementing the analytical normal-mode expansion
-    ! of the dipole field in an ideal waveguide of depth H = Upper_HBC - Lower_HBC
+    ! of the dipole field in an ideal waveguide of depth H = - Lower_HBC
     ! (pressure-release top, rigid bottom). Each mode m has a fixed vertical
     ! wavenumber k_zm = (2m-1)*pi/(2H) and a frequency-dependent horizontal
     ! wavenumber k_rm = sqrt(k^2 - k_zm^2).
@@ -47,7 +47,6 @@ TYPE, EXTENDS(AcousticSolver_t) :: AnalyticalNormalModes_t
     INTEGER(I32) :: Nmodes      = DEFAULT_I     ! [-] Number of normal modes retained in the expansion
     LOGICAL      :: auto_Nmodes = .false.       ! [-] Whether Nmodes was computed automatically from f_max
     REAL(WP)     :: H           = 30.0_WP       ! [m] Waveguide height (distance between both boundaries)
-    REAL(WP)     :: Upper_HBC   = 0.0_WP        ! [m] z-coordinate of the upper boundary (free surface, p = 0)
     REAL(WP)     :: Lower_HBC   = -30.0_WP      ! [m] z-coordinate of the lower boundary (seabed, dp/dz = 0)
     REAL(WP)     :: eps         = 1.0e-12_WP    ! [m] Minimum horizontal source-observer distance, floors r
 
@@ -121,15 +120,14 @@ SUBROUTINE init_AnalyticalNormalModes(self, sources, config)
     SELECT TYPE (m => config % method)
     TYPE IS (Config_AnalyticalNormalModes_t)
         self % Nmodes    = m % Nmodes
-        self % Upper_HBC = m % UpperHBC
         self % eps       = m % epsilon
     END SELECT
 
     ! Waveguide built from the environment depth (single source of truth)
     if (self % env % depth_base <= 0.0_WP) &
         error stop "AnalyticalNormalModes % init(): depth_base must be strictly positive"
-    self % Lower_HBC = self % Upper_HBC - self % env % depth_base
-    self % H         = self % Upper_HBC - self % Lower_HBC
+    self % Lower_HBC = - self % env % depth_base
+    self % H         = - self % Lower_HBC
 
     ! Number of modes
     if (self % Nmodes == DEFAULT_I) then
@@ -290,7 +288,6 @@ SUBROUTINE save_parameters_AnalyticalNormalModes(self, emitter_obj)
     CALL save_variable(self % save_path, "H"        , self % H)
     CALL save_variable(self % save_path, "c_wat"    , self % env % speed_sound_base)
     CALL save_variable(self % save_path, "rho_wat"  , self % env % density_base)
-    CALL save_variable(self % save_path, "Upper_HBC", self % Upper_HBC)
     CALL save_variable(self % save_path, "Lower_HBC", self % Lower_HBC)
     CALL save_variable(self % save_path, "p_ref"    , self % env % reference_pressure)
 
@@ -369,7 +366,6 @@ SUBROUTINE write_txt_summary_AnalyticalNormalModes(self, emitter_obj)
     write(u, '(A,I0)')       'N modes      : ', self % Nmodes
     write(u, '(A,L1)')       'Auto N modes : ', self % auto_Nmodes
     write(u, '(A,F8.2,A)')   'Height H     : ', self % H, ' m'
-    write(u, '(A,F8.2,A)')   'Upper HBC    : ', self % Upper_HBC, ' m'
     write(u, '(A,F8.2,A)')   'Lower HBC    : ', self % Lower_HBC, ' m'
     write(u, '(A,ES10.2,A)') 'Epsilon      : ', self % eps, ' m'
     write(u, '(A,I0)')       'Block size   : ', self % block_size
@@ -480,10 +476,10 @@ END SUBROUTINE print_mode_summary
 ! ===============================================================================
 FUNCTION Psi_kzm(self, z, m, kzm) RESULT(psi)
     ! -------------------------------------------------------------------------
-    ! Evaluates the vertical modal shape Psi_m(z) = sqrt(2*rho/H) * sin(k_zm*(z - Upper_HBC))
+    ! Evaluates the vertical modal shape Psi_m(z) = sqrt(2*rho/H) * sin(k_zm*z)
     ! at the given depths. The vertical wavenumber is either given directly
     ! (kzm) or computed from the mode index m as k_zm = (2m-1)*pi/(2H). The
-    ! shape satisfies Psi_m(Upper_HBC) = 0 (pressure-release surface).
+    ! shape satisfies Psi_m(0) = 0 (pressure-release surface).
     ! -------------------------------------------------------------------------
 
     CLASS(AnalyticalNormalModes_t), INTENT(IN)           :: self      ! [-] Solver instance
@@ -497,9 +493,9 @@ FUNCTION Psi_kzm(self, z, m, kzm) RESULT(psi)
 
     if (present(m) .and. .not. present(kzm)) then
         psi = sqrt(2.0_WP * self % env % density_base / self % H) * &
-              sin((2.0_WP * real(m, WP) - 1.0_WP) * PI * (z - self % Upper_HBC) / (2.0_WP * self % H))
+              sin((2.0_WP * real(m, WP) - 1.0_WP) * PI * z / (2.0_WP * self % H))
     else if (present(kzm)) then
-        psi = sqrt(2.0_WP * self % env % density_base / self % H) * sin(kzm * (z - self % Upper_HBC))
+        psi = sqrt(2.0_WP * self % env % density_base / self % H) * sin(kzm * z)
     else
         error stop "Psi_kzm: Either m or kzm must be provided."
     end if
@@ -510,7 +506,7 @@ END FUNCTION Psi_kzm
 FUNCTION dPsi_kzm_dz(self, z, m, kzm) RESULT(dpsi)
     ! -------------------------------------------------------------------------
     ! Evaluates the vertical derivative of the modal shape,
-    ! dPsi_m/dz = sqrt(2*rho/H) * k_zm * cos(k_zm*(z-Upper_HBC)), at the given depths. The
+    ! dPsi_m/dz = sqrt(2*rho/H) * k_zm * cos(k_zm*z), at the given depths. The
     ! vertical wavenumber is either given directly (kzm) or computed from the
     ! mode index m as k_zm = (2m-1)*pi/(2H). The derivative satisfies
     ! dPsi_m/dz(Lower_HBC=-H) = 0 (rigid seabed).
@@ -535,7 +531,7 @@ FUNCTION dPsi_kzm_dz(self, z, m, kzm) RESULT(dpsi)
     end if
 
     ALLOCATE(dpsi(size(z)))
-    dpsi = sqrt(2.0_WP * self % env % density_base / self % H) * k_zm * cos(k_zm * (z - self % Upper_HBC))
+    dpsi = sqrt(2.0_WP * self % env % density_base / self % H) * k_zm * cos(k_zm * z)
 
 END FUNCTION dPsi_kzm_dz
 

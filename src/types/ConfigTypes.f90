@@ -126,14 +126,13 @@ TYPE, EXTENDS(Config_Method_t) :: Config_ImageMethod_t
     ! -------------------------------------------------------------------------
     ! Method-of-Images solver configuration, read from the ImagesMethod.nml
     ! namelist. Sets how many image sources are used to enforce the boundary
-    ! conditions at the free surface and the seabed, the boundary types and
-    ! heights, and the per-boundary reflection attenuation coefficients.
+    ! conditions at the free surface and the seabed, the boundary types, 
+    ! and the per-boundary reflection attenuation coefficients.
     ! -------------------------------------------------------------------------
 
     INTEGER(I32) :: N_images               ! [-] Number of image source levels used to enforce boundary conditions
     INTEGER(I32) :: UpperBC                ! [-] Upper boundary condition flag (-1: pressure-release surface, p = 0)
     INTEGER(I32) :: LowerBC                ! [-] Lower boundary condition flag (+1: rigid boundary, dp/dn = 0)
-    REAL(WP)     :: UpperHBC               ! [m] z-coordinate of the upper plane; seabed = UpperHBC - depth_base
     REAL(WP)     :: attenuation_surface    ! [-] Attenuation coefficient applied to surface reflections
     REAL(WP)     :: attenuation_bottom     ! [-] Attenuation coefficient applied to bottom reflections
     REAL(WP)     :: epsilon                ! [m] Minimum source-observer distance used to floor r
@@ -145,12 +144,10 @@ TYPE, EXTENDS(Config_Method_t) :: Config_AnalyticalNormalModes_t
     ! -------------------------------------------------------------------------
     ! Analytical Normal Modes solver configuration, read from the
     ! AnalyticalNormalModes.nml namelist. Sets how many normal modes are
-    ! retained in the modal expansion, the heights of the upper and lower
-    ! waveguide boundaries, and the singularity tolerance.
+    ! retained in the modal expansion and the singularity tolerance.
     ! -------------------------------------------------------------------------
 
     INTEGER(I32) :: Nmodes      ! [-] Number of retained modes
-    REAL(WP)     :: UpperHBC    ! [m] z-coordinate of the upper plane; seabed = UpperHBC - depth_base
     REAL(WP)     :: epsilon     ! [m] Minimum horizontal source-observer distance used to floor r
 
 END TYPE Config_AnalyticalNormalModes_t

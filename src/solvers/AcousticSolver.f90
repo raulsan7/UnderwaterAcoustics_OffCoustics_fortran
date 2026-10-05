@@ -5,7 +5,7 @@
 ! propagation solvers (ImageMethod_t and AnalyticalNormalModes_t). It holds
 ! the shared solver state (sources and their reference geometry,
 ! environment, save path, block size, debug/cluster flags), the observer
-! masking and the water-column queries (z_surface, z_seabed, in_water), and
+! masking and the water-column queries (z_seabed, in_water), and
 ! declares the generic observer-geometry post-processing
 ! routines (spectrums, polar, cylinder, decay, line, sliceXY, sliceXZ,
 ! sliceVertical, sphere) shared by every concrete solver, implemented in the
@@ -76,7 +76,6 @@ TYPE, ABSTRACT :: AcousticSolver_t
     PROCEDURE :: run_sphere => dummy_run_sphere
 
     ! --- Water-column queries (a method overrides them to publish its boundaries) --- !
-    PROCEDURE :: z_surface => default_z_surface         ! z of the water surface at (x, y)
     PROCEDURE :: z_seabed  => default_z_seabed          ! z of the seabed at (x, y)
     PROCEDURE :: in_water  => default_in_water          ! Observer mask: .true. inside the water column
 
@@ -543,33 +542,14 @@ END FUNCTION pressure_norm
 ! WATER-COLUMN QUERIES
 ! Defaults: flat surface at z = 0 and flat seabed at z = -depth_base
 ! ===============================================================================
-FUNCTION default_z_surface(self, x, y) RESULT(z)
-    ! -------------------------------------------------------------------------
-    ! Default water-column query: z of the water surface at (x, y), the plane
-    ! z = 0.
-    ! A method overrides z_surface, z_seabed and in_water to publish its own
-    ! boundaries (a surface not at z = 0, a variable bathymetry, ...). The
-    ! run_* steps never read depth_base directly: they only ask these
-    ! queries, so they stay generic for every method.
-    ! -------------------------------------------------------------------------
-
-    CLASS(AcousticSolver_t), INTENT(IN) :: self    ! [-] Solver instance
-    REAL(WP)               , INTENT(IN) :: x       ! [m] x-coordinate
-    REAL(WP)               , INTENT(IN) :: y       ! [m] y-coordinate
-    REAL(WP)                            :: z       ! [m] z-coordinate of the water surface
-
-
-    z = 0.0_WP
-
-END FUNCTION default_z_surface
 
 
 FUNCTION default_z_seabed(self, x, y) RESULT(z)
     ! -------------------------------------------------------------------------
     ! Default water-column query: z of the seabed at (x, y), the plane
     ! z = -depth_base.
-    ! A method overrides z_surface, z_seabed and in_water to publish its own
-    ! boundaries (a surface not at z = 0, a variable bathymetry, ...). The
+    ! A method overrides, z_seabed and in_water to publish its own
+    ! boundaries (a surface at z = 0, a variable bathymetry, ...). The
     ! run_* steps never read depth_base directly: they only ask these
     ! queries, so they stay generic for every method.
     ! -------------------------------------------------------------------------
@@ -588,21 +568,29 @@ END FUNCTION default_z_seabed
 FUNCTION default_in_water(self, observers) RESULT(valid)
     ! -------------------------------------------------------------------------
     ! Default water-column query: flags the observers inside the water
-    ! column. Every observer is valid by default, so compute_pressure_masked
-    ! never masks an observer for this reason.
-    ! A method overrides z_surface, z_seabed and in_water to publish its own
-    ! boundaries (a surface not at z = 0, a variable bathymetry, ...). The
-    ! run_* steps never read depth_base directly: they only ask these
-    ! queries, so they stay generic for every method.
+    ! column, between the seabed z_seabed(x, y) and the surface z = 0. Both
+    ! limits are inclusive with a tolerance tol_z: the last level of a regular
+    ! depth grid (z_bot + (n-1)*dz, or the sliceXZ grid from 0 down to z_bot)
+    ! can round a few 1e-15 m beyond the plane it should hit exactly.
+    ! A method with a variable bathymetry only overrides z_seabed; it
+    ! overrides in_water only to publish a different mask.
     ! -------------------------------------------------------------------------
 
     CLASS(AcousticSolver_t), INTENT(IN)  :: self              ! [-] Solver instance
     REAL(WP)               , INTENT(IN)  :: observers(:,:)    ! [m] Observers coords (Nobs, 3)
     LOGICAL                , ALLOCATABLE :: valid(:)          ! [-] Observer mask (Nobs), .true. inside the water
 
+    ! Local variables
+    REAL(WP), PARAMETER :: tol_z = 1.0e-9_WP    ! [m] Tolerance on the surface and seabed planes
+    INTEGER(I32)        :: i
+
 
     ALLOCATE(valid(size(observers, 1)))
-    valid = .true.
+
+    do i = 1, size(observers, 1)
+        valid(i) = observers(i, 3) <= tol_z .and. &
+                   observers(i, 3) >= self % z_seabed(observers(i, 1), observers(i, 2)) - tol_z
+    end do
 
 END FUNCTION default_in_water
 

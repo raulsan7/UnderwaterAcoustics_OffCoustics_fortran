@@ -197,11 +197,10 @@ Water-column queries (non-deferred, overridable, implemented in the parent):
 
 | Binding | Default | Use |
 |---|---|---|
-| `z_surface(x, y)` | `0.0` | Top of the water column at `(x, y)` |
 | `z_seabed(x, y)` | `-depth_base` | Bottom of the water column at `(x, y)` |
 | `in_water(observers)` | all `.true.` | Mask of the observers inside the water column |
 
-The `run_*` steps never read `depth_base`: at their reference point they ask `z_top = z_surface(xr, yr)` and `z_bot = z_seabed(xr, yr)`, and use `z_top`, `z_bot` and `0.5 * (z_top + z_bot)` for the surface, the seabed and mid-depth. With the defaults every expression gives the same bits as the former literals.
+The `run_*` steps never read `depth_base`: at their reference point they ask `z_top = 0` and `z_bot = z_seabed(xr, yr)`, and use `z_top = 0`, `z_bot` and `0.5 * (z_top + z_bot)` for the surface, the seabed and mid-depth. With the defaults every expression gives the same bits as the former literals.
 
 | Step | Reference point | What uses the queries |
 |---|---|---|
@@ -277,8 +276,9 @@ The planned design is in §7.
 4. Its `CASE` in `new_solver` (`solvers/SolverFactory.f90`).
 5. Makefile: the object before `SolverFactory`.
 6. Nothing else: the `Method` dataset is written automatically.
+7. Always surface is supposed to be at z = 0
 
-If the method has its own boundaries, it overrides `z_surface`, `z_seabed` and `in_water`, not the `run_*` steps.
+If the method has its own boundaries, it overrides `z_seabed` and `in_water`, not the `run_*` steps.
 
 ### 5.4 A post-processing step
 1. `run_X` in `solvers/AcousticSolver_steps.f90`, its interface body and type-bound binding in `solvers/AcousticSolver.f90`, and its call in `run()`.
@@ -299,8 +299,8 @@ Complex arrays are stored as `(2, N...)` in Fortran order, i.e. `(..., N, 2)` (r
 
 | Writer | Datasets |
 |---|---|
-| `ImageMethod % save_parameters` | `N_images`, `c_wat`, `rho_wat`, `Upper_HBC`, `Lower_HBC`, `p_ref` |
-| `AnalyticalNormalModes % save_parameters` | `Nmodes`, `H`, `c_wat`, `rho_wat`, `Upper_HBC`, `Lower_HBC`, `p_ref` |
+| `ImageMethod % save_parameters` | `N_images`, `c_wat`, `rho_wat`, `Lower_HBC`, `p_ref` |
+| `AnalyticalNormalModes % save_parameters` | `Nmodes`, `H`, `c_wat`, `rho_wat`, `Lower_HBC`, `p_ref` |
 | `save_shared_parameters` | `Method` (`"Images Method"`, `"Analytical Normal Modes"`), `ENBW` (1.5, only for forces from a windowed FFT) |
 | turbine (`save_turbine_params`) | `case_type`, `WindSpeed`, `WindDir`, `Depth`, `AxisPos`, `BariPos` |
 | turbine (`save_specific_params`) | `Case_type`, `Structure_nodes` plus the type's geometry (`D`, `rho_mat`, `wet_area`; `col_D`, `XsecA`, `XsecB`, `t`, `col_members`, `pon_members`; `Diam_y`, `Diam_z`, `float_members`, `joint_members`) |
@@ -360,13 +360,10 @@ Decided on 2026-10-02, not implemented.
 
 ### 7.2 Acoustic methods
 - `Config_Environment_t` will grow optional arrays: c(z), ρ(z), attenuation, bathymetry H(x, y), sediment. It keeps the base scalars, so the simple methods keep working. Each method checks in `init` that the data it needs is present.
-- The boundaries belong to each method: constants in IM and ANM, arrays in complex methods. A method publishes them by overriding `z_surface`, `z_seabed` and `in_water`.
+- The boundaries belong to each method: constants in IM and ANM, arrays in complex methods. A method publishes them by overriding `z_seabed` and `in_water`.
 - Overriding a whole `run_*` is the exception (precedent: IM's `run_sphere`).
 
-### 7.3 Known inconsistency, pending a decision by the user
-The default queries put the surface at 0 and the seabed at `-depth_base`, while IM and ANM use `Upper_HBC` / `Lower_HBC` (with `Lower_HBC = Upper_HBC - depth_base`). When IM and ANM override the queries with their HBC, the results change only for `UpperHBC ≠ 0`.
-
-### 7.4 Sphere
+### 7.3 Sphere
 The sphere stays IM-only: a no-op in the parent plus the IM override, because `AcousticSolver` cannot `USE ImageMethod` (cycle). A shared free-field kernel would make it generic for every method; that changes the outputs and is a future decision.
 
 ---
@@ -376,7 +373,7 @@ The sphere stays IM-only: a no-op in the parent plus the IM override, because `A
 Any change that is meant not to change the results follows `Programming_style_guidelines.txt` §8, plus the harness of `review/refactor_tools/` (git-ignored, kept locally):
 
 1. Keep a copy of the original sources and build the reference binary from them. Run everything in an isolated copy, never in `turbine_acoustic_data/`, `farm_acoustic_data/` or `SAITEC_acoustic_data/`.
-2. Builds: `make clean && make -j8`, `fpm build --flag "-O3 -fopenmp"`, and `make FFLAGS="-O3 -fopenmp -Wall"`, which must give no warning that the reference does not give. Since 10/2026 the only accepted `-Wall` warnings are the `-Wunused-dummy-argument` of the default procedures that ignore arguments by design: `default_z_surface` (`self`, `x`, `y`), `default_z_seabed` (`x`, `y`), `default_in_water` (`self`), `excitation_spectrum` of the two DTU types (`self`), and `get_enbw` of `Emitter_t`, `WindTurbine_t` and `WindFarm_t` (`self`).
+2. Builds: `make clean && make -j8`, `fpm build --flag "-O3 -fopenmp"`, and `make FFLAGS="-O3 -fopenmp -Wall"`, which must give no warning that the reference does not give. Since 10/2026 the only accepted `-Wall` warnings are the `-Wunused-dummy-argument` of the default procedures that ignore arguments by design: `default_z_seabed` (`x`, `y`), `default_in_water` (`self`), `excitation_spectrum` of the two DTU types (`self`), and `get_enbw` of `Emitter_t`, `WindTurbine_t` and `WindFarm_t` (`self`).
 3. Cases, with `OMP_NUM_THREADS=1` (multi-threaded runs are not bit-reproducible):
    ```bash
    python refactor_cases.py setup   <reference_src_dir> <cases_root>
