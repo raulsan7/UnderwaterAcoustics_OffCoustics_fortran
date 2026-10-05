@@ -1,11 +1,12 @@
 """
 Plots single wind turbines (.hdf5 files written by Fortran in FORTRAN/turbine_acoustic_data).
 
-    python plotting/plot_turbine.py                          # most recent file
-    python plotting/plot_turbine.py plot_mn_ANM24_ws11.4     # one file: single case
-    python plotting/plot_turbine.py a.hdf5 b.hdf5 ...        # several files: comparison
-    python plotting/plot_turbine.py --list                   # available files
-    python plotting/plot_turbine.py ... --save [--no-show]   # figures saved in FORTRAN/figures/<case>/
+    python plotting/turbine.py                          # most recent file
+    python plotting/turbine.py plot_mn_ANM24_ws11.4     # one file: single case
+    python plotting/turbine.py a.hdf5 b.hdf5 ...        # several files: comparison
+    python plotting/turbine.py ... --ws                 # line plots (spectrum, polar, decay, line) at every wind speed
+    python plotting/turbine.py --list                   # available files
+    python plotting/turbine.py ... --save [--no-show]   # figures saved in FORTRAN/figures/<case>/
 
 The plots shown are selected below.
 """
@@ -26,19 +27,19 @@ def main():
 
     if len(cases) == 1:
         case = cases[0]
-        p.plot_structure(case, mode="xz")
+        # p.plot_structure(case, mode="xz")
         p.plot_spectrum(case, do_thresholds=False, absorption=False, filter_under=10.0, mode='PSD')
         p.plot_spectrum(case, do_thresholds=False, absorption=False, filter_under=10.0, octave=False, smooth=True, mode='PSD')
-        p.plot_polar(case)
-        p.plot_cylinder(case)
-        p.plot_distance_decay(case, turbine_data=True)
-        p.plot_line(case)
-        p.plot_sliceXY(case)
-        p.plot_sliceXZ(case)
-        p.plot_sliceVertical(case)
-        p.compute_sphere_metrics(case)
-        p.compute_cylinder_metrics(case)
-        p.compute_point_source(case)
+        # p.plot_polar(case)
+        # p.plot_cylinder(case)
+        # p.plot_distance_decay(case, turbine_data=True)
+        # p.plot_line(case)
+        # p.plot_sliceXY(case)
+        # p.plot_sliceXZ(case)
+        # p.plot_sliceVertical(case)
+        # p.compute_sphere_metrics(case)
+        # p.compute_cylinder_metrics(case)
+        # p.compute_point_source(case)
     else:
         pc.plot_spectrum(cases, do_thresholds=False, absorption=False, filter_under=0.0, mode='PSD')
         pc.plot_spectrum(cases, do_thresholds=False, absorption=False, filter_under=0.0, octave=False, mode='PSD', smooth=False)

@@ -10,16 +10,104 @@ Institution: Universidad Politecnica de Madrid - ETSIAE
 Date: 09/2026
 """
 
+import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 import plot_utils as pu
 import utils.AcousticUtils as au
 import utils.EnvironmentalData as ed
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 # NumPy >= 2.0 renamed trapz to trapezoid
 trapezoid = getattr(np, "trapezoid", None) or np.trapz
 
+
+# ---------- Helpers ---------- #
+def get_curve(case            : dict  = None,     # [-] Dictionary containing simulation data
+              step            : str   = None,     # [-] Step whose observers form the curve: 'decay' or 'line'
+              mode            : str   = 'OASPL',  # [-] Magnitude to plot: 'OASPL', 'SPL', 'PSD', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
+              target_frequency: float = 0.88,     # [Hz] Target frequency for single-frequency modes
+              absorption      : bool  = True,     # [-] Whether to apply absorption attenuation
+              filter_under    : float = None,     # [Hz] Lower frequency cutoff (f >= filter_under)
+              filter_over     : float = None,     # [Hz] Upper frequency cutoff (f <= filter_over)
+              name            : str   = None):    # [-] Name of the calling plot, for the messages
+    """
+    Magnitude of the pressure of one case along the distances of its 'decay' or 'line' step: the curve plot_distance_decay
+    and plot_line draw (one per wind speed with --ws). Distances without data (NaN) stay NaN.
+
+    Returns
+    -------
+    r, vals, unit_label, title_extra : distances, magnitude, label of the y axis and note of the title
+        ('at 0.88 Hz' for the single-frequency modes, empty for OASPL). None if the case cannot be plotted.
+    """
+
+    p     = case[f"P_{step}"]
+    Freqs = case["Freqs"]
+    df    = pu.get_bin_width(Freqs)         # Frequency bin width [Hz] for 'PSD'
+    r     = case[f"Distances_{step}"]
+    p_ref = case["p_ref"]
+
+    if not pu.is_valid(p, name):
+        return None
+
+    # Filter frequencies
+    freq_mask = np.ones(len(Freqs), dtype=bool)
+    if filter_under is not None:
+        freq_mask &= (Freqs >= filter_under)
+    if filter_over is not None:
+        freq_mask &= (Freqs <= filter_over)
+    if not np.any(freq_mask):
+        print(f"{name}(): no frequencies match the specified filter bounds!")
+        return None
+
+    p, Freqs = p[freq_mask], Freqs[freq_mask]
+
+    mode = mode.upper()
+
+    # Select mode
+    title_extra = ""
+    if mode == 'OASPL':
+        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, r, enbw=case["ENBW"])
+        unit_label = r"OASPL [dB re $\mu$ Pa]"
+    else:
+        idx = np.argmin(np.abs(Freqs - target_frequency))
+        f   = Freqs[idx]
+        title_extra = f"at {f:.2f} Hz"
+
+        vals, unit_label = pu.convert_to(p[idx, :], mode, df, enbw=case["ENBW"])
+        if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, r)
+
+    return r, vals, unit_label, title_extra
+
+def get_ws_curves(case            : dict  = None,     # [-] Dictionary containing simulation data
+                  step            : str   = None,     # [-] 'decay' or 'line'
+                  name            : str   = None,     # [-] Name of the calling plot, for the messages
+                  **kwargs):                          # [-] Arguments of get_curve
+    """
+    Curves of a plot of a 'decay' or 'line' step: the case alone or, with --ws (case["WS_cases"]), one per wind
+    speed. Wind speeds whose file lacks the step, or that cannot be plotted, are left out with a message.
+
+    Returns
+    -------
+    curves, ws_mode : list of (dict, tuple), bool
+        Case and its get_curve() result, by increasing wind speed; whether the curves are wind speeds.
+    """
+
+    cases, ws_mode = pu.get_ws_cases(case)
+
+    curves = []
+    for c in cases:
+        if not c[f"has_{step}"]:
+            print(f"{name}(): {c['Name']} has no {step} data, left out")
+            continue
+
+        curve = get_curve(c, step, name=name, **kwargs)
+        if curve is not None:
+            curves.append((c, curve))
+
+    return curves, ws_mode
 
 
 # ---------- Structural Plots ---------- #
@@ -180,39 +268,23 @@ def plot_structure(case   : dict  = None,       # [-] Dictionary containing simu
 
 
 # ---------- Spectrum Plots ---------- #
-def plot_spectrum(case         : dict  = None,      # [-] Dictionary containing simulation data
-                  mode         : str   = 'SPL',     # [-] Selects Sound Pressure/Power Level or PSD. 'SPL', 'PSD' or 'SWL'
-                  absorption   : bool  = True,      # [-] Wheter to apply approximate absorption attenuation
-                  octave       : bool  = True,      # [-] 1/3 octave or fine resolution
-                  filter_under : float = None,      # [Hz] Minimum frequency threshold
-                  filter_over  : float = None,      # [Hz] Maximum frequency threshold
-                  do_thresholds: bool  = False,     # [-] Whether to plot regulatory/reference thresholds
-                  smooth       : bool  = True,      # [-] Narrowband only: smooth every observer curve too (False: only the means)
-                  smooth_fraction: int = 12,        # [-] Narrowband only: smoothing window, 1/N octave (None: no smoothing at all)
-                  figsize      : tuple = (10,5),    # [-] Figure size
-                  ax_in        : plt.Axes = None):  # [-] Optional external axes for subplots
+def get_spectrum(case         : dict  = None,      # [-] Dictionary containing simulation data
+                 mode         : str   = 'SPL',     # [-] 'SPL' or 'PSD'
+                 absorption   : bool  = True,      # [-] Wheter to apply approximate absorption attenuation
+                 octave       : bool  = True,      # [-] 1/3 octave or fine resolution
+                 filter_under : float = None,      # [Hz] Minimum frequency threshold
+                 filter_over  : float = None):     # [Hz] Maximum frequency threshold
     """
-    Plots the acoustic spectrum. Observers without data (NaN, inside the structure) are left out with a
-    message. If every observer with data lies at the same distance to the axis, their energetic mean
-    (solid black) and arithmetic dB mean (dashed black) are added. In narrowband the means are always
-    smoothed over 1/smooth_fraction octave, so they read as a trend instead of a saw, and with smooth=True
-    so is every observer curve. The means are computed from the raw curves either way, and OASPL never
-    sees the smoothing.
+    Spectrum of every observer of one case, as plot_spectrum draws it (once per wind speed with --ws): SPL or
+    PSD in dB, narrowband or 1/3 octave, within the frequency filter, and the OASPL of every observer.
 
     Returns
     -------
-    fig, ax : matplotlib.figure.Figure, matplotlib.axes.Axes
-        The generated figure and axes objects for further editing.
+    spectrum : dict
+        Freqs, spl (Nf, Nobs), oaspl (Nobs,), distances (Nobs,) to the turbine axis and ylabel. None if the
+        case cannot be plotted.
     """
 
-    if not case["has_spectrums"]:
-        print("plot_spectrum(): no spectrum data, skipping")
-        return None, None
-
-    tag = case["Case_type"]
-    color = pu.get_case_color(case)
-
-    # Extract data
     Freqs     = case["Freqs"]
     Observers = case["Obs_spectrums"]
     p         = case["P_spectrums"]
@@ -220,7 +292,7 @@ def plot_spectrum(case         : dict  = None,      # [-] Dictionary containing 
     p_ref     = case["p_ref"]
 
     if not pu.is_valid(p, "plot_spectrum"):
-        return None, None
+        return None
 
     # Distance to turbine axis
     distances = np.sqrt((Observers[:,0] - AxisPos[0])**2 + (Observers[:,1] - AxisPos[1])**2)
@@ -247,7 +319,7 @@ def plot_spectrum(case         : dict  = None,      # [-] Dictionary containing 
         mask &= (Freqs <= filter_over)
     if not np.any(mask):
         print("plot_spectrum(): no frequencies match the specified filter bounds!")
-        return None, None
+        return None
 
     Freqs = Freqs[mask]
     spl   = spl[mask]
@@ -263,6 +335,62 @@ def plot_spectrum(case         : dict  = None,      # [-] Dictionary containing 
             shape = [-1] + [1] * (spl.ndim - 1)
             spl   = spl - 10.0 * np.log10(bw / df).reshape(shape)
 
+    return dict(Freqs=Freqs, spl=spl, oaspl=oaspl, distances=distances, ylabel=ylabel)
+
+def plot_spectrum(case         : dict  = None,      # [-] Dictionary containing simulation data
+                  mode         : str   = 'SPL',     # [-] Selects Sound Pressure/Power Level or PSD. 'SPL', 'PSD' or 'SWL'
+                  absorption   : bool  = True,      # [-] Wheter to apply approximate absorption attenuation
+                  octave       : bool  = True,      # [-] 1/3 octave or fine resolution
+                  filter_under : float = None,      # [Hz] Minimum frequency threshold
+                  filter_over  : float = None,      # [Hz] Maximum frequency threshold
+                  do_thresholds: bool  = False,     # [-] Whether to plot regulatory/reference thresholds
+                  smooth       : bool  = True,      # [-] Narrowband only: smooth every observer curve too (False: only the means)
+                  smooth_fraction: int = 12,        # [-] Narrowband only: smoothing window, 1/N octave (None: no smoothing at all)
+                  figsize      : tuple = (10,5),    # [-] Figure size
+                  ax_in        : plt.Axes = None):  # [-] Optional external axes for subplots
+    """
+    Plots the acoustic spectrum. Observers without data (NaN, inside the structure) are left out with a
+    message. If every observer with data lies at the same distance to the axis, their energetic mean
+    (solid black) and arithmetic dB mean (dashed black) are added. In narrowband the means are always
+    smoothed over 1/smooth_fraction octave, so they read as a trend instead of a saw, and with smooth=True
+    so is every observer curve. The means are computed from the raw curves either way, and OASPL never
+    sees the smoothing.
+
+    With --ws the spectra of every wind speed are drawn: color = wind speed and line style = observer, with a
+    legend of each below the axes. Observers at the same distance to the axis are not drawn one by one but
+    as their energetic mean and the range they span (shaded), so the plot stays readable.
+
+    Returns
+    -------
+    fig, ax : matplotlib.figure.Figure, matplotlib.axes.Axes
+        The generated figure and axes objects for further editing.
+    """
+
+    if not case["has_spectrums"]:
+        print("plot_spectrum(): no spectrum data, skipping")
+        return None, None
+
+    tag   = case["Case_type"]
+    color = pu.get_case_color(case)
+
+    cases, ws_mode = pu.get_ws_cases(case)
+
+    spectra = []
+    for c in cases:
+        if not c["has_spectrums"]:
+            print(f"plot_spectrum(): {c['Name']} has no spectrum data, left out")
+            continue
+
+        spectrum = get_spectrum(c, mode, absorption, octave, filter_under, filter_over)
+        if spectrum is not None:
+            spectra.append((c, spectrum))
+
+    if not spectra:
+        return None, None
+
+    ylabel = spectra[0][1]["ylabel"]
+    Freqs  = spectra[0][1]["Freqs"]
+
 
     # Plot
     if ax_in is None:
@@ -271,53 +399,95 @@ def plot_spectrum(case         : dict  = None,      # [-] Dictionary containing 
         ax = ax_in
         fig = ax.figure
 
-    linestyles   = pu.get_line_styles()
-    num_observers = spl.shape[1] if spl.ndim> 1 else 1
-    if num_observers > len(linestyles): print("plot_spectrum(): too many observers, linestyles will be repeated")
-    shades = pu.get_color_shades(color, num_observers)    # Same case color, one shade per observer
-    valid  = []                                           # Observers with data, for the mean spectrum
+    linestyles = pu.get_line_styles()
 
     # Narrowband smoothing: of every curve (smooth=True) or only of the means; the raw spl feeds the means
     smooth_means  = (not octave) and bool(smooth_fraction)
     smooth_curves = smooth_means and smooth
-    spl_plot      = au.smooth_fractional_octave(Freqs, spl, smooth_fraction, domain='db') if smooth_curves else spl
     smooth_note   = f"1/{smooth_fraction} oct. smoothed" if smooth_means else ""
 
-    for i in range(num_observers):
-        ls = linestyles[i % len(linestyles)]
-        y_data = spl_plot[:,i] if spl_plot.ndim > 1 else spl_plot
+    ws_handles, ws_labels = [], []                        # --ws: one entry per wind speed (color)
+    style_handles, style_labels = [], []                  # --ws: one entry per observer (line style) or mean
 
-        # Observers are told apart by their coordinates: several of them may share the same distance
-        x_obs, y_obs, z_obs = Observers[i]
-        coords = f"({x_obs:.1f}, {y_obs:.1f}, {z_obs:.1f}) m"
+    for c, spectrum in spectra:
+        Freqs, spl, oaspl, distances = spectrum["Freqs"], spectrum["spl"], spectrum["oaspl"], spectrum["distances"]
+        Observers = c["Obs_spectrums"]
 
-        # Observers inside the structure carry no data (NaN at every frequency)
-        if np.all(np.isnan(y_data)):
-            print(f"plot_spectrum(): observer {coords} has no data (NaN, inside the structure), skipping it")
-            continue
+        num_observers = spl.shape[1] if spl.ndim> 1 else 1
+        if num_observers > len(linestyles): print("plot_spectrum(): too many observers, linestyles will be repeated")
 
-        ax.semilogx(Freqs, y_data, ls, color=shades[i], label=coords)
-        valid.append(i)
+        spl_plot = au.smooth_fractional_octave(Freqs, spl, smooth_fraction, domain='db') if smooth_curves else spl
 
-        print(f"\nObserver: {coords} | r = {distances[i]:.1f} m")
-        print(f"{tag}: OASPL = {oaspl[i]:.1f}")
+        # Observers with data: those inside the structure carry NaN at every frequency
+        valid = [i for i in range(num_observers) if not np.all(np.isnan(spl_plot[:,i] if spl_plot.ndim > 1 else spl_plot))]
 
-    # Observers all at the same distance to the axis (e.g. around the platform): energetic and dB means
-    if len(valid) > 1 and np.allclose(distances[valid], distances[valid[0]], rtol=0.0, atol=0.1):
-        spl_valid = spl[:, valid]
-        mean_energetic = 10.0 * np.log10(np.nanmean(10.0**(spl_valid / 10.0), axis=1))    # Mean of p^2, in dB
-        mean_db        = np.nanmean(spl_valid, axis=1)                                     # Mean of the levels
+        # Observers all at the same distance to the axis (e.g. around the platform): energetic and dB means
+        same_distance = len(valid) > 1 and np.allclose(distances[valid], distances[valid[0]], rtol=0.0, atol=0.1)
 
-        # Narrowband: each mean smoothed in its own domain (power for the energetic one, dB for the other)
-        if smooth_means:
-            mean_energetic = au.smooth_fractional_octave(Freqs, mean_energetic, smooth_fraction, domain='db')
-            mean_db        = au.smooth_fractional_octave(Freqs, mean_db, smooth_fraction, domain='mean')
+        if ws_mode:
+            color  = c["WS_color"]
+            kwargs = dict(lw=c["WS_lw"], zorder=c["WS_zorder"])
+            ws_handles.append(Line2D([], [], color=color, lw=c["WS_lw"]))
+            ws_labels.append(pu.get_ws_label(c))
+        else:
+            kwargs = {}
 
-        # Only the means smoothed: the note goes on their labels (otherwise it goes on the title)
-        label_extra = f", {smooth_note}" if smooth_means and not smooth_curves else ""
+        shades = [color] * num_observers if ws_mode else pu.get_color_shades(color, num_observers)    # One shade per observer
 
-        ax.semilogx(Freqs, mean_energetic, '-' , color='k', label=f"Energetic mean{label_extra}")
-        ax.semilogx(Freqs, mean_db       , '--', color='k', label=f"Arithmetic mean (dB){label_extra}")
+        for i in range(num_observers):
+            ls = linestyles[i % len(linestyles)]
+            y_data = spl_plot[:,i] if spl_plot.ndim > 1 else spl_plot
+
+            # Observers are told apart by their coordinates: several of them may share the same distance
+            x_obs, y_obs, z_obs = Observers[i]
+            coords = f"({x_obs:.1f}, {y_obs:.1f}, {z_obs:.1f}) m"
+
+            # Observers inside the structure carry no data (NaN at every frequency)
+            if i not in valid:
+                print(f"plot_spectrum(): observer {coords} has no data (NaN, inside the structure), skipping it")
+                continue
+
+            if not (ws_mode and same_distance):
+                ax.semilogx(Freqs, y_data, ls, color=shades[i], label=None if ws_mode else coords, **kwargs)
+
+            # The observers are the same at every wind speed: the line styles are explained once
+            if ws_mode and c is spectra[0][0] and not same_distance:
+                style_handles.append(ax.plot([], [], ls, color='k')[0])
+                style_labels.append(coords)
+
+            print(f"\nObserver: {coords} | r = {distances[i]:.1f} m")
+            print(f"{tag}{', ' + pu.get_ws_label(c) if ws_mode else ''}: OASPL = {oaspl[i]:.1f}")
+
+        if same_distance:
+            spl_valid = spl[:, valid]
+            mean_energetic = 10.0 * np.log10(np.nanmean(10.0**(spl_valid / 10.0), axis=1))    # Mean of p^2, in dB
+            mean_db        = np.nanmean(spl_valid, axis=1)                                     # Mean of the levels
+
+            # Narrowband: each mean smoothed in its own domain (power for the energetic one, dB for the other)
+            if smooth_means:
+                mean_energetic = au.smooth_fractional_octave(Freqs, mean_energetic, smooth_fraction, domain='db')
+                mean_db        = au.smooth_fractional_octave(Freqs, mean_db, smooth_fraction, domain='mean')
+
+            # Only the means smoothed: the note goes on their labels (otherwise it goes on the title)
+            label_extra = f", {smooth_note}" if smooth_means and not smooth_curves else ""
+
+            if ws_mode:
+                with warnings.catch_warnings():     # A frequency where every observer is NaN stays NaN
+                    warnings.simplefilter("ignore", category=RuntimeWarning)
+                    spl_min, spl_max = np.nanmin(spl_valid, axis=1), np.nanmax(spl_valid, axis=1)
+                if smooth_means:
+                    spl_min = au.smooth_fractional_octave(Freqs, spl_min, smooth_fraction, domain='db')
+                    spl_max = au.smooth_fractional_octave(Freqs, spl_max, smooth_fraction, domain='db')
+
+                ax.semilogx(Freqs, mean_energetic, '-', color=color, **kwargs)
+                ax.fill_between(Freqs, spl_min, spl_max, color=color, alpha=0.15, lw=0, zorder=kwargs["zorder"])
+
+                if c is spectra[0][0]:
+                    style_handles += [Line2D([], [], color='k', lw=2), Patch(facecolor='k', alpha=0.15, lw=0)]
+                    style_labels  += [f"Energetic mean{label_extra}", "Range of the observers"]
+            else:
+                ax.semilogx(Freqs, mean_energetic, '-' , color='k', label=f"Energetic mean{label_extra}")
+                ax.semilogx(Freqs, mean_db       , '--', color='k', label=f"Arithmetic mean (dB){label_extra}")
 
     # Animal thresholds
     if do_thresholds:
@@ -345,7 +515,19 @@ def plot_spectrum(case         : dict  = None,      # [-] Dictionary containing 
     ax.grid(True, which='both', ls='--', alpha=0.4)
     ax.set_ylim(bottom=0.)
 
-    if do_thresholds:
+    if ws_mode:
+        # Thresholds join the line styles in the second legend
+        if do_thresholds:
+            handles, labels = ax.get_legend_handles_labels()
+            style_handles += handles
+            style_labels  += labels
+
+        pu.add_ws_legends(ax, ws_handles, ws_labels, style_handles, style_labels,
+                          style_title=None if do_thresholds else ("Observers" if style_handles else None),
+                          ncol_style=2 if do_thresholds else 1)
+        if ax_in is None:
+            fig.tight_layout()
+    elif do_thresholds:
         ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.16), ncol=3, frameon=False)
         if ax_in is None:
             fig.tight_layout(rect=[0, 0.06, 1, 1])
@@ -355,12 +537,39 @@ def plot_spectrum(case         : dict  = None,      # [-] Dictionary containing 
             fig.tight_layout()
 
     if ax_in is None:
-        pu.set_figure_name(fig, "spectrum", mode, "octave" if octave else "narrowband")
+        pu.set_figure_name(fig, "spectrum", mode.upper(), "octave" if octave else "narrowband", "allws" if ws_mode else "")
 
     return fig, ax
 
 
 # ---------- Polar Plots ---------- #
+def get_bands(Freqs: np.ndarray = None,     # [Hz] Frequencies of the case
+              bands: list       = None):    # [Hz] Frequency band limits for OASPL
+    """
+    Frequency bands of the OASPL polar plot, from the lowest frequency to the highest (at least 1000 Hz).
+
+    Returns
+    -------
+    band_labels, band_masks : list of str, list of np.ndarray
+        Label of every band and boolean mask of its frequencies (all of them if there are no limits).
+    """
+
+    fmin, fmax = Freqs.min(), max(Freqs.max(), 1000)
+
+    if not bands:
+        return [f"All ({fmin:.2g}-{fmax:.2g} Hz)"], [np.ones(len(Freqs), dtype=bool)]
+
+    cuts = sorted(bands)
+    edges = [fmin] + cuts + [fmax]
+    band_labels, band_masks = [], []
+    for i in range(len(edges)-1):
+        lo, hi = edges[i], edges[i+1]
+        mask   = Freqs <= hi if i == 0 else (Freqs > lo) & (Freqs <= hi)
+        band_masks.append(mask)
+        band_labels.append(f"{lo:.4g}-{hi:.4g} Hz")
+
+    return band_labels, band_masks
+
 def plot_polar(case             : dict  = None,        # [-] Dictionary containing simulation data
                mode             : str   = 'OASPL',     # [-] Magnitude to plot: 'OASPL', 'SPL', 'PSD', or 'ABS'
                target_frequency : float = 0.88,        # [Hz] Target frequency for 'SPL', 'PSD' or 'ABS' modes
@@ -371,6 +580,9 @@ def plot_polar(case             : dict  = None,        # [-] Dictionary containi
     """
     Plots polar directivity diagram. Angles without data (NaN, inside the structure) are gaps in the curves
     and holes down to the centre in their fill.
+
+    With --ws every wind speed is drawn: color = wind speed and, in OASPL, line style = frequency band, with
+    a legend of each below the axes. The curves are not filled.
 
     Returns
     -------
@@ -385,37 +597,19 @@ def plot_polar(case             : dict  = None,        # [-] Dictionary containi
     tag    = case["Case_type"]
     colors = pu.get_band_colors()
 
-    # Extract data
-    theta      = case["Theta_deg_polar"]
-    p          = case["P_polar"]
-    Freqs      = case["Freqs"]
-    df         = pu.get_bin_width(Freqs)   # Frequency bin width [Hz] for 'PSD'
-    p_ref      = case["p_ref"]
-    r          = case["R_polar"]
-    Observers  = case["Obs_polar"]
-    cx, cy, cz = case["Center_polar"][0], case["Center_polar"][1], case["Z_polar"]
+    cases, ws_mode = pu.get_ws_cases(case)
 
-    if not pu.is_valid(p, "plot_polar"):
+    polars = []
+    for c in cases:
+        if not c["has_polar"]:
+            print(f"plot_polar(): {c['Name']} has no polar data, left out")
+        elif pu.is_valid(c["P_polar"], "plot_polar"):
+            polars.append(c)
+
+    if not polars:
         return None, None
 
-    theta_rad  = np.deg2rad(theta)
-    fmin, fmax = Freqs.min(), max(Freqs.max(), 1000)
-    N_obs      = len(Observers)
-
-    # Filter frequencies within specified bands
-    if not bands:
-        band_labels = [f"All ({fmin:.2g}-{fmax:.2g} Hz)"]
-        band_masks  = [np.ones(len(Freqs), dtype=bool)]
-    else:
-        cuts = sorted(bands)
-        edges = [fmin] + cuts + [fmax]
-        band_labels, band_masks = [], []
-        for i in range(len(edges)-1):
-            lo, hi = edges[i], edges[i+1]
-            mask   = Freqs <= hi if i == 0 else (Freqs > lo) & (Freqs <= hi)
-            band_masks.append(mask)
-            band_labels.append(f"{lo:.4g}-{hi:.4g} Hz")
-
+    band_labels, _ = get_bands(polars[0]["Freqs"], bands)
     n_bands = len(band_labels)
     if n_bands > len(colors): print("plot_polar(): too many bands, colors will be repeated")
     colors = [colors[i % len(colors)] for i in range(n_bands)]
@@ -428,73 +622,95 @@ def plot_polar(case             : dict  = None,        # [-] Dictionary containi
         ax = ax_in
         fig = ax.figure
 
-    distances = np.full(N_obs, r)
-    theta_plot = np.append(theta_rad, theta_rad[0])
-
     ax.set_theta_zero_location("W")
     ax.set_theta_direction(-1)
 
     mode = mode.upper()
     name_extra = ""
 
-    if mode == "OASPL":
+    # Curves of every case: (case, angles, magnitude, label, band)
+    series = []
+    for c in polars:
+        p          = c["P_polar"]
+        Freqs      = c["Freqs"]
+        df         = pu.get_bin_width(Freqs)   # Frequency bin width [Hz] for 'PSD'
+        p_ref      = c["p_ref"]
+        r          = c["R_polar"]
+        N_obs      = len(c["Obs_polar"])
 
-        all_oaspl_vals = []
-        for label, mask, color in zip(band_labels, band_masks, colors):
-            # A band without frequencies would give a fake -60 dB curve
-            if not np.any(mask):
-                print(f"plot_polar(): no frequencies in band {label}, skipping it")
-                continue
+        theta_rad  = np.deg2rad(c["Theta_deg_polar"])
+        distances  = np.full(N_obs, r)
+        theta_plot = np.append(theta_rad, theta_rad[0])
 
-            oaspl = au.OASPL_band(p, mask, p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
-            all_oaspl_vals.append((oaspl, label, color))
+        if mode == "OASPL":
+            labels, masks = get_bands(Freqs, bands)
+            for b, (label, mask) in enumerate(zip(labels, masks)):
+                # A band without frequencies would give a fake -60 dB curve
+                if not np.any(mask):
+                    print(f"plot_polar(): no frequencies in band {label}, skipping it")
+                    continue
 
-        if all_oaspl_vals:
-            vals = np.concatenate([oaspl for oaspl, _, _ in all_oaspl_vals])
-            rmin, rmax = np.nanmin(vals), np.nanmax(vals)
-            if rmax> 0: rmin = max(0., rmin)
-            margin = abs(rmax-rmin) * 0.1 if rmax != rmin else abs(rmin) * 0.1
-            if margin == 0: margin = 1.0
+                oaspl = au.OASPL_band(p, mask, p_ref, absorption, Freqs, distances, enbw=c["ENBW"])
+                series.append((c, theta_plot, np.append(oaspl, oaspl[0]), label, b))
 
-            for oaspl, label, color in all_oaspl_vals:
-                oaspl_plot = np.append(oaspl, oaspl[0])
+        else:
+            # Find closest frequency index for single-frequency modes
+            idx = np.argmin(np.abs(Freqs - target_frequency))
+            f   = Freqs[idx]
+            name_extra = f"{f:.2f}Hz"
 
-                # Plot (angles without data: gap in the curve, fill collapsed to the centre)
-                ax.plot(theta_plot, oaspl_plot, lw=2, color=color, label=label)
-                ax.fill(theta_plot, np.where(np.isfinite(oaspl_plot), oaspl_plot, rmin - margin), alpha=0.08, color=color)
+            vals, unit_label = pu.convert_to(p[idx, :], mode, df, enbw=c["ENBW"])
 
-            ax.set_rmin(rmin - margin)
+            if absorption and mode in ("SPL", "PSD"): vals = au.add_absorption(f, vals, distances)
 
-    else:
-        # Find closest frequency index for single-frequency modes
-        idx = np.argmin(np.abs(Freqs - target_frequency))
-        f   = Freqs[idx]
-        p = p[idx, :]
-        name_extra = f"{f:.2f}Hz"
+            series.append((c, theta_plot, np.append(vals, vals[0]), f"{unit_label} at {f:.2f} [Hz]", 0))
 
-        vals, unit_label = pu.convert_to(p, mode, df, enbw=case["ENBW"])
-
-        if absorption and mode in ("SPL", "PSD"): vals = au.add_absorption(f, vals, distances)
-
-        vals_plot = np.append(vals, vals[0])
-        color = colors[0]
-
+    if series:
+        vals = np.concatenate([vals_plot for _, _, vals_plot, _, _ in series])
         rmin, rmax = np.nanmin(vals), np.nanmax(vals)
+        if mode == "OASPL" and rmax > 0: rmin = max(0., rmin)
         margin = abs(rmax-rmin) * 0.1 if rmax != rmin else abs(rmin) * 0.1
         if margin == 0: margin = 1.0 # Fallback
 
         # Plot (angles without data: gap in the curve, fill collapsed to the centre)
-        ax.plot(theta_plot, vals_plot, lw=2, color=color, label= f"{unit_label} at {f:.2f} [Hz]")
-        ax.fill(theta_plot, np.where(np.isfinite(vals_plot), vals_plot, rmin - margin), alpha=0.08, color=color)
+        linestyles = pu.get_line_styles()
+        for c, theta_plot, vals_plot, label, b in series:
+            if ws_mode:
+                ax.plot(theta_plot, vals_plot, linestyles[b % len(linestyles)] if mode == "OASPL" else '-',
+                        lw=c["WS_lw"], color=c["WS_color"], zorder=c["WS_zorder"])
+            else:
+                ax.plot(theta_plot, vals_plot, lw=2, color=colors[b], label=label)
+                ax.fill(theta_plot, np.where(np.isfinite(vals_plot), vals_plot, rmin - margin), alpha=0.08, color=colors[b])
 
         ax.set_rmin(rmin - margin)
 
     ax.set_title(f"{tag}")
-    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.12), ncol=3, frameon=False)
+
+    if ws_mode:
+        ws_handles = [Line2D([], [], color=c["WS_color"], lw=c["WS_lw"]) for c in polars]
+        ws_labels  = [pu.get_ws_label(c) for c in polars]
+
+        # OASPL: the line styles of the bands (with a single band there is nothing to tell apart)
+        band_handles, band_labels = [], []
+        if mode == "OASPL":
+            labels = [label for c, _, _, label, b in series if c is polars[0]]
+            bs     = [b for c, _, _, _, b in series if c is polars[0]]
+            if len(labels) > 1:
+                band_handles = [ax.plot([], [], linestyles[b % len(linestyles)], color='k')[0] for b in bs]
+                band_labels  = labels
+        elif series:
+            ax.set_title(f"{tag}\n{series[0][3]}")
+
+        pu.add_ws_legends(ax, ws_handles, ws_labels, band_handles, band_labels, style_title="Frequency band", offset=0.5)
+    else:
+        ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.12), ncol=3, frameon=False)
 
     if ax_in is None:
-        fig.tight_layout(rect=[0, 0.06, 1, 1])
-        pu.set_figure_name(fig, "polar", mode, name_extra)
+        if ws_mode:
+            fig.tight_layout()
+        else:
+            fig.tight_layout(rect=[0, 0.06, 1, 1])
+        pu.set_figure_name(fig, "polar", mode, name_extra, "allws" if ws_mode else "")
 
     return fig, ax
 
@@ -641,6 +857,8 @@ def plot_distance_decay(case            : dict  = None,         # [-] Dictionary
     """
     Plots acoustic magnitude decay over distance (1D line plot). Distances without data (NaN, inside the
     structure) are gaps in the curve; the 1/r and 1/r^2 references start at the first distance with data.
+    With --ws one curve per wind speed (color = wind speed, legend below the axes); the references (black)
+    start at the curve of the case itself and the curves are not filled.
 
     Returns
     -------
@@ -651,38 +869,13 @@ def plot_distance_decay(case            : dict  = None,         # [-] Dictionary
         print("plot_distance_decay(): no decay data, skipping")
         return None, None
 
-    tag = case["Case_type"]
+    tag    = case["Case_type"]
+    do_log = case["Logspace_decay"]
 
-    # Extract data
-    p         = case["P_decay"]
-    Freqs     = case["Freqs"]
-    df        = pu.get_bin_width(Freqs)  # Frequency bin width [Hz] for 'PSD'
-    observers = case["Obs_decay"]
-    r         = case["Distances_decay"]
-    z         = case["Z_decay"]
-    rlim      = case["Distances_decay"]
-    p_ref     = case["p_ref"]
-    do_log    = case["Logspace_decay"]
-
-    if not pu.is_valid(p, "plot_distance_decay"):
-            return None, None
-
-    Nfreqs, Nr = len(Freqs), len(r)
-
-    # Filter frequencies
-    freq_mask = np.ones(Nfreqs, dtype=bool)
-    if filter_under is not None:
-        freq_mask &= (Freqs >= filter_under)
-    if filter_over is not None:
-        freq_mask &= (Freqs <= filter_over)
-    if not np.any(freq_mask):
-        print("plot_distance_decay(): no frequencies match the specified filter bounds!")
+    curves, ws_mode = get_ws_curves(case, "decay", "plot_distance_decay", mode=mode, target_frequency=target_frequency,
+                                    absorption=absorption, filter_under=filter_under, filter_over=filter_over)
+    if not curves:
         return None, None
-
-    p, Freqs = p[freq_mask], Freqs[freq_mask]
-    NFreqs = len(Freqs)
-
-    mode = mode.upper()
 
     if ax_in is None:
         fig, ax = plt.subplots(figsize=figsize)
@@ -690,42 +883,30 @@ def plot_distance_decay(case            : dict  = None,         # [-] Dictionary
         ax = ax_in
         fig = ax.figure
 
-    title_extra = ""
-    color = pu.get_case_color(case)
-
-    # Select mode
-    if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, r, enbw=case["ENBW"])
-        unit_label = r"OASPL [dB re $\mu$ Pa]"
-    else:
-        idx = np.argmin(np.abs(Freqs - target_frequency))
-        f   = Freqs[idx]
-        p   = p[idx,:]
-        title_extra = f"at {f:.2f} Hz"
-
-        vals, unit_label = pu.convert_to(p, mode, df, enbw=case["ENBW"])
-        if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, r)
+    draw = ax.semilogx if do_log else ax.plot
 
     # Plot
+    handles, labels = [], []
+    for c, (r, vals, unit_label, title_extra) in curves:
+        if ws_mode:
+            color = c["WS_color"]
+            handles.append(draw(r, vals, lw=c["WS_lw"], color=color, zorder=c["WS_zorder"])[0])
+        else:
+            color = pu.get_case_color(case)
+            draw(r, vals, lw=2, color=color)
+        labels.append(pu.get_ws_label(c))
+
+    # References from the first distance with data of the case itself (the first curve if it was left out)
+    c, (r, vals, unit_label, title_extra) = next((curve for curve in curves if curve[0] is case), curves[0])
+
     i0 = np.flatnonzero(np.isfinite(vals))[0]      # First distance with data: origin of the 1/r references
-    if do_log:
-        ax.semilogx(r, vals, lw=2, color=color)
-        min_val = np.nanmin(vals)
-        if not turbine_data or True:
-            ref_vals_1 = vals[i0] - 10 * np.log10(np.maximum(r, np.finfo(float).eps) / r[i0])
-            ref_vals_2 = vals[i0] - 20 * np.log10(np.maximum(r, np.finfo(float).eps) / r[i0])
-            ax.semilogx(r, ref_vals_1, '--', color=color, alpha=0.4, lw=1.0, label=r"$1/r$")
-            ax.semilogx(r, ref_vals_2, ':', color=color, alpha=0.4, lw=1.0, label=r"$1/r^2$")
-            min_val = min(ref_vals_2.min(), np.nanmin(vals))
-    else:
-        ax.plot(r, vals, lw=2, color=color)
-        min_val = np.nanmin(vals)
-        if not turbine_data or True:
-            ref_vals_1 = vals[i0] - 10 * np.log10(np.maximum(r, np.finfo(float).eps) / r[i0])
-            ref_vals_2 = vals[i0] - 20 * np.log10(np.maximum(r, np.finfo(float).eps) / r[i0])
-            ax.plot(r, ref_vals_1, '--', color=color, alpha=0.4, lw=1.0, label=r"$1/r$")
-            ax.plot(r, ref_vals_2, ':', color=color, alpha=0.4, lw=1.0, label=r"$1/r^2$")
-            min_val = min(ref_vals_2.min(), np.nanmin(vals))
+    ref_color  = 'k' if ws_mode else color
+    ref_vals_1 = vals[i0] - 10 * np.log10(np.maximum(r, np.finfo(float).eps) / r[i0])
+    ref_vals_2 = vals[i0] - 20 * np.log10(np.maximum(r, np.finfo(float).eps) / r[i0])
+    draw(r, ref_vals_1, '--', color=ref_color, alpha=0.4, lw=1.0, label=r"$1/r$")
+    draw(r, ref_vals_2, ':', color=ref_color, alpha=0.4, lw=1.0, label=r"$1/r^2$")
+
+    min_val = min(ref_vals_2.min(), *(np.nanmin(vals_c) for _, (_, vals_c, _, _) in curves))
 
     # Plot data from Ge2025
     if turbine_data:
@@ -751,17 +932,21 @@ def plot_distance_decay(case            : dict  = None,         # [-] Dictionary
         ax.semilogx(x_fit, y_fit, lw=2.0, color="lightcoral", ls="--", alpha=0.5, label="Regresion -20.4 dB/decade")
 
     ax.grid(True, which='both', ls='--', alpha=0.7)
-    ax.fill_between(r, vals, min_val, alpha=0.1, color=color)
+    if not ws_mode:
+        ax.fill_between(r, vals, min_val, alpha=0.1, color=color)
 
     ax.set_xlabel("Distance, r [m]")
     ax.set_ylabel(unit_label)
-    ax.set_title(f"{tag} - {mode} {title_extra}")
-    ax.set_xlim(r.min(), r.max())
+    ax.set_title(f"{tag} - {mode.upper()} {title_extra}")
+    ax.set_xlim(min(r_c.min() for _, (r_c, _, _, _) in curves), max(r_c.max() for _, (r_c, _, _, _) in curves))
     ax.set_ylim(bottom=min_val)
+
+    if ws_mode:
+        pu.add_ws_legends(ax, handles, labels)
 
     if ax_in is None:
         fig.tight_layout()
-        pu.set_figure_name(fig, "decay", mode, title_extra)
+        pu.set_figure_name(fig, "decay", mode.upper(), title_extra, "allws" if ws_mode else "")
 
     return fig, ax
 
@@ -775,7 +960,8 @@ def plot_line(case            : dict  = None,         # [-] Dictionary containin
               ax_in           : plt.Axes = None):     # [-] Optional external axes for subplots
     """
     Plots acoustic magnitude along an arbitrary straight line between two points. Points without data (NaN,
-    inside the structure) are gaps in the curve.
+    inside the structure) are gaps in the curve. With --ws one curve per wind speed (color = wind speed,
+    legend below the axes), not filled.
 
     Returns
     -------
@@ -786,37 +972,15 @@ def plot_line(case            : dict  = None,         # [-] Dictionary containin
         print("plot_line(): no line data, skipping")
         return None, None
 
-    tag = case["Case_type"]
+    tag    = case["Case_type"]
+    p1     = case["P1_line"]
+    p2     = case["P2_line"]
+    do_log = case["Logspace_line"]
 
-    # Extract data
-    p         = case["P_line"]
-    Freqs     = case["Freqs"]
-    df        = pu.get_bin_width(Freqs) # Frequency bin width [Hz] for 'PSD'
-    r         = case["Distances_line"]  # Distances from P1 along the line
-    p1        = case["P1_line"]
-    p2        = case["P2_line"]
-    p_ref     = case["p_ref"]
-    do_log    = case["Logspace_line"]
-
-    if not pu.is_valid(p, "plot_line"):
+    curves, ws_mode = get_ws_curves(case, "line", "plot_line", mode=mode, target_frequency=target_frequency,
+                                    absorption=absorption, filter_under=filter_under, filter_over=filter_over)
+    if not curves:
         return None, None
-
-    Nfreqs, Nr = len(Freqs), len(r)
-
-    # Filter frequencies
-    freq_mask = np.ones(Nfreqs, dtype=bool)
-    if filter_under is not None:
-        freq_mask &= (Freqs >= filter_under)
-    if filter_over is not None:
-        freq_mask &= (Freqs <= filter_over)
-    if not np.any(freq_mask):
-        print("plot_line(): no frequencies match the specified filter bounds!")
-        return None, None
-
-    p, Freqs = p[freq_mask], Freqs[freq_mask]
-    NFreqs = len(Freqs)
-
-    mode = mode.upper()
 
     if ax_in is None:
         fig, ax = plt.subplots(figsize=figsize)
@@ -824,32 +988,23 @@ def plot_line(case            : dict  = None,         # [-] Dictionary containin
         ax = ax_in
         fig = ax.figure
 
-    title_extra = ""
-    color = pu.get_case_color(case)
-
-    # Select mode
-    if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, r, enbw=case["ENBW"])
-        unit_label = r"OASPL [dB re $\mu$ Pa]"
-    else:
-        idx = np.argmin(np.abs(Freqs - target_frequency))
-        f   = Freqs[idx]
-        p_f = p[idx, :]
-        title_extra = f"at {f:.2f} Hz"
-
-        vals, unit_label = pu.convert_to(p_f, mode, df, enbw=case["ENBW"])
-        if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, r)
+    draw = ax.semilogx if do_log else ax.plot
 
     # Plot
-    if do_log:
-        ax.semilogx(r, vals, lw=2, color=color)
-    else:
-        ax.plot(r, vals, lw=2, color=color)
+    handles, labels = [], []
+    for c, (r, vals, unit_label, title_extra) in curves:
+        if ws_mode:
+            color = c["WS_color"]
+            handles.append(draw(r, vals, lw=c["WS_lw"], color=color, zorder=c["WS_zorder"])[0])
+        else:
+            color = pu.get_case_color(case)
+            draw(r, vals, lw=2, color=color)
+        labels.append(pu.get_ws_label(c))
 
-    min_val = np.nanmin(vals)
+        if not ws_mode:
+            ax.fill_between(r, vals, 0, alpha=0.1, color=color)
 
     ax.grid(True, which='both', ls='--', alpha=0.7)
-    ax.fill_between(r, vals, 0, alpha=0.1, color=color)
 
     # Add text box with P1 and P2 coordinates for context
     coord_text = f"P1: {np.round(p1, 1)} m\nP2: {np.round(p2, 1)} m"
@@ -859,13 +1014,17 @@ def plot_line(case            : dict  = None,         # [-] Dictionary containin
 
     ax.set_xlabel("Distance from P1 [m]")
     ax.set_ylabel(unit_label)
-    ax.set_title(f"{tag} - {mode} {title_extra}")
-    ax.set_xlim(r.min(), r.max())
-    ax.set_ylim(np.nanmin(vals), np.nanmax(vals))
+    ax.set_title(f"{tag} - {mode.upper()} {title_extra}")
+    ax.set_xlim(min(r_c.min() for _, (r_c, _, _, _) in curves), max(r_c.max() for _, (r_c, _, _, _) in curves))
+    ax.set_ylim(min(np.nanmin(vals_c) for _, (_, vals_c, _, _) in curves),
+                max(np.nanmax(vals_c) for _, (_, vals_c, _, _) in curves))
+
+    if ws_mode:
+        pu.add_ws_legends(ax, handles, labels)
 
     if ax_in is None:
         fig.tight_layout()
-        pu.set_figure_name(fig, "line", mode, title_extra)
+        pu.set_figure_name(fig, "line", mode.upper(), title_extra, "allws" if ws_mode else "")
 
     return fig, ax
 

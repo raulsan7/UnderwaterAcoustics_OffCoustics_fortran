@@ -26,6 +26,9 @@ class AcademicStyle:
     CASE_COLORS   = ["darkblue", "darkorange", "teal"]    # Monopile, Floating (shallow), Floating (deep)
     BAND_COLORS   = ["steelblue", "tomato", "seagreen", "mediumpurple", "goldenrod", "darkcyan", "salmon", "olivedrab", "slategray", "peru"]
     LINE_STYLES   = ['-', '--', ':', '-.', '-o', '-v', '--o', ':^']
+    WS_CMAP       = "viridis"                             # Wind speeds (--ws): colormap sampled on WS_CMAP_RANGE, low to high speed
+    WS_CMAP_RANGE = (0.0, 0.8)                            # (the bright yellow end of viridis does not read on white)
+    WS_LW_RANGE   = (1.2, 4.0)                            # Wind speeds (--ws): line width from low to high speed
 
 
     P_REF = 1e-6            # [Pa] Reference Pressure for water

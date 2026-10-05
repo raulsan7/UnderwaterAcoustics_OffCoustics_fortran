@@ -113,6 +113,14 @@ def wrap_case_titles(axes : np.ndarray = None,     # [-] Axes of the comparison
         if title.startswith(label + " - "):
             ax.set_title(label + "\n" + title[len(label) + 3:])
 
+def ws_suffix(cases: list = None):     # [-] List of dictionaries containing simulation data
+    """
+    Word that tells the figures drawn with every wind speed (--ws) from the plain ones in the name they are
+    saved with.
+    """
+
+    return "allws" if any("WS_cases" in case for case in cases) else ""
+
 def add_case_legend(fig,                    # [-] Figure of the comparison
                     handles: list = None,   # [-] One handle per case
                     labels : list = None,   # [-] One label per case
@@ -205,7 +213,7 @@ def plot_spectrum(cases        : list  = None,      # [-] List of dictionaries c
             axes[i].set_ylabel("")
 
     fig.tight_layout()
-    pu.set_figure_name(fig, "spectrum", mode, "octave" if octave else "narrowband")
+    pu.set_figure_name(fig, "spectrum", mode, "octave" if octave else "narrowband", ws_suffix(cases))
     return fig, axes
 
 
@@ -235,18 +243,22 @@ def plot_polar(cases           : list  = None,         # [-] List of dictionarie
                        figsize=figsize,
                        ax_in=axes[i])
 
-    # Legend handling
-    handles, labels = axes[0].get_legend_handles_labels()
+    if ws_suffix(cases):
+        # Every panel keeps the legends of its wind speeds (and bands) below it
+        fig.tight_layout(rect=[0, 0, 1, 0.95])
+    else:
+        # Legend handling
+        handles, labels = axes[0].get_legend_handles_labels()
 
-    for ax in axes:
-        if ax.get_legend() is not None:
-            ax.get_legend().remove()
+        for ax in axes:
+            if ax.get_legend() is not None:
+                ax.get_legend().remove()
 
-    fig.legend(handles, labels, loc='lower center', bbox_to_anchor = (0.5, 0.02), ncol=len(handles), frameon=False)
+        fig.legend(handles, labels, loc='lower center', bbox_to_anchor = (0.5, 0.02), ncol=len(handles), frameon=False)
 
-    fig.tight_layout(rect=[0, 0.1, 1, 0.95])
+        fig.tight_layout(rect=[0, 0.1, 1, 0.95])
 
-    pu.set_figure_name(fig, "polar", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "")
+    pu.set_figure_name(fig, "polar", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "", ws_suffix(cases))
     return fig, axes
 
 
@@ -351,11 +363,8 @@ def plot_distance_decay(cases           : list  = None,      # [-] List of dicti
 
     wrap_case_titles(axes, cases)
 
+    # References and Ge 2025 data (the wind speeds of --ws have a legend of their own below every panel)
     handles, labels = axes[0].get_legend_handles_labels()
-
-    for ax in axes:
-        if ax.get_legend() is not None:
-            ax.get_legend().remove()
 
     if handles:
         fig.legend(handles, labels,
@@ -369,7 +378,7 @@ def plot_distance_decay(cases           : list  = None,      # [-] List of dicti
     else:
         fig.tight_layout()
 
-    pu.set_figure_name(fig, "decay", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "")
+    pu.set_figure_name(fig, "decay", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "", ws_suffix(cases))
     return fig, axes
 
 def plot_line(cases           : list  = None,      # [-] List of dictionaries containing simulation data
@@ -410,8 +419,10 @@ def plot_line(cases           : list  = None,      # [-] List of dictionaries co
         axes[i].set_ylim(ymin, ymax)
 
     wrap_case_titles(axes, cases)
+    if ws_suffix(cases):
+        fig.tight_layout()      # Room for the wind speed legends below the panels
 
-    pu.set_figure_name(fig, "line", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "")
+    pu.set_figure_name(fig, "line", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "", ws_suffix(cases))
     return fig, axes
 
 

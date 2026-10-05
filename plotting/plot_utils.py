@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import utils.AcousticUtils as au
 import plot_style as ps
+from matplotlib.transforms import ScaledTranslation
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
@@ -41,6 +42,11 @@ STEPS = {
     "sliceVertical": "P_sliceVertical",
     "sphere"       : "P_sphere",
 }
+
+# --ws: the wind speeds of a case are found by the number after "ws" in the file name, and only the steps
+# drawn as lines are read from the files other than the given one (their sphere, cylinder and slices are GB)
+WS_REGEX = r"ws(\d+(?:\.\d+)?)"
+WS_STEPS = ["spectrums", "polar", "decay", "line"]
 
 # Type-specific turbine parameters (save_specific_params of FORTRAN/src/emitters/TurbineTypes/*.f90)
 SPECIFIC_KEYS = ["D", "rho_mat", "wet_area",                                      # DTU10MWMonopile (+ the rest)
@@ -65,12 +71,19 @@ def parse_turbine_args():
         help = "Turbine .hdf5 files written by Fortran: one file plots a single case, several files are compared. "
                "A bare file name is also searched in --data_dir (default: most recent .hdf5 in --data_dir)"
     )
+    parser.add_argument(
+        "--ws", action = "store_true",
+        help = "Line plots (spectrum, polar, decay, line) show every wind speed of each case: the files that only "
+               "differ in the ws<speed> of their name are searched next to the given one. Maps and metrics "
+               "keep using the given file"
+    )
     add_common_args(parser, TURBINE_DATA_DIR)
 
     return finish_args(parser.parse_args())
 
 def load_turbine(path   : Path = None,      # [-] Path to the single-turbine .hdf5 file
-                 verbose: bool = False):    # [-] if True, prints a list of keys available in the file
+                 verbose: bool = False,     # [-] if True, prints a list of keys available in the file
+                 steps  : list = None):     # [-] Post-processing steps to read (keys of STEPS). None: all of them
     """
     Loads all available data from a single-turbine .hdf5 file coming from Fortran.
 
@@ -113,14 +126,15 @@ def load_turbine(path   : Path = None,      # [-] Path to the single-turbine .hd
         case["Freqs"] = read_array(f, "Freqs")
 
         # Post-processing steps
-        read_steps(f, case)
+        read_steps(f, case, steps)
 
     return case
 
 def load_turbines(args   : argparse.Namespace = None,   # [-] Parsed command-line arguments
                   verbose: bool = False):               # [-] if True, prints a list of keys available in the file
     """
-    Loads the case given in the terminal, or all of them to compare them.
+    Loads the case given in the terminal, or all of them to compare them. With --ws every case also gets the
+    other wind speeds of its file name (case["WS_cases"], see load_ws_cases).
 
     Returns
     -------
@@ -129,21 +143,181 @@ def load_turbines(args   : argparse.Namespace = None,   # [-] Parsed command-lin
     """
 
     paths = resolve_paths(args.files, args.data_dir)
+    if args.ws:
+        paths = drop_ws_twins(paths)
+
     cases = [load_turbine(path, verbose=verbose or args.verbose) for path in paths]
+
+    if args.ws:
+        for case in cases:
+            load_ws_cases(case, verbose=verbose or args.verbose)
+        set_ws_styles(cases)
 
     if len(cases) > 1:
         set_comparison_labels(cases)
 
     return cases
 
+def find_ws_paths(path: Path = None):     # [-] Path to a single-turbine .hdf5 file
+    """
+    Finds the files of the same case at other wind speeds: those of the folder whose name only differs from
+    the given one in the number after 'ws' (plot_mn_IM30_ws11.4.hdf5 -> ..._ws4.5, ..._ws8.0, ...). The name is
+    matched whole, so plot_fl_IM30_ws11.4.hdf5 does not collect the ..._ws<speed>_shallow.hdf5 files.
+
+    Returns
+    -------
+    found : list of (float, Path)
+        Wind speed of the name and path of every file, the given one included, by increasing speed. Empty if
+        the name has no 'ws<speed>'.
+    """
+
+    path    = Path(path)
+    matches = list(re.finditer(WS_REGEX, path.name))
+    if not matches:
+        return []
+
+    last    = matches[-1]
+    pattern = re.compile(re.escape(path.name[:last.start()]) + WS_REGEX + re.escape(path.name[last.end():]))
+
+    found = []
+    for other in path.parent.glob("*" + path.suffix):
+        match = pattern.fullmatch(other.name)
+        if match:
+            found.append((float(match.group(1)), other))
+
+    return sorted(found)
+
+def drop_ws_twins(paths: list = None):     # [-] Paths given in the terminal
+    """
+    With --ws every file stands for all its wind speeds: a file whose wind speeds were already requested by
+    another one is left out (with a message), so its panel is not repeated.
+
+    Returns
+    -------
+    kept : list of Path
+    """
+
+    kept, families = [], []
+    for path in paths:
+        twin = next((other for other, family in zip(kept, families) if path.resolve() in family), None)
+        if twin is not None:
+            print(f"plot_utils.drop_ws_twins(): {path.name} is another wind speed of {twin.name}, loaded only once")
+            continue
+
+        kept.append(path)
+        families.append({other.resolve() for _, other in find_ws_paths(path)})
+
+    return kept
+
+def load_ws_cases(case   : dict = None,     # [-] Dictionary containing simulation data
+                  verbose: bool = False):   # [-] if True, prints a list of keys available in the files
+    """
+    Adds case["WS_cases"]: the case at every wind speed found next to its file, by increasing speed. The case
+    itself is one of them, so it keeps every step; the other wind speeds only read the steps drawn as lines
+    (WS_STEPS: a few tens of MB instead of the GB of a whole file). The line plots draw one curve per entry.
+    A name without 'ws<speed>' leaves the case as it is.
+    """
+
+    found = find_ws_paths(case["Path"])
+    if not found:
+        print(f"plot_utils.load_ws_cases(): no ws<speed> in the name of {case['Name']}, --ws does not apply to it")
+        return
+
+    ws_cases = []
+    for ws, path in found:
+        if path.resolve() == case["Path"].resolve():
+            other = case
+        else:
+            other = load_turbine(path, verbose=verbose, steps=WS_STEPS)
+
+        if not np.isfinite(other["WindSpeed"]):        # Files without the WindSpeed dataset: the one of the name
+            other["WindSpeed"] = ws
+        ws_cases.append(other)
+
+    case["WS_cases"] = sorted(ws_cases, key=lambda other: other["WindSpeed"])
+    print(f"{case['Name']}: wind speeds {', '.join(get_ws_label(other) for other in case['WS_cases'])}")
+
+def set_ws_styles(cases: list = None):     # [-] List of dictionaries containing simulation data
+    """
+    Gives every wind speed of the plot its own color (WS_color, from the colormap AcademicStyle.WS_CMAP in
+    increasing speed), line width (WS_lw) and drawing order (WS_zorder): the faster the wind, the thicker the
+    line and the further down it is drawn, so curves that coincide (e.g. every speed above rated) stay visible
+    as concentric lines. The speeds of every case are ranked together, so the same speed has the same style in
+    every panel.
+    """
+
+    speeds = sorted({other["WindSpeed"] for case in cases for other in case.get("WS_cases", [])})
+    if not speeds:
+        return
+
+    n       = len(speeds)
+    colors  = plt.get_cmap(ps.AcademicStyle.WS_CMAP)(np.linspace(*ps.AcademicStyle.WS_CMAP_RANGE, n))
+    widths  = np.linspace(*ps.AcademicStyle.WS_LW_RANGE, n)
+
+    for case in cases:
+        for other in case.get("WS_cases", []):
+            rank = speeds.index(other["WindSpeed"])
+            other["WS_color"]  = tuple(colors[rank])
+            other["WS_lw"]     = float(widths[rank])
+            other["WS_zorder"] = 2 + (n - 1 - rank) / n
+
+def get_ws_cases(case: dict = None):     # [-] Dictionary containing simulation data
+    """
+    Cases drawn by a line plot: with --ws one per wind speed (case["WS_cases"]), otherwise the case alone.
+
+    Returns
+    -------
+    cases, ws_mode : list of dict, bool
+        The cases to draw and whether they are the wind speeds of --ws.
+    """
+
+    if "WS_cases" in case:
+        return case["WS_cases"], True
+
+    return [case], False
+
+def get_ws_label(case: dict = None):     # [-] Dictionary containing simulation data
+    return f"{case['WindSpeed']:.1f} m/s"
+
+def add_ws_legends(ax,                           # [-] Axes of the plot
+                   ws_handles   : list = None,   # [-] One handle per wind speed (color)
+                   ws_labels    : list = None,   # [-] Their labels
+                   style_handles: list = None,   # [-] Handles of the second dimension of the plot (observers, bands...)
+                   style_labels : list = None,   # [-] Their labels
+                   style_title  : str  = None,   # [-] Title of the second legend
+                   ncol_style   : int  = 1,      # [-] Columns of the second legend
+                   offset       : float = 0.68): # [in] Distance of the legends below the axes
+    """
+    Legends of a plot with several wind speeds (--ws), below its axes: the colors are the wind speeds and, when
+    the plot needs a second dimension, its line styles (black) are told apart by a second legend. Both sit
+    side by side, centred under the axes, the wind speeds on the left. The offset is absolute, so it clears
+    the tick labels and the label of the x axis whatever the height of the axes. Axes legends are part of the
+    layout of fig.tight_layout(), which leaves them room.
+    """
+
+    kw = dict(frameon=False, title_fontsize=plt.rcParams["legend.fontsize"], bbox_to_anchor=(0.5, 0.0),
+              bbox_transform=ax.transAxes + ScaledTranslation(0.0, -offset, ax.figure.dpi_scale_trans))
+
+    if not style_handles:
+        ax.legend(ws_handles, ws_labels, title="Wind speed", ncol=min(len(ws_handles), 5), loc="upper center", **kw)
+        return
+
+    first = ax.legend(ws_handles, ws_labels, title="Wind speed", ncol=1 if len(ws_handles) <= 2 else 2,
+                      loc="upper right", **kw)
+    ax.add_artist(first)        # The second ax.legend() would replace it
+    ax.legend(style_handles, style_labels, title=style_title, ncol=ncol_style, loc="upper left", **kw)
+
 def set_comparison_labels(cases: list = None):     # [-] List of dictionaries containing simulation data
     """
     Gives every case of a comparison a distinct label, used by titles (Case_type), built from its case type,
-    wind speed and method (e.g. 'DTU10MWFloating, 11.4 m/s, ANM231'). The water depth is added if two labels
-    match, and the file name if they still do. Colors are assigned by position.
+    wind speed and method (e.g. 'DTU10MWFloating, 11.4 m/s, ANM231'; without the wind speed with --ws, where
+    every panel shows all of them). The water depth is added if two labels match, and the file name if they
+    still do. Colors are assigned by position.
     """
 
-    labels = [f"{tex_escape(case['case_type'])}, {case['WindSpeed']:.1f} m/s, {case['Method_tag']}" for case in cases]
+    labels = [", ".join([tex_escape(case['case_type'])] +
+                        ([] if "WS_cases" in case else [get_ws_label(case)]) +
+                        [case['Method_tag']]) for case in cases]
 
     if len(set(labels)) < len(labels):
         labels = [f"{label}, H = {case['Depth']:.0f} m" for label, case in zip(labels, cases)]
@@ -585,21 +759,25 @@ def guess_case_type(path: Path = None):     # [-] Path to a single-turbine .hdf5
     return "Floating"
 
 def read_steps(f,                   # [-] Open h5py.File
-               case: dict = None):  # [-] Dictionary where the data are stored
+               case : dict = None,  # [-] Dictionary where the data are stored
+               steps: list = None): # [-] Steps to read (keys of STEPS, e.g. "decay"). None: all of them
     """
-    Reads every post-processing step present in the file (AcousticSolver.run_*). Any of them may be missing,
-    so each one gets a has_<step> flag. Shapes follow the Fortran order: pressures are (Nf, ...), observers
-    (..., 3).
+    Reads every post-processing step present in the file (AcousticSolver.run_*), or only those of 'steps'.
+    Any of them may be missing, so each one gets a has_<step> flag (False for a step left unread). Shapes
+    follow the Fortran order: pressures are (Nf, ...), observers (..., 3).
     """
 
+    def has(step):      # Step requested and present
+        return (steps is None or step in steps) and STEPS[step] in f
+
     # 1. Spectrum variables
-    case["has_spectrums"] = "P_spectrums" in f
+    case["has_spectrums"] = has("spectrums")
     if case["has_spectrums"]:
         case["P_spectrums"]   = read_ds(f, "P_spectrums")         # (Nf, Nobs)
         case["Obs_spectrums"] = read_ds(f, "Obs_spectrums")       # (Nobs, 3)
 
     # 2. Polar
-    case["has_polar"] = "P_polar" in f
+    case["has_polar"] = has("polar")
     if case["has_polar"]:
         case["P_polar"]         = read_ds(f, "P_polar")           # (Nf, Ntheta)
         case["R_polar"]         = float(read_ds(f, "R_polar"))
@@ -609,7 +787,7 @@ def read_steps(f,                   # [-] Open h5py.File
         case["Center_polar"]    = read_array(f, "Center_polar")
 
     # 3. Cylinder
-    case["has_cylinder"] = "P_cylinder" in f
+    case["has_cylinder"] = has("cylinder")
     if case["has_cylinder"]:
         case["P_cylinder"]         = read_ds(f, "P_cylinder")     # (Nf, Ntheta, Nz)
         case["R_cylinder"]         = float(read_ds(f, "R_cylinder"))
@@ -621,7 +799,7 @@ def read_steps(f,                   # [-] Open h5py.File
             case["dA_cylinder"]    = float(read_ds(f, "dA_cylinder"))
 
     # 4. Decay (single turbine only)
-    case["has_decay"] = "P_decay" in f
+    case["has_decay"] = has("decay")
     if case["has_decay"]:
         case["P_decay"]         = read_ds(f, "P_decay")           # (Nf, N)
         case["Z_decay"]         = float(read_ds(f, "Z_decay"))
@@ -631,7 +809,7 @@ def read_steps(f,                   # [-] Open h5py.File
         case["Logspace_decay"]  = bool(read_ds(f, "Logspace_decay"))
 
     # 5. Line
-    case["has_line"] = "P_line" in f
+    case["has_line"] = has("line")
     if case["has_line"]:
         case["P_line"]         = read_ds(f, "P_line")             # (Nf, N)
         case["P1_line"]        = read_array(f, "P1_line")
@@ -650,7 +828,7 @@ def read_steps(f,                   # [-] Open h5py.File
                   f"Distances_line (check AcousticSolver.run_line)")
 
     # 6. SliceXY
-    case["has_slicexy"] = "P_slicexy" in f
+    case["has_slicexy"] = has("sliceXY")
     if case["has_slicexy"]:
         case["P_slicexy"]      = read_ds(f, "P_slicexy")          # (Nf, nx, ny)
         case["Obs_slicexy"]    = read_ds(f, "Obs_slicexy")        # (nx, ny, 3)
@@ -662,7 +840,7 @@ def read_steps(f,                   # [-] Open h5py.File
         case["Ny_slicexy"]     = int(read_ds(f, "Ny_slicexy"))
 
     # 7. SliceXZ
-    case["has_slicexz"] = "P_slicexz" in f
+    case["has_slicexz"] = has("sliceXZ")
     if case["has_slicexz"]:
         case["P_slicexz"]   = read_ds(f, "P_slicexz")             # (Nf, nx, nz)
         case["Obs_slicexz"] = read_ds(f, "Obs_slicexz")           # (nx, nz, 3)
@@ -673,7 +851,7 @@ def read_steps(f,                   # [-] Open h5py.File
         case["Nz_slicexz"]  = int(read_ds(f, "Nz_slicexz"))
 
     # 8. Vertical slice: normal (cos az, sin az), horizontal axis (-sin az, cos az), observer = centre + u * axis
-    case["has_slicevertical"] = "P_sliceVertical" in f
+    case["has_slicevertical"] = has("sliceVertical")
     if case["has_slicevertical"]:
         case["P_sliceV"]       = read_ds(f, "P_sliceVertical")    # (Nf, nu, nz)
         case["Coords_sliceV"]  = read_ds(f, "Coords_sliceV")      # (nu, nz, 3)
@@ -683,7 +861,7 @@ def read_steps(f,                   # [-] Open h5py.File
         case["Center_sliceV"]  = read_array(f, "Center_sliceV")
 
     # 9. Sphere (single turbine and Image Method only)
-    case["has_sphere"] = "P_sphere" in f
+    case["has_sphere"] = has("sphere")
     if case["has_sphere"]:
         case["P_sphere"]      = read_ds(f, "P_sphere")            # (Nf, Ntheta, Nz)
         case["Obs_sphere"]    = read_ds(f, "Obs_sphere")          # (Ntheta, Nz, 3)
