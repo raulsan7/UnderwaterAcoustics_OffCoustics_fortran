@@ -42,7 +42,7 @@ A run of `off_coustics_fortran` (`app/main.f90`) goes through these stages:
 
 In `main.f90`:
 
-1. `read_input_files("./input_files/", config)` reads every namelist into `Config_t`.
+1. `get_input_path(files_path)` takes the directory of the namelists from the command line (`./off_coustics ./path_to_input_files`; `./input_files/` without arguments) and `read_input_files(files_path, config)` reads every namelist of it into `Config_t`. Paths written inside the namelists (e.g. `OP_output_dir`) stay relative to the working directory, not to that directory.
 2. Depending on `simulation_type`, a single turbine (`new_turbine`, then `init`, `read_input`, `compute_force`) or a wind farm (`WindFarm_t % init`, `compute_forces`) is built.
 3. `to_source` translates the emitter into an `AcousticSource_t`.
 4. `new_solver` allocates the solver named by `method`; `init` moves the sources into it and frees `config`.
@@ -116,7 +116,7 @@ What every module contains, and what must not go there:
 | `Timing` | `format_elapsed` | Anything else |
 | `SignalProcessing` | `compute_rfft` (mean removal, Hann window, FFTW), `HANN_ENBW` | Turbine or solver knowledge |
 | `SpecialFunctions` | `compute_hankel_complex`, `bessel_k0`, `bessel_k1` | Method-specific kernels |
-| `Args_parser` | `read_input_files`, the only public entry of the parser | Readers of individual namelists |
+| `Args_parser` | `get_input_path` (command-line directory of the namelists), `read_input_files`, the entry of the parser | Readers of individual namelists |
 | `InputEmitters` | `read_turbine_config`, `read_farm_config` | Solver or step settings |
 | `InputSolver` | `read_solver_config`, `read_environment_config`, one `read_X_config` per method | Emitter or step settings |
 | `InputPostProcessing` | `read_computation_config`, `read_do_config`, one reader per `run_*` step | Emitter or solver settings |

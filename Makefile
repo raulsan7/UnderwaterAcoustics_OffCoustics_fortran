@@ -25,6 +25,7 @@
 #   make FFLAGS="-O2 -g"        override optimization/debug flags
 #   make FC=ifort               override the compiler
 #   make run                    build, then run from this directory
+#   make run ARGS=./my_inputs   same, reading the .nml files of ./my_inputs instead of ./input_files
 #   make clean                  remove build_make/ and the executable
 #
 # Cluster usage: load whatever module provides a Fortran-capable HDF5
@@ -225,7 +226,7 @@ $(EXE): $(OBJS) $(BUILD)/main.o
 	$(H5FC) $(FFLAGS) -o $@ $(OBJS) $(BUILD)/main.o $(FFTW3_FLAGS)
 
 run: all
-	./$(EXE)
+	./$(EXE) $(ARGS)
 
 clean:
 	rm -rf $(BUILD) $(EXE)

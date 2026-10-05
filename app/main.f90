@@ -15,6 +15,9 @@
 ! Date    : 09/2026
 ! -------------------------------------------------------------------------------
 ! COMPILE AND RUN: fpm run --flag "-O3 -fopenmp"
+! INPUT FILES    : ./input_files/ by default, or the directory given in the
+!                  command line: ./off_coustics ./path_to_input_files
+!                  (with fpm: fpm run --flag "-O3 -fopenmp" -- ./path_to_input_files)
 ! ===============================================================================
 PROGRAM main
 
@@ -28,8 +31,8 @@ USE SolverFactory, ONLY: new_solver
 USE WindTurbine, ONLY: WindTurbine_t
 USE TurbineFactory, ONLY: new_turbine
 USE SourceTypes, ONLY: AcousticSource_t
-USE Args_parser, ONLY: read_input_files
 USE AcousticSolver, ONLY: AcousticSolver_t
+USE Args_parser, ONLY: get_input_path, read_input_files
 
 IMPLICIT NONE
 
@@ -39,6 +42,7 @@ TYPE(WindFarm_t)       , ALLOCATABLE :: active_farm
 CLASS(WindTurbine_t)   , ALLOCATABLE :: active_turbine
 CLASS(AcousticSolver_t), ALLOCATABLE :: active_solver
 CLASS(Emitter_t)       , ALLOCATABLE :: active_emitter
+CHARACTER(len=:)       , ALLOCATABLE :: files_path
 
 REAL(WP)         :: start_time, elapsed_display
 CHARACTER(len=8) :: tag
@@ -48,7 +52,8 @@ CHARACTER(len=8) :: tag
     start_time = real(omp_get_wtime(), WP)
 
     ! --- 1. Load namelists dynamically --- !
-    CALL read_input_files("./input_files/", config)
+    CALL get_input_path(files_path)
+    CALL read_input_files(files_path, config)
 
     SELECT CASE (trim(config % solver % simulation_type))
     CASE ('turbine')

@@ -6,11 +6,12 @@
 ! ComputationSetupTurbine.nml or ComputationSetupFarm.nml, and
 ! ImagesMethod.nml or AnalyticalNormalModes.nml) and packs their
 ! contents into the global Config_t structure defined in
-! ConfigTypes.f90. read_input_files is the single entry point: it locates the
-! config files inside the given directory and dispatches to one reader
-! subroutine per namelist (InputSolver, InputEmitters and
-! InputPostProcessing), plus one extra reader chosen according to the
-! selected acoustic solver method.
+! ConfigTypes.f90. get_input_path tells which directory holds them (the
+! command-line argument, ./input_files/ by default) and read_input_files is the
+! entry point of the parsing: it locates the config files inside that
+! directory and dispatches to one reader subroutine per namelist (InputSolver,
+! InputEmitters and InputPostProcessing), plus one extra reader chosen
+! according to the selected acoustic solver method.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -20,6 +21,7 @@
 ! ===============================================================================
 MODULE Args_parser
 
+USE Kinds
 USE InputPostProcessing, ONLY: read_computation_config
 USE InputEmitters, ONLY: read_turbine_config, read_farm_config
 USE ConfigTypes, ONLY: Config_ImageMethod_t, Config_AnalyticalNormalModes_t, Config_t
@@ -29,10 +31,49 @@ USE InputSolver, ONLY: read_solver_config, read_environment_config, read_ImageMe
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: read_input_files
+PUBLIC :: get_input_path, read_input_files
 
 
 CONTAINS
+
+
+SUBROUTINE get_input_path(files_path)
+    ! -------------------------------------------------------------------------
+    ! Directory of the .nml files: the command-line argument (./off_coustics
+    ! ./path_to_input_files) or, without arguments, ./input_files/. The
+    ! trailing '/' that read_input_files needs is added when it is missing.
+    ! More than one argument, or an empty one, stops the program.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=:), INTENT(OUT), ALLOCATABLE :: files_path    ! [-] Directory of the .nml files (with trailing '/')
+
+    ! Local variables
+    INTEGER(I32) :: nargs, arg_length, ierr
+
+
+    nargs = command_argument_count()
+
+    if (nargs == 0_I32) then
+        files_path = "./input_files/"
+        return
+    end if
+
+    if (nargs > 1_I32) then
+        error stop "get_input_path(): Too many arguments. Usage: ./off_coustics [directory_of_the_input_files]"
+    end if
+
+    CALL get_command_argument(1, length=arg_length)
+    if (arg_length == 0_I32) error stop "get_input_path(): The directory of the input files is an empty argument"
+
+    ALLOCATE(CHARACTER(len=arg_length) :: files_path)
+    CALL get_command_argument(1, files_path, status=ierr)
+    if (ierr /= 0_I32) error stop "get_input_path(): Could not read the directory of the input files"
+
+    if (files_path(arg_length:arg_length) /= "/") files_path = files_path // "/"
+
+    write(*,*) ">> Reading the input files from: ", files_path
+
+END SUBROUTINE get_input_path
 
 
 SUBROUTINE read_input_files(files_path, config)
@@ -48,12 +89,12 @@ SUBROUTINE read_input_files(files_path, config)
     TYPE(Config_t)  , INTENT(OUT), ALLOCATABLE :: config        ! [-] Global configuration filled in from the .nml files
 
     ! Local variables
-    CHARACTER(len=200) :: turbine_config_path
-    CHARACTER(len=200) :: farm_config_path
-    CHARACTER(len=200) :: solver_config_path
-    CHARACTER(len=200) :: environment_config_path
-    CHARACTER(len=200) :: computation_config_path
-    CHARACTER(len=200) :: method_config_path
+    CHARACTER(len=1024) :: turbine_config_path
+    CHARACTER(len=1024) :: farm_config_path
+    CHARACTER(len=1024) :: solver_config_path
+    CHARACTER(len=1024) :: environment_config_path
+    CHARACTER(len=1024) :: computation_config_path
+    CHARACTER(len=1024) :: method_config_path
 
 
     ALLOCATE(Config_t :: config)
