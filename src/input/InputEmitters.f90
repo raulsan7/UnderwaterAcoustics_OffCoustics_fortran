@@ -1,9 +1,10 @@
 ! ===============================================================================
 ! MODULE: InputEmitters
 ! ===============================================================================
-! Defines the readers of the emitter namelists: WindTurbine.nml for a single
-! wind turbine (read_turbine_config) and WindFarm.nml for a wind farm
-! (read_farm_config).
+! Defines the readers of the emitter namelists: 
+! - WindTurbine.nml for a single wind turbine (read_turbine_config)
+! - WindFarm.nml for a wind farm (read_farm_config)
+! - FrequencySource.nml for frequency-domain point sources (read_frequency_source_config).
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -13,14 +14,14 @@
 ! ===============================================================================
 MODULE InputEmitters
 
-USE Kinds, ONLY: I32, WP
+USE Kinds
 USE ConfigTypes, ONLY: Config_t
 USE InputChecks, ONLY: check_time_window, check_fits
 
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: read_turbine_config, read_farm_config
+PUBLIC :: read_turbine_config, read_farm_config, read_frequency_source_config
 
 
 CONTAINS
@@ -338,5 +339,160 @@ SUBROUTINE read_farm_config(path, config)
     end do
 
 END SUBROUTINE read_farm_config
+
+
+SUBROUTINE read_frequency_source_config(path, config)
+    ! -------------------------------------------------------------------------
+    ! Reads FrequencySource.nml: the &frequency_source_config block with the
+    ! number of sources and frequencies, the frequency vector, the source
+    ! positions and the complex forces, given as a real part (force_re,
+    ! mandatory) and an imaginary part (force_im, optional, 0 by default).
+    ! The values are read into buffers of fixed size (MAX_PARSE_SRC sources and
+    ! MAX_PARSE_FREQ frequencies) initialised to NaN, so that a missing entry,
+    ! or one given beyond Nsources or Nfreqs, stops the run instead of being
+    ! used as zero. The water depth of Environment.nml, which must therefore be
+    ! read first, bounds the depth of the sources. The result is packed into
+    ! config % freq_source, with Force of shape (Nfreqs, Nsources, 3).
+    ! -------------------------------------------------------------------------
+
+    USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_value, ieee_is_finite, IEEE_QUIET_NAN
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to FrequencySource.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
+
+    ! Local variables
+    INTEGER(I32)       :: unit_num, ierr, i_s, i_f
+    CHARACTER(len=200) :: iomsg
+    REAL(WP)           :: nan
+
+    ! Input variables
+    INTEGER(I32) :: Nsources
+    INTEGER(I32) :: NFreqs
+    REAL(WP)     :: Freqs(MAX_PARSE_FREQ)
+    REAL(WP)     :: source_xyz(MAX_PARSE_SRC, 3)
+    REAL(WP)     :: force_re(MAX_PARSE_FREQ, MAX_PARSE_SRC, 3)
+    REAL(WP)     :: force_im(MAX_PARSE_FREQ, MAX_PARSE_SRC, 3)
+
+
+    ! --- 1. Configuration namelists --- !
+    NAMELIST /frequency_source_config/  &
+    Nsources,                           &
+    NFreqs,                             &
+    Freqs,                              &
+    source_xyz,                         &
+    force_re,                           &
+    force_im
+
+    ! --- 2. Defaults: NaN marks an entry that was not given --- !
+    nan = ieee_value(0.0_WP, IEEE_QUIET_NAN)
+    
+    Nsources   = DEFAULT_I
+    Nfreqs     = DEFAULT_I
+    Freqs      = nan
+    source_xyz = nan
+    force_re   = nan
+    force_im   = 0.0_WP
+
+    ! --- 3. Open and read namelist file --- !
+    open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
+    if (ierr /= 0_I32) then
+        write(*,*) "ERROR: Could not open input file: ", path
+        error stop
+    end if
+
+    rewind(unit_num)
+    read(unit_num, nml=frequency_source_config, iostat=ierr, iomsg=iomsg)
+    if (ierr /= 0_I32) then
+        write(*,*) "ERROR: Failed to read &frequency_source_config: ", trim(iomsg)
+        close(unit_num)
+        error stop
+    end if
+
+    close(unit_num)
+
+    ! --- 4. Counts and frequency vector --- !
+    if (Nsources < 1_I32 .or. Nsources > MAX_PARSE_SRC) then
+        write(*, '(A,I0,A,I0,A)') "ERROR: &frequency_source_config: Nsources = ", Nsources,&
+         " is out of bounds [1, ", MAX_PARSE_SRC, "]"
+        error stop
+    end if
+
+    if (Nfreqs < 1_I32 .or. Nfreqs > MAX_PARSE_FREQ) then
+        write(*, '(A,I0,A,I0,A)') "ERROR: &frequency_source_config: Nfreqs = ", Nfreqs,&
+         " is out of bounds [1, ", MAX_PARSE_FREQ, "]"
+        error stop
+    end if
+
+    if (.not. all(ieee_is_finite(Freqs(1:Nfreqs)))) then
+        write(*, '(A,I0,A)') " ERROR: &frequency_source_config: Freqs needs ", Nfreqs, " finite values"
+        error stop
+    end if
+
+    if (any(ieee_is_finite(Freqs(Nfreqs+1:)))) then
+        write(*, '(A,I0,A)') " ERROR: &frequency_source_config: Freqs has more than Nfreqs = ", Nfreqs, " values"
+        error stop
+    end if
+
+    if (any(Freqs(1:Nfreqs) <= 0.0_WP) .or. any(Freqs(2:Nfreqs) <= Freqs(1:Nfreqs-1))) then
+        write(*, '(A)') " ERROR: &frequency_source_config: Freqs must be positive and strictly increasing"
+        error stop
+    end if
+
+    ! --- 5. Source positions: given for every source, inside the water column --- !
+    if (any(ieee_is_finite(source_xyz(Nsources+1:,:)))) then
+        write(*, '(A,I0,A)') " ERROR: &frequency_source_config: source_xyz has more than Nsources = ", Nsources, " rows"
+        error stop
+    end if
+
+    do i_s = 1, Nsources
+        if (.not. all(ieee_is_finite(source_xyz(i_s, :)))) then
+            write(*, '(A,I0,A)') " ERROR: &frequency_source_config: source_xyz(", i_s, ", 1:3) is missing or not finite"
+            error stop
+        end if
+
+        if (source_xyz(i_s, 3) > 0.0_WP .or. source_xyz(i_s, 3) < -config % env % depth_base) then
+            write(*, '(A,I0,A,F0.2,A,F0.2,A)') " ERROR: &frequency_source_config: source ", i_s, " is at z = ", &
+                                               source_xyz(i_s, 3), " m, outside the water column from ", &
+                                               -config % env % depth_base, " to 0 m"
+            error stop
+        end if
+    end do
+
+    ! --- 6. Forces: real part given for every (frequency, source), nothing beyond Nfreqs or Nsources --- !
+    if (any(ieee_is_finite(force_re(Nfreqs+1:, :, :))) .or. any(ieee_is_finite(force_re(:, Nsources+1:, :))) .or. &
+        any(force_im(Nfreqs+1:, :, :) /= 0.0_WP) .or. any(force_im(:, Nsources+1:, :) /= 0.0_WP)) then
+        write(*, '(A,I0,A,I0)') " ERROR: &frequency_source_config: force_re or force_im have entries beyond " // &
+                                "Nfreqs = ", Nfreqs, " or Nsources = ", Nsources
+        error stop
+    end if
+
+    do i_s = 1, Nsources
+        do i_f = 1, Nfreqs
+            if (.not. all(ieee_is_finite(force_re(i_f, i_s, :)))) then
+                write(*, '(A,I0,A,I0,A)') " ERROR: &frequency_source_config: force_re(", i_f, ", ", i_s, &
+                                          ", 1:3) is missing or not finite"
+                error stop
+            end if
+
+            if (.not. all(ieee_is_finite(force_im(i_f, i_s, :)))) then
+                write(*, '(A,I0,A,I0,A)') " ERROR: &frequency_source_config: force_im(", i_f, ", ", i_s, &
+                                          ", 1:3) is not finite"
+                error stop
+            end if
+        end do
+    end do
+
+    ! --- 7. Pack values into Config_t --- !
+    associate(fs => config % freq_source)
+        fs % Nsources = Nsources
+        fs % Nfreqs   = Nfreqs
+
+        ALLOCATE(fs % Freqs(Nfreqs), fs % source_xyz(Nsources, 3), fs % Force(Nfreqs, Nsources, 3))
+        fs % Freqs      = Freqs(1:Nfreqs)
+        fs % source_xyz = source_xyz(1:Nsources, :)
+        fs % Force      = cmplx(force_re(1:Nfreqs, 1:Nsources, :), force_im(1:Nfreqs, 1:Nsources, :), kind=WP)
+    end associate
+    
+END SUBROUTINE read_frequency_source_config
 
 END MODULE InputEmitters

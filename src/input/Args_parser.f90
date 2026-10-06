@@ -23,7 +23,7 @@ MODULE Args_parser
 
 USE Kinds
 USE InputPostProcessing, ONLY: read_computation_config
-USE InputEmitters, ONLY: read_turbine_config, read_farm_config
+USE InputEmitters, ONLY: read_turbine_config, read_farm_config, read_frequency_source_config
 USE ConfigTypes, ONLY: Config_ImageMethod_t, Config_AnalyticalNormalModes_t, Config_t
 USE InputSolver, ONLY: read_solver_config, read_environment_config, read_ImageMethod_config, &
                        read_AnalyticalNormalModes_config
@@ -118,6 +118,10 @@ SUBROUTINE read_input_files(files_path, config)
     CASE ('farm')
         CALL read_farm_config(farm_config_path, config)
         computation_config_path = files_path // "ComputationSetupFarm.nml"
+
+    CASE ('FrequencySource')
+        CALL read_frequency_source_config(files_path // "FrequencySource.nml", config)
+        computation_config_path = files_path // "ComputationSetupSource.nml"
 
     CASE DEFAULT
         error stop "read_input_files(): Unknown simulation_type (use 'turbine' or 'farm'): " // &

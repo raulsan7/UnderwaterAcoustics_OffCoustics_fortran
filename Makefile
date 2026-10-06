@@ -105,6 +105,7 @@ OBJS := \
     $(BUILD)/SAITEC2MWFloating.o \
     $(BUILD)/TurbineFactory.o \
     $(BUILD)/WindFarm.o \
+	$(BUILD)/FrequencySource.o \
     $(BUILD)/AcousticSolver.o \
     $(BUILD)/AcousticSolver_output.o \
     $(BUILD)/AcousticSolver_steps.o \
@@ -197,6 +198,9 @@ $(BUILD)/TurbineFactory.o: $(SRC_DIR)/emitters/TurbineFactory.f90 $(BUILD)/WindT
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/WindFarm.o: $(SRC_DIR)/emitters/WindFarm.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/StringUtils.o $(BUILD)/HDF5Utils.o $(BUILD)/SignalProcessing.o $(BUILD)/Emitter.o $(BUILD)/WindTurbine.o $(BUILD)/TurbineFactory.o | $(BUILD)
+	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
+
+$(BUILD)/FrequencySource.o: $(SRC_DIR)/emitters/FrequencySource.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/HDF5Utils.o $(BUILD)/Emitter.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/AcousticSolver.o: $(SRC_DIR)/solvers/AcousticSolver.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/Emitter.o | $(BUILD)

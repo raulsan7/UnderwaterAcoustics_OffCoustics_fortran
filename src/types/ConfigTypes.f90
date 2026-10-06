@@ -72,6 +72,22 @@ TYPE :: Config_WindFarm_t
 END TYPE Config_WindFarm_t
 
 
+TYPE :: Config_FrequencySource_t
+    ! -------------------------------------------------------------------------
+    ! Holds the frequency-domain point sources read from FrequencySource.nml:
+    ! their positions and the complex force of every source at every frequency.
+    ! -------------------------------------------------------------------------
+
+    ! --- Input parameters --- !
+    INTEGER(I32)             :: Nsources         ! [-] Number of sources
+    INTEGER(I32)             :: Nfreqs           ! [-] Number of frequencies
+    REAL(WP)   , ALLOCATABLE :: Freqs(:)         ! [Hz] Frequency vector (Nfreqs)
+    REAL(WP)   , ALLOCATABLE :: source_xyz(:,:)  ! [m] Source coordinates (Nsources, 3)
+    COMPLEX(WP), ALLOCATABLE :: Force(:,:,:)     ! [N] Complex force on the fluid (Nfreqs, Nsources, 3)
+
+END TYPE Config_FrequencySource_t
+
+
 TYPE :: Config_Environment_t
     ! -------------------------------------------------------------------------
     ! Holds the base environmental/fluid properties read from the input namelist
@@ -348,6 +364,7 @@ TYPE :: Config_t
     TYPE(Config_Environment_t)              :: env              ! [-] Environment/fluid configuration
     TYPE(Config_Solver_t)                   :: solver           ! [-] Acoustic solver configuration
     TYPE(Config_Computation_t)              :: run_inputs       ! [-] Per-run_* post-processing step configuration
+    TYPE(Config_FrequencySource_t)          :: freq_source      ! [-] Frequency-domain source configuration
     CLASS(Config_Method_t)    , ALLOCATABLE :: method           ! [-] Polymorphic, solver-method-specific configuration
 
 END TYPE Config_t

@@ -3,10 +3,10 @@
 ! ===============================================================================
 ! Entry point of the off_coustics_fortran application. Orchestrates the full
 ! simulation pipeline: load the .nml configuration, build the emitter (a single
-! wind turbine or a whole wind farm) and solve its structural dynamics,
-! translate the physical forces into acoustic point-dipole sources, then
-! instantiate and run the requested acoustic propagation solver over all
-! post-processing outputs.
+! wind turbine, a whole wind farm or a few frequency-domain point sources) and
+! solve its structural dynamics when it has any, translate the physical forces
+! into acoustic point-dipole sources, then instantiate and run the requested
+! acoustic propagation solver over all post-processing outputs.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -32,6 +32,7 @@ USE WindTurbine, ONLY: WindTurbine_t
 USE TurbineFactory, ONLY: new_turbine
 USE SourceTypes, ONLY: AcousticSource_t
 USE AcousticSolver, ONLY: AcousticSolver_t
+USE FrequencySource, ONLY: FrequencySource_t
 USE Args_parser, ONLY: get_input_path, read_input_files
 
 IMPLICIT NONE
@@ -39,6 +40,7 @@ IMPLICIT NONE
 TYPE(Config_t)         , ALLOCATABLE :: config
 TYPE(AcousticSource_t) , ALLOCATABLE :: active_sources
 TYPE(WindFarm_t)       , ALLOCATABLE :: active_farm
+TYPE(FrequencySource_t), ALLOCATABLE :: active_freq_source
 CLASS(WindTurbine_t)   , ALLOCATABLE :: active_turbine
 CLASS(AcousticSolver_t), ALLOCATABLE :: active_solver
 CLASS(Emitter_t)       , ALLOCATABLE :: active_emitter
@@ -70,6 +72,7 @@ CHARACTER(len=8) :: tag
         ! --- 4. Translate physical forces to mathematical acoustic sources --- !
         write(*,*) ">> Translating physical forces to mathematical acoustic sources..."
         CALL active_turbine % to_source(config, active_sources)
+        CALL MOVE_ALLOC(active_turbine, active_emitter)
 
     CASE ('farm')
         ! --- 2. Wind farm instance: one polymorphic turbine per &turbine block --- !
@@ -84,19 +87,29 @@ CHARACTER(len=8) :: tag
         ! --- 4. Merge every turbine into a single set of acoustic sources --- !
         write(*,*) ">> Merging every turbine into a single set of acoustic sources..."
         CALL active_farm % to_source(config, active_sources)
+        CALL MOVE_ALLOC(active_farm, active_emitter)
+
+    CASE ('FrequencySource')
+        ! --- 2. FrequencySource instance: a single emitter with user-defined sources --- !
+        ALLOCATE(active_freq_source)
+        write(*,*) ">> Instantiating FrequencySource..."
+        
+        ! --- 3. Nothing to solve: copy the forces given in FrequencySource.nml --- !
+        CALL active_freq_source % init(config)
+
+        ! --- 4. Translate the forces to mathematical acoustic sources --- !
+        write(*,*) ">> Translating frequency-domain forces to mathematical acoustic sources..."
+        CALL active_freq_source % to_source(config, active_sources)
+        CALL MOVE_ALLOC(active_freq_source, active_emitter)
+
     END SELECT
 
     ! --- 5. Execute generic solver --- !
     CALL new_solver(trim(config % solver % method), active_solver)
     write(*,*) ">> Launching acoustic propagation solver: ", trim(config % solver % method)
 
-    ! --- 6. Set acoustic solver (init frees config: active_farm tells both paths apart) --- !
+    ! --- 6. Set acoustic solver (init frees config: the allocated emitter tells the paths apart) --- !
     CALL active_solver % init(active_sources, config)
-    if (ALLOCATED(active_farm)) then
-        CALL MOVE_ALLOC(active_farm, active_emitter)
-    else
-        CALL MOVE_ALLOC(active_turbine, active_emitter)
-    end if
     CALL active_solver % save_parameters(active_emitter)
 
     ! --- 7. Run acoustic propagation --- !
