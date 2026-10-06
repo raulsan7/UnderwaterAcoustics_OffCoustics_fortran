@@ -37,10 +37,11 @@ TYPE, EXTENDS(Emitter_t) :: FrequencySource_t
     ! write_txt still need them.
     ! -------------------------------------------------------------------------
 
-    INTEGER(I32)             :: Nsources        ! [-] Number of sources
-    REAL(WP)   , ALLOCATABLE :: Freqs(:)        ! [Hz] Frequency vector (Nfreqs)
-    REAL(WP)   , ALLOCATABLE :: xyz(:,:)        ! [m] Source coordinates (Nsources, 3)
-    COMPLEX(WP), ALLOCATABLE :: Force(:,:,:)    ! [N] Complex force on the fluid (Nfreqs, Nsources, 3)
+    INTEGER(I32)              :: Nsources       ! [-] Number of sources
+    INTEGER(I32), ALLOCATABLE :: order(:)       ! [-] Multipole order per source
+    REAL(WP)    , ALLOCATABLE :: Freqs(:)       ! [Hz] Frequency vector (Nfreqs)
+    REAL(WP)    , ALLOCATABLE :: xyz(:,:)       ! [m] Source coordinates (Nsources, 3)
+    COMPLEX(WP) , ALLOCATABLE :: Force(:,:,:)   ! [N] Complex force on the fluid (Nfreqs, Nsources, 3)
 
     CONTAINS
 
@@ -69,6 +70,9 @@ SUBROUTINE init_FrequencySource(self, config)
     self % Freqs    = config % freq_source % Freqs
     self % xyz      = config % freq_source % source_xyz
     self % Force    = config % freq_source % Force
+
+    ! Every source radiates as a point dipole
+    ALLOCATE(self % order(self % Nsources), source=SOURCE_DIPOLE)
 
     write(*, '(A,I0,A,I0,A)') ' >> [FrequencySource] Initialized with ', self % Nsources, ' sources at ', &
                               size(self % Freqs), ' frequencies'
@@ -100,9 +104,7 @@ SUBROUTINE to_source_FrequencySource(self, config, sources)
     sources % xyz   = self % xyz
     sources % Force = self % Force
     sources % Freqs = self % Freqs
-
-    ! Every source radiates as a point dipole
-    ALLOCATE(sources % order(self % Nsources), source=SOURCE_DIPOLE)
+    sources % order = self % order
 
     ! Reference geometry and default output lables read by the solver
     write(ns_str, '(I0)') self % Nsources
@@ -121,13 +123,22 @@ END SUBROUTINE to_source_FrequencySource
 
 
 SUBROUTINE save_params_FrequencySource(self, save_path)
+    ! -------------------------------------------------------------------------
+    ! Saves the emitter type, the number of sources and frequencies, and the
+    ! sources themselves into the HDF5 output file: positions (Nsources, 3),
+    ! multipole order (Nsources) and complex forces (Nfreqs, Nsources, 3).
+    ! -------------------------------------------------------------------------
 
     CLASS(FrequencySource_t), INTENT(IN) :: self         ! [-] Emitter instance
-    CHARACTER(len=*), INTENT(IN)         :: save_path    ! [-] Path to the HDF5 output file
+    CHARACTER(len=*)        , INTENT(IN) :: save_path    ! [-] Path to the HDF5 output file
 
-    CALL save_variable(save_path, "Nsources", self % Nsources)
-    CALL save_variable(save_path, "NFreqs"  , size(self % Freqs))
-    CALL save_variable(save_path, "Structure_nodes"    , self % xyz)
+
+    CALL save_variable(save_path, "Emitter"     , "FrequencySource")
+    CALL save_variable(save_path, "Nsources"    , self % Nsources)
+    CALL save_variable(save_path, "NFreqs"      , size(self % Freqs))
+    CALL save_variable(save_path, "Source_xyz"  , self % xyz)
+    CALL save_variable(save_path, "Source_order", self % order)
+    CALL save_variable(save_path, "Source_Force", self % Force)
 
 END SUBROUTINE save_params_FrequencySource
 

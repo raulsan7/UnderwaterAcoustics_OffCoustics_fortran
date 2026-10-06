@@ -7,6 +7,7 @@
 /build*
 /turbine_acoustic_data
 /farm_acoustic_data
+/source_acoustic_data
 *.hdf5
 /SAITEC*
 /figures
