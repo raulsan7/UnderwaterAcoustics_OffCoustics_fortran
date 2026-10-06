@@ -1,149 +1,30 @@
 """
-Module: plot_comparison.py
-Description: Side-by-side comparison of two or more single-turbine cases (one panel per case, drawn by the
-             functions of plot_single_case). Cases whose file lacks a step are left out of that plot. The
+Module: compare/plots.py
+Description: Side-by-side comparison of two or more cases of any emitter (one panel per case, drawn by the
+             functions of plots/ through ax_in). Cases whose file lacks a step are left out of that plot. The
              equivalent point source overlays the cases instead (same units, the point is their levels).
 
 Author: Raul Sanz Ramirez (raul.sanz.ramirez@upm.es / raul.sanz.ramirez@gmail.com)
 Institution: Universidad Politecnica de Madrid - ETSIAE
-Date: 09/2026
+Date: 10/2026
 """
 
-import re
 import warnings
 import numpy as np
 import matplotlib.pyplot as plt
-import plot_utils as pu
-import plot_single_case as psc
+import plots
 import utils.AcousticUtils as au
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
-
-MAX_COLS = 3    # [-] Panels per row: more cases wrap into new rows
-
-
-# ---------- Helpers ---------- #
-def select_cases(cases: list = None,     # [-] List of dictionaries containing simulation data
-                 flag : str  = None,     # [-] has_<step> flag the plot needs
-                 name : str  = None):    # [-] Name of the calling function, for the messages
-    """
-    Keeps the cases whose file contains the step (has_<step> flag True, or the given key present). The others
-    (older versions of the Fortran code or interrupted runs) are left out with a message.
-
-    Returns
-    -------
-    cases : list of dict
-    """
-
-    if not cases:
-        print(f"{name}(): no cases given, skipping")
-        return []
-
-    def has(case):
-        return bool(case.get(flag, False)) if flag.startswith("has_") else flag in case
-
-    for case in cases:
-        if not has(case):
-            print(f"{name}(): {case['Name']} has no {flag.replace('has_', '')} data, left out of the comparison")
-
-    return [case for case in cases if has(case)]
-
-def make_panels(n      : int   = 1,         # [-] Number of cases
-                figsize: tuple = (7, 5),    # [-] Size of a single panel
-                stacked: bool  = False,     # [-] One column (True) or rows of up to MAX_COLS panels (False)
-                **kwargs):                  # [-] Extra arguments of plt.subplots (sharey, subplot_kw, ...)
-    """
-    Creates one panel per case: a single row for up to MAX_COLS cases (more cases wrap into new rows), or a
-    single column if stacked.
-
-    Returns
-    -------
-    fig, axes, ncols : matplotlib.figure.Figure, np.ndarray of Axes (exactly n), int
-    """
-
-    if stacked:
-        nrows, ncols = n, 1
-    else:
-        ncols = min(n, MAX_COLS)
-        nrows = int(np.ceil(n / ncols))
-
-    total_figsize = (figsize[0] * ncols, figsize[1] * nrows)
-    fig, axes = plt.subplots(nrows, ncols, figsize=total_figsize, squeeze=False, **kwargs)
-    axes = axes.ravel()
-
-    # Spare cells of the last row
-    for ax in axes[n:]:
-        fig.delaxes(ax)
-
-    return fig, axes[:n], ncols
-
-def remove_common_title_part(axes    : np.ndarray = None,     # [-] Axes of the comparison
-                             pattern : str        = None):    # [-] Regex of the part to remove
-    """
-    Deletes from every title the part matching 'pattern' (e.g. ' - Depth = -15.0 [m]') if it is the same in
-    all of them.
-    """
-
-    titles = [ax.get_title() for ax in axes]
-
-    match = re.search(pattern, titles[0], re.IGNORECASE)
-
-    if match:
-        common_str = match.group(1)
-
-        if all(common_str in t for t in titles):
-            for ax in axes:
-                new_title = ax.get_title().replace(common_str, '').strip()
-
-                if new_title.endswith('-') or new_title.endswith(','):
-                    new_title = new_title[:-1].strip()
-
-                ax.set_title(new_title)
-
-def wrap_case_titles(axes : np.ndarray = None,     # [-] Axes of the comparison
-                     cases: list       = None):    # [-] Case plotted in each panel
-    """
-    Moves the case label of every panel title to its own line ('label - OASPL - ...' -> 'label\\nOASPL - ...'):
-    comparison labels are long and the titles of neighbouring panels would overlap.
-    """
-
-    for ax, case in zip(axes, cases):
-        title = ax.get_title()
-        label = case["Case_type"]
-        if title.startswith(label + " - "):
-            ax.set_title(label + "\n" + title[len(label) + 3:])
-
-def ws_suffix(cases: list = None):     # [-] List of dictionaries containing simulation data
-    """
-    Word that tells the figures drawn with every wind speed (--ws) from the plain ones in the name they are
-    saved with.
-    """
-
-    return "allws" if any("WS_cases" in case for case in cases) else ""
-
-def add_case_legend(fig,                    # [-] Figure of the comparison
-                    handles: list = None,   # [-] One handle per case
-                    labels : list = None,   # [-] One label per case
-                    title  : str  = None):  # [-] Legend title
-    """
-    Adds one legend entry per case below the axes, one per row, for figures that overlay every case (their
-    labels are long).
-
-    Returns
-    -------
-    bottom : float
-        Fraction of the figure height the legend takes, for fig.tight_layout(rect=[0, bottom, 1, 1]).
-    """
-
-    fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, 0.0), ncol=1, fontsize=11,
-               title=title, title_fontsize=11, frameon=False)
-
-    rows = len(labels) + (1 if title else 0)
-    return min(0.5, (0.27 * rows + 0.15) / fig.get_figheight())
+from wrappers.case import emitter_label, case_color, family_tag
+from plots.common import psd_not_applicable, octave_not_applicable
+from plots.specific.structure import has_structure
+from compare.panels import select_cases, make_panels, remove_common_title_part, wrap_case_titles, add_case_legend
+from plot_utils.saving import set_figure_name
 
 
 # ---------- Structural Plots ---------- #
-def plot_structure(cases  : list  = None,      # [-] List of dictionaries containing simulation data
+def plot_structure(cases  : list  = None,      # [-] List of Cases
                    mode   : str   = '3D',       # [-] Plot mode for the structure representation ('3D', 'xy', 'xz')
                    WindDir: bool  = True,       # [-] Whether to plot or not wind direction
                    figsize: tuple = (8, 6)):    # [-] Size of a single panel
@@ -151,7 +32,7 @@ def plot_structure(cases  : list  = None,      # [-] List of dictionaries contai
     Plots structure nodes of every case side by side (one panel per case).
     """
 
-    cases = select_cases(cases, "Structure_nodes", "plot_structure")
+    cases = select_cases(cases, "has_structure", "plot_structure", has=has_structure)
     if not cases:
         return None, None
 
@@ -161,23 +42,23 @@ def plot_structure(cases  : list  = None,      # [-] List of dictionaries contai
     fig, axes, ncols = make_panels(len(cases), figsize, subplot_kw=subplot_kw, sharey=sharey)
 
     for i, case in enumerate(cases):
-        psc.plot_structure(case=case,
-                           mode=mode,
-                           WindDir=WindDir,
-                           figsize=figsize,
-                           ax_in=axes[i])
+        plots.plot_structure(case=case,
+                             mode=mode,
+                             WindDir=WindDir,
+                             figsize=figsize,
+                             ax_in=axes[i])
         if i % ncols > 0 and mode != '3D':
             axes[i].set_ylabel("")
 
     wrap_case_titles(axes, cases)
 
     fig.tight_layout()
-    pu.set_figure_name(fig, "structure", mode)
+    set_figure_name(fig, "structure", mode)
     return fig, axes
 
 
 # ---------- Spectrum Plots ---------- #
-def plot_spectrum(cases        : list  = None,      # [-] List of dictionaries containing simulation data
+def plot_spectrum(cases        : list  = None,      # [-] List of Cases
                   mode         : str   = 'SPL',     # [-] Selects Sound Pressure/Power Level. 'SPL' or 'SWL'
                   absorption   : bool  = True,      # [-] Whether to apply approximate absorption attenuation
                   octave       : bool  = True,      # [-] 1/3 octave or fine resolution
@@ -188,37 +69,44 @@ def plot_spectrum(cases        : list  = None,      # [-] List of dictionaries c
                   smooth_fraction: int = 12,        # [-] Narrowband only: smoothing window, 1/N octave (None: no smoothing at all)
                   figsize      : tuple = (7, 5)):  # [-] Size of a single panel
     """
-    Plots the acoustic spectrum of every case side by side (one panel per case).
+    Plots the acoustic spectrum of every case side by side (one panel per case), on a shared y axis whose top
+    fits every panel.
     """
 
     cases = select_cases(cases, "has_spectrums", "plot_spectrum")
     if not cases:
         return None, None
+    if psd_not_applicable(cases, mode, "plot_spectrum") or octave_not_applicable(cases, octave, "plot_spectrum"):
+        return None, None
 
     fig, axes, ncols = make_panels(len(cases), figsize, sharey=True)
 
     for i, case in enumerate(cases):
-        psc.plot_spectrum(case=case,
-                          mode=mode,
-                          absorption=absorption,
-                          octave=octave,
-                          filter_under=filter_under,
-                          filter_over=filter_over,
-                          do_thresholds=do_thresholds,
-                          smooth=smooth,
-                          smooth_fraction=smooth_fraction,
-                          figsize=figsize,
-                          ax_in=axes[i])
+        plots.plot_spectrum(case=case,
+                            mode=mode,
+                            absorption=absorption,
+                            octave=octave,
+                            filter_under=filter_under,
+                            filter_over=filter_over,
+                            do_thresholds=do_thresholds,
+                            smooth=smooth,
+                            smooth_fraction=smooth_fraction,
+                            figsize=figsize,
+                            ax_in=axes[i])
         if i % ncols > 0:
             axes[i].set_ylabel("")
 
+    # The lower limit of every panel switched off the autoscale of the shared axis: the top fits every case
+    axes[0].autoscale(axis='y')
+    axes[0].set_ylim(bottom=0.)
+
     fig.tight_layout()
-    pu.set_figure_name(fig, "spectrum", mode, "octave" if octave else "narrowband", ws_suffix(cases))
+    set_figure_name(fig, "spectrum", mode, "octave" if octave else "narrowband", family_tag(cases))
     return fig, axes
 
 
 # ---------- Polar Plots ---------- #
-def plot_polar(cases           : list  = None,         # [-] List of dictionaries containing simulation data
+def plot_polar(cases           : list  = None,         # [-] List of Cases
                mode            : str   = 'OASPL',      # [-] Magnitude to plot: 'OASPL', 'SPL', or 'ABS'
                target_frequency: float = 0.88,         # [Hz] Target frequency for 'SPL' or 'ABS' modes
                absorption      : bool  = True,         # [-] Whether to apply absorption attenuation
@@ -231,20 +119,22 @@ def plot_polar(cases           : list  = None,         # [-] List of dictionarie
     cases = select_cases(cases, "has_polar", "plot_polar")
     if not cases:
         return None, None
+    if psd_not_applicable(cases, mode, "plot_polar"):
+        return None, None
 
-    fig, axes, ncols = make_panels(len(cases), figsize, subplot_kw={"projection": "polar"})
+    fig, axes, _ = make_panels(len(cases), figsize, subplot_kw={"projection": "polar"})
 
     for i, case in enumerate(cases):
-        psc.plot_polar(case=case,
-                       mode=mode,
-                       target_frequency=target_frequency,
-                       absorption=absorption,
-                       bands=bands,
-                       figsize=figsize,
-                       ax_in=axes[i])
+        plots.plot_polar(case=case,
+                         mode=mode,
+                         target_frequency=target_frequency,
+                         absorption=absorption,
+                         bands=bands,
+                         figsize=figsize,
+                         ax_in=axes[i])
 
-    if ws_suffix(cases):
-        # Every panel keeps the legends of its wind speeds (and bands) below it
+    if family_tag(cases):
+        # Every panel keeps the legends of its family (and bands) below it
         fig.tight_layout(rect=[0, 0, 1, 0.95])
     else:
         # Legend handling
@@ -258,12 +148,12 @@ def plot_polar(cases           : list  = None,         # [-] List of dictionarie
 
         fig.tight_layout(rect=[0, 0.1, 1, 0.95])
 
-    pu.set_figure_name(fig, "polar", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "", ws_suffix(cases))
+    set_figure_name(fig, "polar", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "", family_tag(cases))
     return fig, axes
 
 
 # ---------- Cylindrical Plots ---------- #
-def plot_cylinder(cases           : list  = None,      # [-] List of dictionaries containing simulation data
+def plot_cylinder(cases           : list  = None,      # [-] List of Cases
                   mode            : str   = 'OASPL',   # [-] Magnitude to plot: 'OASPL', 'SPL', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
                   target_frequency: float = 0.88,      # [Hz] Target frequency for single-frequency modes
                   absorption      : bool  = True,      # [-] Whether to apply absorption attenuation
@@ -278,22 +168,24 @@ def plot_cylinder(cases           : list  = None,      # [-] List of dictionarie
     cases = select_cases(cases, "has_cylinder", "plot_cylinder")
     if not cases:
         return None, None
+    if psd_not_applicable(cases, mode, "plot_cylinder"):
+        return None, None
 
-    fig, axes, ncols = make_panels(len(cases), figsize, stacked=True, sharex=True)
+    fig, axes, _ = make_panels(len(cases), figsize, stacked=True, sharex=True)
 
     case_names = []
     mode_suffix = ""
 
     for i, case in enumerate(cases):
-        psc.plot_cylinder(case=case,
-                          mode=mode,
-                          target_frequency=target_frequency,
-                          absorption=absorption,
-                          filter_under=filter_under,
-                          filter_over=filter_over,
-                          figsize=figsize,
-                          cmap=cmap,
-                          ax_in=axes[i])
+        plots.plot_cylinder(case=case,
+                            mode=mode,
+                            target_frequency=target_frequency,
+                            absorption=absorption,
+                            filter_under=filter_under,
+                            filter_over=filter_over,
+                            figsize=figsize,
+                            cmap=cmap,
+                            ax_in=axes[i])
 
         # Hide x lables
         if i < len(cases) - 1:
@@ -325,18 +217,18 @@ def plot_cylinder(cases           : list  = None,      # [-] List of dictionarie
     fig.suptitle(global_title, fontsize=16, weight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
 
-    pu.set_figure_name(fig, "cylinder", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "")
+    set_figure_name(fig, "cylinder", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "")
     return fig, axes
 
 
 # ---------- Linear Plots ---------- #
-def plot_distance_decay(cases           : list  = None,      # [-] List of dictionaries containing simulation data
+def plot_distance_decay(cases           : list  = None,      # [-] List of Cases
                         mode            : str   = 'OASPL',   # [-] Magnitude to plot: 'OASPL', 'SPL', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
                         target_frequency: float = 0.88,      # [Hz] Target frequency for single-frequency modes
                         absorption      : bool  = True,      # [-] Whether to apply absorption attenuation
                         filter_under    : float = None,      # [Hz] Lower frequency cutoff (f >= filter_under)
                         filter_over     : float = None,      # [Hz] Upper frequency cutoff (f <= filter_over)
-                        turbine_data    : bool  = False,     # [-] Whether to plot additional turbine data from GE 2025
+                        turbine_data    : bool  = False,     # [-] Whether to plot the reference data of the cases (turbines: Ge 2025)
                         figsize         : tuple = (7, 5)):  # [-] Size of a single panel
     """
     Plots acoustic magnitude decay over distance of every case side by side (one panel per case).
@@ -345,25 +237,27 @@ def plot_distance_decay(cases           : list  = None,      # [-] List of dicti
     cases = select_cases(cases, "has_decay", "plot_distance_decay")
     if not cases:
         return None, None
+    if psd_not_applicable(cases, mode, "plot_distance_decay"):
+        return None, None
 
     fig, axes, ncols = make_panels(len(cases), figsize, sharey=True)
 
     for i, case in enumerate(cases):
-        psc.plot_distance_decay(case=case,
-                                mode=mode,
-                                target_frequency=target_frequency,
-                                absorption=absorption,
-                                filter_under=filter_under,
-                                filter_over=filter_over,
-                                turbine_data=turbine_data,
-                                figsize=figsize,
-                                ax_in=axes[i])
+        plots.plot_distance_decay(case=case,
+                                  mode=mode,
+                                  target_frequency=target_frequency,
+                                  absorption=absorption,
+                                  filter_under=filter_under,
+                                  filter_over=filter_over,
+                                  turbine_data=turbine_data,
+                                  figsize=figsize,
+                                  ax_in=axes[i])
         if i % ncols > 0:
             axes[i].set_ylabel("")
 
     wrap_case_titles(axes, cases)
 
-    # References and Ge 2025 data (the wind speeds of --ws have a legend of their own below every panel)
+    # References and reference data (the members of a family have a legend of their own below every panel)
     handles, labels = axes[0].get_legend_handles_labels()
 
     if handles:
@@ -378,10 +272,10 @@ def plot_distance_decay(cases           : list  = None,      # [-] List of dicti
     else:
         fig.tight_layout()
 
-    pu.set_figure_name(fig, "decay", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "", ws_suffix(cases))
+    set_figure_name(fig, "decay", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "", family_tag(cases))
     return fig, axes
 
-def plot_line(cases           : list  = None,      # [-] List of dictionaries containing simulation data
+def plot_line(cases           : list  = None,      # [-] List of Cases
               mode            : str   = 'OASPL',   # [-] Magnitude to plot: 'OASPL', 'SPL', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
               target_frequency: float = 0.88,      # [Hz] Target frequency for single-frequency modes
               absorption      : bool  = True,      # [-] Whether to apply absorption attenuation
@@ -395,19 +289,21 @@ def plot_line(cases           : list  = None,      # [-] List of dictionaries co
     cases = select_cases(cases, "has_line", "plot_line")
     if not cases:
         return None, None
+    if psd_not_applicable(cases, mode, "plot_line"):
+        return None, None
 
     fig, axes, ncols = make_panels(len(cases), figsize, sharey=True)
 
     ymin, ymax = float('inf'), float('-inf')
     for i, case in enumerate(cases):
-        psc.plot_line(case=case,
-                      mode=mode,
-                      target_frequency=target_frequency,
-                      absorption=absorption,
-                      filter_under=filter_under,
-                      filter_over=filter_over,
-                      figsize=figsize,
-                      ax_in=axes[i])
+        plots.plot_line(case=case,
+                        mode=mode,
+                        target_frequency=target_frequency,
+                        absorption=absorption,
+                        filter_under=filter_under,
+                        filter_over=filter_over,
+                        figsize=figsize,
+                        ax_in=axes[i])
         if i % ncols > 0:
             axes[i].set_ylabel("")
 
@@ -419,21 +315,21 @@ def plot_line(cases           : list  = None,      # [-] List of dictionaries co
         axes[i].set_ylim(ymin, ymax)
 
     wrap_case_titles(axes, cases)
-    if ws_suffix(cases):
-        fig.tight_layout()      # Room for the wind speed legends below the panels
+    if family_tag(cases):
+        fig.tight_layout()      # Room for the legends of the families below the panels
 
-    pu.set_figure_name(fig, "line", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "", ws_suffix(cases))
+    set_figure_name(fig, "line", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "", family_tag(cases))
     return fig, axes
 
 
 # ---------- Slice Plots ---------- #
-def plot_sliceXY(cases           : list  = None,      # [-] List of dictionaries containing simulation data
+def plot_sliceXY(cases           : list  = None,      # [-] List of Cases
                  mode            : str   = 'OASPL',   # [-] Magnitude to plot: 'OASPL', 'SPL', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
                  target_frequency: float = 0.88,      # [Hz] Target frequency for single-frequency modes
                  absorption      : bool  = True,      # [-] Whether to apply absorption attenuation
                  filter_under    : float = None,      # [Hz] Lower frequency cutoff (f >= filter_under)
                  filter_over     : float = None,      # [Hz] Upper frequency cutoff (f <= filter_over)
-                 structure       : bool  = True,      # [-] Whether to plot structure on slice
+                 structure       : bool  = True,      # [-] Whether to plot the nodes on slice
                  figsize         : tuple = (7, 7),    # [-] Size of a single panel
                  cmap            : str   = 'inferno'):# [-] Contour colormap
     """
@@ -443,20 +339,22 @@ def plot_sliceXY(cases           : list  = None,      # [-] List of dictionaries
     cases = select_cases(cases, "has_slicexy", "plot_sliceXY")
     if not cases:
         return None, None
+    if psd_not_applicable(cases, mode, "plot_sliceXY"):
+        return None, None
 
     fig, axes, ncols = make_panels(len(cases), figsize)
 
     for i, case in enumerate(cases):
-        psc.plot_sliceXY(case=case,
-                         mode=mode,
-                         target_frequency=target_frequency,
-                         absorption=absorption,
-                         filter_under=filter_under,
-                         filter_over=filter_over,
-                         structure=structure,
-                         figsize=figsize,
-                         cmap=cmap,
-                         ax_in=axes[i])
+        plots.plot_sliceXY(case=case,
+                           mode=mode,
+                           target_frequency=target_frequency,
+                           absorption=absorption,
+                           filter_under=filter_under,
+                           filter_over=filter_over,
+                           structure=structure,
+                           figsize=figsize,
+                           cmap=cmap,
+                           ax_in=axes[i])
 
         if i % ncols > 0:
             axes[i].set_ylabel("")
@@ -466,16 +364,16 @@ def plot_sliceXY(cases           : list  = None,      # [-] List of dictionaries
     wrap_case_titles(axes, cases)
 
     fig.tight_layout()
-    pu.set_figure_name(fig, "sliceXY", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "")
+    set_figure_name(fig, "sliceXY", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "")
     return fig, axes
 
-def plot_sliceXZ(cases           : list  = None,      # [-] List of dictionaries containing simulation data
+def plot_sliceXZ(cases           : list  = None,      # [-] List of Cases
                  mode            : str   = 'OASPL',   # [-] Magnitude to plot: 'OASPL', 'SPL', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
                  target_frequency: float = 0.88,      # [Hz] Target frequency for single-frequency modes
                  absorption      : bool  = True,      # [-] Whether to apply absorption attenuation
                  filter_under    : float = None,      # [Hz] Lower frequency cutoff (f >= filter_under)
                  filter_over     : float = None,      # [Hz] Upper frequency cutoff (f <= filter_over)
-                 structure       : bool  = True,      # [-] Whether to plot structure on slice
+                 structure       : bool  = True,      # [-] Whether to plot the nodes on slice
                  figsize         : tuple = (7, 7),    # [-] Size of a single panel
                  cmap            : str   = 'inferno'):# [-] Contour colormap
     """
@@ -485,20 +383,22 @@ def plot_sliceXZ(cases           : list  = None,      # [-] List of dictionaries
     cases = select_cases(cases, "has_slicexz", "plot_sliceXZ")
     if not cases:
         return None, None
+    if psd_not_applicable(cases, mode, "plot_sliceXZ"):
+        return None, None
 
     fig, axes, ncols = make_panels(len(cases), figsize)
 
     for i, case in enumerate(cases):
-        psc.plot_sliceXZ(case=case,
-                         mode=mode,
-                         target_frequency=target_frequency,
-                         absorption=absorption,
-                         filter_under=filter_under,
-                         filter_over=filter_over,
-                         structure=structure,
-                         figsize=figsize,
-                         cmap=cmap,
-                         ax_in=axes[i])
+        plots.plot_sliceXZ(case=case,
+                           mode=mode,
+                           target_frequency=target_frequency,
+                           absorption=absorption,
+                           filter_under=filter_under,
+                           filter_over=filter_over,
+                           structure=structure,
+                           figsize=figsize,
+                           cmap=cmap,
+                           ax_in=axes[i])
 
         if i % ncols > 0: axes[i].set_ylabel("")
 
@@ -507,16 +407,16 @@ def plot_sliceXZ(cases           : list  = None,      # [-] List of dictionaries
     wrap_case_titles(axes, cases)
 
     fig.tight_layout()
-    pu.set_figure_name(fig, "sliceXZ", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "")
+    set_figure_name(fig, "sliceXZ", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "")
     return fig, axes
 
-def plot_sliceVertical(cases           : list  = None,      # [-] List of dictionaries containing simulation data
+def plot_sliceVertical(cases           : list  = None,      # [-] List of Cases
                        mode            : str   = 'OASPL',   # [-] Magnitude to plot: 'OASPL', 'SPL', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
                        target_frequency: float = 0.88,      # [Hz] Target frequency for single-frequency modes
                        absorption      : bool  = True,      # [-] Whether to apply absorption attenuation
                        filter_under    : float = None,      # [Hz] Lower frequency cutoff (f >= filter_under)
                        filter_over     : float = None,      # [Hz] Upper frequency cutoff (f <= filter_over)
-                       structure       : bool  = True,      # [-] Whether to plot structure on slice
+                       structure       : bool  = True,      # [-] Whether to plot the nodes on slice
                        figsize         : tuple = (7, 7),    # [-] Size of a single panel
                        cmap            : str   = 'inferno'):# [-] Contour colormap
     """
@@ -526,20 +426,22 @@ def plot_sliceVertical(cases           : list  = None,      # [-] List of dictio
     cases = select_cases(cases, "has_slicevertical", "plot_sliceVertical")
     if not cases:
         return None, None
+    if psd_not_applicable(cases, mode, "plot_sliceVertical"):
+        return None, None
 
     fig, axes, ncols = make_panels(len(cases), figsize)
 
     for i, case in enumerate(cases):
-        psc.plot_sliceVertical(case=case,
-                               mode=mode,
-                               target_frequency=target_frequency,
-                               absorption=absorption,
-                               filter_under=filter_under,
-                               filter_over=filter_over,
-                               structure=structure,
-                               figsize=figsize,
-                               cmap=cmap,
-                               ax_in=axes[i])
+        plots.plot_sliceVertical(case=case,
+                                 mode=mode,
+                                 target_frequency=target_frequency,
+                                 absorption=absorption,
+                                 filter_under=filter_under,
+                                 filter_over=filter_over,
+                                 structure=structure,
+                                 figsize=figsize,
+                                 cmap=cmap,
+                                 ax_in=axes[i])
 
         if i % ncols > 0: axes[i].set_ylabel("")
 
@@ -548,13 +450,13 @@ def plot_sliceVertical(cases           : list  = None,      # [-] List of dictio
     wrap_case_titles(axes, cases)
 
     fig.tight_layout()
-    pu.set_figure_name(fig, "sliceVertical", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "")
+    set_figure_name(fig, "sliceVertical", mode, f"{target_frequency:.2f}Hz" if mode.upper() != "OASPL" else "")
     return fig, axes
 
 
 # ---------- Compute metrics ---------- #
-def compute_sphere_metrics(cases       : list  = None,     # [-] List of dictionaries containing simulation data
-                           **kwargs):                      # [-] Arguments of plot_single_case.compute_sphere_metrics
+def compute_sphere_metrics(cases       : list  = None,     # [-] List of Cases
+                           **kwargs):                      # [-] Arguments of plots.compute_sphere_metrics
     """
     Computes and prints the sphere radiation metrics of every case.
 
@@ -563,10 +465,10 @@ def compute_sphere_metrics(cases       : list  = None,     # [-] List of diction
     metrics : list of dict (None for the cases without sphere data)
     """
 
-    return [psc.compute_sphere_metrics(case, **kwargs) for case in cases]
+    return [plots.compute_sphere_metrics(case, **kwargs) for case in cases]
 
-def compute_cylinder_metrics(cases       : list  = None,     # [-] List of dictionaries containing simulation data
-                             **kwargs):                      # [-] Arguments of plot_single_case.compute_cylinder_metrics
+def compute_cylinder_metrics(cases       : list  = None,     # [-] List of Cases
+                             **kwargs):                      # [-] Arguments of plots.compute_cylinder_metrics
     """
     Computes and prints the cylinder propagation metrics of every case.
 
@@ -575,9 +477,9 @@ def compute_cylinder_metrics(cases       : list  = None,     # [-] List of dicti
     metrics : list of dict (None for the cases without cylinder data)
     """
 
-    return [psc.compute_cylinder_metrics(case, **kwargs) for case in cases]
+    return [plots.compute_cylinder_metrics(case, **kwargs) for case in cases]
 
-def compute_point_source(cases           : list  = None,      # [-] List of dictionaries containing simulation data
+def compute_point_source(cases           : list  = None,      # [-] List of Cases
                          filter_under    : float = None,      # [Hz] Lower frequency cutoff (f >= filter_under)
                          filter_over     : float = None,      # [Hz] Upper frequency cutoff (f <= filter_over)
                          enbw            : float = None,      # [bins] ENBW of the FFT window (None: case["ENBW"] of every file)
@@ -588,10 +490,10 @@ def compute_point_source(cases           : list  = None,      # [-] List of dict
                          do_plot         : bool  = True,      # [-] Plot SL spectra, radiation diagnostics and PL of every case
                          figsize         : tuple = (10, 5)):  # [-] Size of the SL and PL figures
     """
-    Equivalent point source of every case (plot_single_case.compute_point_source) and their comparison. Every
-    case prints its own output (totals and 1/3 octave table), followed by a table with the broadband totals of
-    all of them. The figures are those of a single case with every case overlaid in its own color, instead of
-    one panel per case, since they share units and the point is to compare their levels:
+    Equivalent point source of every case (plots.compute_point_source) and their comparison. Every case prints
+    its own output (totals and 1/3 octave table), followed by a table with the broadband totals of all of
+    them. The figures are those of a single case with every case overlaid in its own color, instead of one
+    panel per case, since they share units and the point is to compare their levels:
 
     - SL spectra: narrowband densities (free field solid, in situ dashed) and 1/3 octave band levels.
     - Radiation diagnostics per 1/3 octave band (cases with sphere): in situ - free, DI, and the dipole and
@@ -618,15 +520,15 @@ def compute_point_source(cases           : list  = None,      # [-] List of dict
             metrics.append(None)
             continue
 
-        metrics.append(psc.compute_point_source(case=case,
-                                                filter_under=filter_under,
-                                                filter_over=filter_over,
-                                                enbw=enbw,
-                                                smooth_fraction=smooth_fraction,
-                                                rho_water=rho_water,
-                                                c_water=c_water,
-                                                verbose=verbose,
-                                                do_plot=False))
+        metrics.append(plots.compute_point_source(case=case,
+                                                  filter_under=filter_under,
+                                                  filter_over=filter_over,
+                                                  enbw=enbw,
+                                                  smooth_fraction=smooth_fraction,
+                                                  rho_water=rho_water,
+                                                  c_water=c_water,
+                                                  verbose=verbose,
+                                                  do_plot=False))
 
     pairs = [(case, m) for case, m in zip(cases, metrics) if m is not None]
     if not pairs:
@@ -639,7 +541,7 @@ def compute_point_source(cases           : list  = None,      # [-] List of dict
 
     # --- 2. Broadband totals of every case --- #
     if verbose:
-        label_w = max(len("Case"), *(len(case["Case_type"]) for case, _ in pairs))
+        label_w = max(len("Case"), *(len(emitter_label(case)) for case, _ in pairs))
         width   = label_w + 70
         print("\n" + "=" * width)
         print("  EQUIVALENT POINT SOURCE - COMPARISON  |  broadband SL [dB re 1 µPa² m²]")
@@ -654,7 +556,7 @@ def compute_point_source(cases           : list  = None,      # [-] List of dict
                          if "W_insitu_total" in m and "W_free_total" in m else "-")
             r_sphere  = f"{m['R_sphere']:.0f} m" if "R_sphere" in m else "-"
             r_cyl     = f"{m['R_cylinder']:.0f} m" if "R_cylinder" in m else "-"
-            print(f"  {case['Case_type']:<{label_w}} {band:>13} {m['enbw']:>5g} {sl_free:>8} {sl_situ:>8} "
+            print(f"  {emitter_label(case):<{label_w}} {band:>13} {m['enbw']:>5g} {sl_free:>8} {sl_situ:>8} "
                   f"{situ_free:>9} {r_sphere:>9} {r_cyl:>7}")
 
     if not do_plot:
@@ -671,7 +573,7 @@ def compute_point_source(cases           : list  = None,      # [-] List of dict
     has_free = has_situ = has_near = False
 
     for case, m in pairs:
-        color  = pu.get_case_color(case)
+        color  = case_color(case)
         f, fc  = m["Freqs"], m["fc"]
         bw     = fc * (2**(1/6) - 2**(-1/6))      # [Hz] 1/3 octave band widths
         totals = []
@@ -691,7 +593,7 @@ def compute_point_source(cases           : list  = None,      # [-] List of dict
             ax.axvline(near_field_limit(m), color=color, ls=':', lw=1.2)
 
         handles.append(Line2D([], [], color=color, lw=2))
-        labels.append(f"{case['Case_type']}: " + ", ".join(totals))
+        labels.append(f"{emitter_label(case)}: " + ", ".join(totals))
 
     styles = []
     if has_free:
@@ -710,7 +612,7 @@ def compute_point_source(cases           : list  = None,      # [-] List of dict
     ax.legend(handles=styles, fontsize=10)
     bottom = add_case_legend(fig, handles, labels, title=r"Broadband SL [dB re 1 $\mu$Pa$^2$ m$^2$]")
     fig.tight_layout(rect=[0, bottom, 1, 1])
-    pu.set_figure_name(fig, "point_source", "SL")
+    set_figure_name(fig, "point_source", "SL")
 
     # --- 4. Radiation diagnostics per 1/3 octave band (cases with sphere) --- #
     sphere_pairs = [(case, m) for case, m in pairs if "DI_band" in m]
@@ -721,7 +623,7 @@ def compute_point_source(cases           : list  = None,      # [-] List of dict
         handles, labels = [], []
 
         for case, m in sphere_pairs:
-            color = pu.get_case_color(case)
+            color = case_color(case)
             fc    = m["fc"]
             row   = 0
             if show_ratio:
@@ -738,7 +640,7 @@ def compute_point_source(cases           : list  = None,      # [-] List of dict
                     a.axvline(near_field_limit(m), color=color, ls=':', lw=1.2)
 
             handles.append(Line2D([], [], color=color, lw=2))
-            labels.append(f"{case['Case_type']} (sphere r = {m['R_sphere']:.0f} m)")
+            labels.append(f"{emitter_label(case)} (sphere r = {m['R_sphere']:.0f} m)")
 
         if show_ratio:
             axs[0].axhline(0.0, color='0.5', lw=0.8)
@@ -755,7 +657,7 @@ def compute_point_source(cases           : list  = None,      # [-] List of dict
         axs[0].set_title("Radiation diagnostics")
         bottom = add_case_legend(fig2, handles, labels)
         fig2.tight_layout(rect=[0, bottom, 1, 1])
-        pu.set_figure_name(fig2, "point_source", "diagnostics")
+        set_figure_name(fig2, "point_source", "diagnostics")
 
     # --- 5. Propagation loss at the spectrum observers --- #
     pl_pairs = [(case, m) for case, m in pairs if "PL_band" in m]
@@ -764,7 +666,7 @@ def compute_point_source(cases           : list  = None,      # [-] List of dict
         handles, labels = [], []
 
         for case, m in pl_pairs:
-            color = pu.get_case_color(case)
+            color = case_color(case)
             fc    = m["fc"]
             with warnings.catch_warnings():     # A band where every observer is NaN stays NaN
                 warnings.simplefilter("ignore", category=RuntimeWarning)
@@ -774,7 +676,7 @@ def compute_point_source(cases           : list  = None,      # [-] List of dict
 
             source = "free" if m["PL_source"] == "free" else "in situ"
             handles.append(Line2D([], [], color=color, lw=2))
-            labels.append(f"{case['Case_type']} (SL {source}, {m['PL_band'].shape[1]} observers)")
+            labels.append(f"{emitter_label(case)} (SL {source}, {m['PL_band'].shape[1]} observers)")
 
         ax3.set_xlabel("1/3 octave band centre frequency [Hz]")
         ax3.set_ylabel(r"PL [dB re 1 m$^2$]")
@@ -784,7 +686,6 @@ def compute_point_source(cases           : list  = None,      # [-] List of dict
                             Patch(facecolor='k', alpha=0.15, label="Range of the observers")], fontsize=10)
         bottom = add_case_legend(fig3, handles, labels)
         fig3.tight_layout(rect=[0, bottom, 1, 1])
-        pu.set_figure_name(fig3, "point_source", "PL")
+        set_figure_name(fig3, "point_source", "PL")
 
     return metrics
-

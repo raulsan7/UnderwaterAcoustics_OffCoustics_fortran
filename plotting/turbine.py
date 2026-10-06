@@ -12,11 +12,11 @@ The plots shown are selected below.
 """
 
 import matplotlib.pyplot as plt
-import plot_utils as pu
-import plot_single_case as p
-import plot_comparison as pc
-from plot_style import AcademicStyle
-from plot_utils import parse_turbine_args, load_turbines
+import plots as p
+import compare as pc
+from plot_utils.style import AcademicStyle
+from plot_utils.saving import save_figures
+from wrappers.turbine import parse_turbine_args, load_turbines
 
 def main():
     # 1. Visual asthetics
@@ -56,7 +56,7 @@ def main():
 
 
     # 2. Save (only with --save) and show
-    pu.save_figures(args, cases)
+    save_figures(args, cases)
     if not args.no_show:
         plt.show()
 

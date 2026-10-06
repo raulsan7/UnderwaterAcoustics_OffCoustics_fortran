@@ -1,5 +1,5 @@
 """
-Module: plot_style.py
+Module: plot_utils/style.py
 Description: Visual asthetics (fonts, colormaps, colors, line styles) shared by every plot. Text is rendered
              with LaTeX; if no working LaTeX installation is found (e.g. on a cluster) it falls back to
              Matplotlib's mathtext (text.usetex = False) with a warning.

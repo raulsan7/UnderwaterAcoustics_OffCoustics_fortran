@@ -11,11 +11,11 @@ The plots shown are selected below.
 """
 
 import matplotlib.pyplot as plt
-import plot_utils as pu
-import plot_farm_module as p
-import plot_farm_comparison as pc
-from plot_utils import parse_farm_args, load_farms
-from plot_style import AcademicStyle
+import plots as p
+import compare as pc
+from plot_utils.style import AcademicStyle
+from plot_utils.saving import save_figures
+from wrappers.farm import parse_farm_args, load_farms
 
 
 def main():
@@ -30,8 +30,8 @@ def main():
     if len(cases) == 1:
         case = cases[0]
         p.plot_structure(case, mode='xy')
-        p.plot_spectrums(case, do_thresholds=False, octave=True)
-        p.plot_spectrums(case, do_thresholds=False, octave=False, smooth=True, mode='PSD')
+        p.plot_spectrum(case, do_thresholds=False, octave=True)
+        p.plot_spectrum(case, do_thresholds=False, octave=False, smooth=True, mode='PSD')
         p.plot_polar(case)
         p.plot_cylinder(case)
         p.plot_line(case)
@@ -42,8 +42,8 @@ def main():
         p.compute_cylinder_metrics(case)
         p.compute_point_source(case)
     else:
-        pc.plot_spectrums(cases, do_thresholds=False, octave=True, mode='SPL')
-        pc.plot_spectrums(cases, do_thresholds=False, octave=False, mode='PSD', smooth=True)
+        pc.plot_spectrum(cases, do_thresholds=False, octave=True, mode='SPL')
+        pc.plot_spectrum(cases, do_thresholds=False, octave=False, mode='PSD', smooth=True)
         # pc.plot_structure(cases, mode='xy')
         # pc.plot_polar(cases)
         # pc.plot_cylinder(cases)
@@ -55,7 +55,7 @@ def main():
         # pc.compute_point_source(cases)
 
     # 2. Save (only with --save) and show
-    pu.save_figures(args, cases)
+    save_figures(args, cases)
     if not args.no_show:
         plt.show()
 
