@@ -70,7 +70,7 @@ SUBROUTINE read_solver_config(path, config)
 
 
     ! --- 2. Defaults --- !
-    simulation_type = "turbine"
+    simulation_type = "WindTurbine"
     method          = "ImageMethod"
     save_path       = "None"
     extra_label     = "None"

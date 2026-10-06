@@ -11,14 +11,15 @@ All Fortran code follows `Programming_style_guidelines.txt`.
 A run of `off_coustics_fortran` (`app/main.f90`) goes through these stages:
 
 ```
- input_files/*.nml
+ input_files/  (Solver.nml, Environment.nml, Emitters/, ComputationSetups/, AcousticMethods/)
         |
         |  read_input_files                                   input/
         v
     Config_t ---------------------------------------------+
         |                                                 |
         |  new_turbine + init/read_input/compute_force,   |
-        |  or WindFarm_t % init/compute_forces            |  emitters/
+        |  WindFarm_t % init/compute_forces,              |  emitters/
+        |  or FrequencySource_t % init                    |
         v                                                 |
     Emitter_t  (WindTurbine_t, WindFarm_t, ...)           |
         |                                                 |
@@ -42,14 +43,26 @@ A run of `off_coustics_fortran` (`app/main.f90`) goes through these stages:
 
 In `main.f90`:
 
-1. `get_input_path(files_path)` takes the directory of the namelists from the command line (`./off_coustics ./path_to_input_files`; `./input_files/` without arguments) and `read_input_files(files_path, config)` reads every namelist of it into `Config_t`. Paths written inside the namelists (e.g. `OP_output_dir`) stay relative to the working directory, not to that directory.
-2. Depending on `simulation_type`, a single turbine (`new_turbine`, then `init`, `read_input`, `compute_force`) or a wind farm (`WindFarm_t % init`, `compute_forces`) is built.
+1. `get_input_path(files_path)` takes the directory of the namelists from the command line (`./off_coustics ./path_to_input_files`; `./input_files/` without arguments) and `read_input_files(files_path, config)` reads every namelist of it into `Config_t` (the files are described in §1.1). Paths written inside the namelists (e.g. `OP_output_dir`) stay relative to the working directory, not to that directory.
+2. Depending on `simulation_type`, a single turbine (`new_turbine`, then `init`, `read_input`, `compute_force`), a wind farm (`WindFarm_t % init`, `compute_forces`) or a set of frequency-domain point sources (`FrequencySource_t % init`) is built.
 3. `to_source` translates the emitter into an `AcousticSource_t`.
 4. `new_solver` allocates the solver named by `method`; `init` moves the sources into it and frees `config`.
-5. The emitter is moved (`MOVE_ALLOC`) into a `CLASS(Emitter_t)` variable, handed to `save_parameters`, and deallocated before `run()`.
+5. At the end of its branch the emitter is moved (`MOVE_ALLOC`) into a `CLASS(Emitter_t)` variable, which is handed to `save_parameters` and deallocated before `run()`.
 6. `run()` executes every enabled post-processing step; `update_parameters()` closes the `.dat` summary.
 
 The solvers never know what produced the sources. Which steps make sense for each emitter is decided by the parser through the `do_run` flags (sphere and decay are switched off for a wind farm).
+
+### 1.1 Input files
+
+`read_input_files` reads `Solver.nml` and `Environment.nml` from the input directory and then three files that it picks by name, so that every emitter and every method has its own file:
+
+| File | Chosen by | Files |
+|---|---|---|
+| `Emitters/<simulation_type>.nml` | `simulation_type` of `Solver.nml` | `WindTurbine.nml`, `WindFarm.nml`, `FrequencySource.nml` |
+| `ComputationSetups/<simulation_type>_CS.nml` | `simulation_type` | `WindTurbine_CS.nml`, `WindFarm_CS.nml`, `FrequencySource_CS.nml` |
+| `AcousticMethods/<method>.nml` | `method` of `Solver.nml` | `ImageMethod.nml`, `AnalyticalNormalModes.nml` |
+
+The values of `simulation_type` are `'WindTurbine'`, `'WindFarm'` and `'FrequencySource'` (the name of the emitter module, without `_t`), and those of `method` are `'ImageMethod'` and `'AnalyticalNormalModes'`. They are compared exactly (capitals included) and they are also the file names, so a new emitter or method needs no change in the path logic, only its `CASE` in `read_input_files` and in `main.f90`, and its files. The folder names are fixed in `read_input_files`; the directory itself is the command-line argument.
 
 ---
 
@@ -82,6 +95,7 @@ src/
 │   ├── WindTurbine.f90          WindTurbine
 │   ├── TurbineFactory.f90       TurbineFactory
 │   ├── WindFarm.f90             WindFarm
+│   ├── FrequencySource.f90      FrequencySource
 │   ├── OpenFASTReader.f90       OpenFASTReader
 │   ├── StructureModel.f90       StructureModel
 │   ├── DrivetrainExcitation.f90 DrivetrainExcitation
@@ -104,7 +118,7 @@ What every module contains, and what must not go there:
 
 | Module | Contains | Must not contain |
 |---|---|---|
-| `Kinds` | Kind parameters (`I32`, `WP`, ...), `PI`, `I1`, the parser sentinels `DEFAULT_R`, `DEFAULT_I`, `MAX_PARSE_OBS` | Types or procedures |
+| `Kinds` | Kind parameters (`I32`, `WP`, ...), `PI`, `I1`, the parser sentinels `DEFAULT_R`, `DEFAULT_I` and the parser buffer sizes `MAX_PARSE_OBS`, `MAX_PARSE_SRC`, `MAX_PARSE_FREQ` | Types or procedures |
 | `SourceTypes` | `AcousticSource_t`, `GeometricData_t`, the multipole labels `SOURCE_MONOPOLE`, `SOURCE_DIPOLE` | Procedures, configuration |
 | `ConfigTypes` | Every `Config_*_t` filled in by the parser, including `Config_Method_t` and its extensions | Procedures, run-time state |
 | `FFTW3` | C bindings of FFTW3 | Anything else |
@@ -116,8 +130,8 @@ What every module contains, and what must not go there:
 | `Timing` | `format_elapsed` | Anything else |
 | `SignalProcessing` | `compute_rfft` (mean removal, Hann window, FFTW), `HANN_ENBW` | Turbine or solver knowledge |
 | `SpecialFunctions` | `compute_hankel_complex`, `bessel_k0`, `bessel_k1` | Method-specific kernels |
-| `Args_parser` | `get_input_path` (command-line directory of the namelists), `read_input_files`, the entry of the parser | Readers of individual namelists |
-| `InputEmitters` | `read_turbine_config`, `read_farm_config` | Solver or step settings |
+| `Args_parser` | `get_input_path` (command-line directory of the namelists), `read_input_files` (finds the files of §1.1 and calls one reader per file), the entry of the parser | Readers of individual namelists |
+| `InputEmitters` | `read_turbine_config`, `read_farm_config`, `read_frequency_source_config` | Solver or step settings |
 | `InputSolver` | `read_solver_config`, `read_environment_config`, one `read_X_config` per method | Emitter or step settings |
 | `InputPostProcessing` | `read_computation_config`, `read_do_config`, one reader per `run_*` step | Emitter or solver settings |
 | `InputChecks` | `check_time_window`, `check_fits`, `check_all_or_none`, `check_count` | Namelist reading |
@@ -126,6 +140,7 @@ What every module contains, and what must not go there:
 | `TurbineTypes/*` | One concrete turbine each: its geometry, `compute_force`, `compute_mass`, `excitation_spectrum`, its saved parameters and impedance correction | Generic routines (they go to `StructureModel`, `DrivetrainExcitation`, `OpenFASTReader`) |
 | `TurbineFactory` | `new_turbine`: one `CASE` per turbine type | Anything else |
 | `WindFarm` | `WindFarm_t`: a container of turbines merged into one `AcousticSource_t` | Turbine-type specifics |
+| `FrequencySource` | `FrequencySource_t`: point dipoles placed by hand, with forces given in the frequency domain | Turbine or farm specifics, time-domain forces |
 | `OpenFASTReader` | SubDyn summary and `.out`/`.outb` channel readers | Physics |
 | `StructureModel` | Geometry and hydrodynamic corrections of the members: `remove_duplicate_nodes`, `divide_span`, `integral_elipse_z`, `alpha_hankel` | Data of a concrete turbine |
 | `DrivetrainExcitation` | Drivetrain spectra (`drivetrain10MW_excitation_spectrum`, `drivetrain2MW_excitation_spectrum` and its helpers), `generate_timeseries_banded_sines`, `filter_non_useful_freqs` | Turbine state |
@@ -151,7 +166,7 @@ Kinds  ->  types  ->  utils  ->  input / emitters  ->  solvers  ->  app
 | types | `SourceTypes`, `ConfigTypes` |
 | utils | `FFTW3`, `StringUtils`, `FileUtils`, `HDF5Utils`, `CSVReader`, `Sorting`, `Timing`, `SignalProcessing`, `SpecialFunctions` |
 | input | `InputChecks`, `InputEmitters`, `InputSolver`, `InputPostProcessing`, `Args_parser` |
-| emitters | `OpenFASTReader`, `StructureModel`, `DrivetrainExcitation`, `Emitter`, `WindTurbine`, `DTU10MWMonopile`, `DTU10MWFloating`, `SAITEC2MWFloating`, `TurbineFactory`, `WindFarm` |
+| emitters | `OpenFASTReader`, `StructureModel`, `DrivetrainExcitation`, `Emitter`, `WindTurbine`, `DTU10MWMonopile`, `DTU10MWFloating`, `SAITEC2MWFloating`, `TurbineFactory`, `WindFarm`, `FrequencySource` |
 | solvers | `AcousticSolver`, `AcousticSolver_output`, `AcousticSolver_steps`, `ImageMethod`, `AnalyticalNormalModes`, `SolverFactory` |
 | app | `main` |
 
@@ -172,9 +187,9 @@ Other rules:
 | `to_source(self, config, sources)` | deferred | Fills the `AcousticSource_t` handed to the solver: `xyz`, `Force`, `Freqs`, `order`, `geometry` |
 | `save_params(self, save_path)` | deferred | Writes the emitter datasets into the HDF5 output |
 | `write_txt(self, unit)` | deferred | Writes the emitter block of the `.dat` summary |
-| `get_enbw(self)` | default `-1.0` | Equivalent noise bandwidth, in bins, of the window applied to the forces; `-1` means "forces not obtained from a windowed FFT". `WindTurbine_t` and `WindFarm_t` return `HANN_ENBW` (1.5) |
+| `get_enbw(self)` | default `-1.0` | Equivalent noise bandwidth, in bins, of the window applied to the forces; `-1` means "forces not obtained from a windowed FFT". `WindTurbine_t` and `WindFarm_t` return `HANN_ENBW` (1.5); `FrequencySource_t` keeps `-1` |
 
-`WindTurbine_t` implements them with `turbine_to_source`, `save_params_turbine` (`save_turbine_params` + `save_specific_params`), `write_txt_turbine` (`write_turbine_txt`) and `get_enbw_turbine`. `WindFarm_t` implements them with `farm_to_source_WindFarm`, `save_params_WindFarm`, `write_txt_WindFarm` and `get_enbw_WindFarm`.
+`WindTurbine_t` implements them with `turbine_to_source`, `save_params_turbine` (`save_turbine_params` + `save_specific_params`), `write_txt_turbine` (`write_turbine_txt`) and `get_enbw_turbine`. `WindFarm_t` implements them with `farm_to_source_WindFarm`, `save_params_WindFarm`, `write_txt_WindFarm` and `get_enbw_WindFarm`. `FrequencySource_t` implements them with `to_source_FrequencySource`, `save_params_FrequencySource` and `write_txt_FrequencySource`; it also has a non-deferred `init(self, config)` that copies the sources of `config % freq_source`. Its `to_source` copies the arrays instead of moving them, because `save_params` and `write_txt` run after the solver has taken the `AcousticSource_t`.
 
 `WindTurbine_t` is itself a template for the turbine types:
 - **Shared:** `init`, `read_input`, `translate_align_with_WindDir`, `filter_frequencies` (rpm from `read_curve`, the type's `excitation_spectrum`, synthetic signal, frequency mask).
@@ -227,10 +242,10 @@ Other shared procedures:
 | `xyz` | `(Nsources, 3)` [m] | Source coordinates |
 | `Force` | `(Nfreqs, Nsources, 3)` [N] | Complex source forces (radiation-impedance corrected for turbines) |
 | `Freqs` | `(Nfreqs)` [Hz] | Frequency vector |
-| `order` | `(Nsources)` [-] | Multipole order label (`SOURCE_MONOPOLE = 0`, `SOURCE_DIPOLE = 1`); not saved to the HDF5 yet |
-| `geometry % center` | `(2)` [m] | Reference centre: turbine barycentre, or mean of the farm |
-| `geometry % origin` | `(2)` [m] | Reference origin: turbine axis, or mean of the farm |
-| `geometry % direction` | [deg] | Reference direction: wind direction, or circular mean of the farm |
+| `order` | `(Nsources)` [-] | Multipole order label (`SOURCE_MONOPOLE = 0`, `SOURCE_DIPOLE = 1`); saved as `Source_order` by `FrequencySource_t` only |
+| `geometry % center` | `(2)` [m] | Reference centre: turbine barycentre, or mean of the farm or of the sources |
+| `geometry % origin` | `(2)` [m] | Reference origin: turbine axis, or mean of the farm or of the sources |
+| `geometry % direction` | [deg] | Reference direction: wind direction, circular mean of the farm, or 0 for point sources |
 | `geometry % out_dir`, `name_tag`, `name_suffix` | | Default output name `out_dir // name_tag // <method tag> // name_suffix // ".hdf5"` |
 
 What each consumer takes from them:
@@ -261,18 +276,24 @@ What each consumer takes from them:
 4. Optionally its short label in `type_alias` (`emitters/WindFarm.f90`) for the default farm file name.
 5. Makefile: the object in `OBJS` and its rule, before `TurbineFactory`.
 
-### 5.2 An emitter (e.g. manual sources)
-1. `src/emitters/X.f90`: `X_t EXTENDS(Emitter_t)` with `to_source` (filling `xyz`, `Force`, `Freqs`, `order` and `geometry`), `save_params`, `write_txt` and, if its forces come from `compute_rfft`, `get_enbw`.
-2. Its configuration type in `types/ConfigTypes.f90`, its reader in `input/InputEmitters.f90`, and its `simulation_type` `CASE` in `read_input_files`.
-3. Its construction branch in `app/main.f90`, ending in `MOVE_ALLOC` into `active_emitter`.
-4. Makefile.
+### 5.2 An emitter (example: `FrequencySource`)
+1. `src/emitters/X.f90`: `X_t EXTENDS(Emitter_t)` with:
+   - `init(self, config)`, which copies its data from `Config_t`. It is not part of the contract because every emitter is built differently.
+   - `to_source`, filling `xyz`, `Force`, `Freqs`, `order` and `geometry`.
+   - `save_params`, which writes the marker `Emitter = '<X>'` and everything the plotting needs (§6.1).
+   - `write_txt`, which must list every input value: `check_update` compares this block, so an input missing from it would reuse an old output after being changed.
+   - `get_enbw`, if its forces come from `compute_rfft`.
+2. Its configuration type in `types/ConfigTypes.f90` and its field in `Config_t`; its reader in `input/InputEmitters.f90`; its `CASE` in `read_input_files`; its files `Emitters/<X>.nml` and `ComputationSetups/<X>_CS.nml`, named exactly as its `simulation_type` (§1.1).
+3. Its construction branch in `app/main.f90`: a typed variable (the abstract `active_emitter` can neither be allocated nor give access to `init`), `init`, `to_source`, and `MOVE_ALLOC` into `active_emitter` at the end of the branch.
+4. Makefile: the object in `OBJS` and its rule, after `Emitter`.
+5. Plotting: a reader and a wrapper in `plotting/` (see its README); the `Emitter` marker is how the scripts recognise the file.
 
-The planned design is in §7.
+The planned emitters are in §7.1.
 
 ### 5.3 An acoustic method
 1. `src/solvers/methods/X.f90`: `X_t EXTENDS(AcousticSolver_t)` with the deferred procedures (§4.2); `save_parameters` calls `save_shared_parameters`.
 2. `Config_X_t EXTENDS(Config_Method_t)` in `types/ConfigTypes.f90`.
-3. `read_X_config` in `input/InputSolver.f90`, and its `CASE` in `read_input_files` (`input/Args_parser.f90`), with its own `.nml` in `input_files/`.
+3. `read_X_config` in `input/InputSolver.f90`, and its `CASE` in `read_input_files` (`input/Args_parser.f90`), with its own `.nml` in `input_files/AcousticMethods/<method>.nml`.
 4. Its `CASE` in `new_solver` (`solvers/SolverFactory.f90`).
 5. Makefile: the object before `SolverFactory`.
 6. Nothing else: the `Method` dataset is written automatically.
@@ -283,7 +304,7 @@ If the method has its own boundaries, it overrides `z_seabed` and `in_water`, no
 ### 5.4 A post-processing step
 1. `run_X` in `solvers/AcousticSolver_steps.f90`, its interface body and type-bound binding in `solvers/AcousticSolver.f90`, and its call in `run()`.
 2. `Config_X_t` and a `do_X` flag in `Config_DoRun_t` / `Config_Computation_t` (`types/ConfigTypes.f90`).
-3. `read_X_config` and the flag in `read_do_config` (`input/InputPostProcessing.f90`), plus its namelist group in `ComputationSetupTurbine.nml` / `ComputationSetupFarm.nml`.
+3. `read_X_config` and the flag in `read_do_config` (`input/InputPostProcessing.f90`), plus its namelist group in every `input_files/ComputationSetups/*_CS.nml`.
 4. Its block in `update_parameters` (`solvers/AcousticSolver_output.f90`), with `write_previous_block` for updates.
 5. Its plots in `plotting/`.
 
@@ -305,6 +326,7 @@ Complex arrays are stored as `(2, N...)` in Fortran order, i.e. `(..., N, 2)` (r
 | turbine (`save_turbine_params`) | `case_type`, `WindSpeed`, `WindDir`, `Depth`, `AxisPos`, `BariPos` |
 | turbine (`save_specific_params`) | `Case_type`, `Structure_nodes` plus the type's geometry (`D`, `rho_mat`, `wet_area`; `col_D`, `XsecA`, `XsecB`, `t`, `col_members`, `pon_members`; `Diam_y`, `Diam_z`, `float_members`, `joint_members`) |
 | farm (`save_params_WindFarm`) | `Nturbines`, `Source_offset`, and every turbine dataset with the suffix `_i` (e.g. `WindSpeed_2`, `Structure_nodes_2`) |
+| `FrequencySource` (`save_params_FrequencySource`) | `Emitter` (`"FrequencySource"`), `Nsources`, `NFreqs`, `Source_xyz` `(Nsources, 3)`, `Source_order` `(Nsources)`, `Source_Force` complex `(Nfreqs, Nsources, 3)` |
 | `run_spectrums` | `P_spectrums`, `Obs_spectrums` |
 | `run_polar` | `P_polar`, `R_polar`, `Z_polar`, `Theta_deg_polar`, `Obs_polar`, `Center_polar` |
 | `run_cylinder` | `P_cylinder`, `R_cylinder`, `Z_cylinder`, `Theta_deg_cylinder`, `Obs_cylinder`, `Center_cylinder`, `dA_cylinder` |
@@ -317,12 +339,14 @@ Complex arrays are stored as `(2, N...)` in Fortran order, i.e. `(..., N, 2)` (r
 
 Masked observers (closer than `mask_distance` to a source, or outside the water column) have NaN pressure; the grids keep their shape.
 
+`Emitter` identifies the emitter that wrote a file and is written only by the emitters added after the refactor (`FrequencySource`); the plotting recognises the older turbine and farm files by their datasets (`Nturbines`, `case_type`, ...). The water depth is not an emitter dataset: both solvers write `Lower_HBC` (`-depth_base`) and the plotting derives the depth from it.
+
 ### 6.2 The `.dat` summary
 
 Written next to the HDF5 file (same name, `.dat`), with blocks between separators of 70 `=` or `-`:
 
 1. Title `OFF_COUSTICS SIMULATION SUMMARY` and `HDF5 file: <path>`.
-2. Emitter block (`emitter % write_txt`): `TURBINE` and `TURBINE - SPECIFIC PARAMETERS`, or `WIND FARM` (layout table) followed by `>>> Turbine i` and the blocks of every turbine.
+2. Emitter block (`emitter % write_txt`): `TURBINE` and `TURBINE - SPECIFIC PARAMETERS`, or `WIND FARM` (layout table) followed by `>>> Turbine i` and the blocks of every turbine, or `FREQUENCY-DOMAIN SOURCES` (positions and one line per frequency and source with the force, i.e. the whole input, because `check_update` compares this block).
 3. `ENVIRONMENT` and `SOLVER: <name>` blocks (`write_txt_summary`).
 4. `POST-PROCESSING STEPS EXECUTED` (`update_parameters`): one block per step (`Spectrums:`, `Polar:`, ...) with the parameters actually used, defaults resolved.
 5. A final `=` separator.
@@ -347,16 +371,16 @@ With `update_existing = .true.` in `Solver.nml`, an existing output of the same 
 
 ## 7. Planned extensions
 
-Decided on 2026-10-02, not implemented.
+Decided on 2026-10-02. Section 7.1 is partly implemented.
 
 ### 7.1 Manual sources
-- `simulation_type = 'sources'` and `ManualSources_t EXTENDS(Emitter_t)` in `emitters/ManualSources.f90`.
-- Input: a namelist for a few sources, and an input HDF5 file for many (`xyz`, `order`, `Freqs`, `Force`).
-- Forces given in the time domain go through `compute_rfft`, so `get_enbw` returns `HANN_ENBW`. Forces given in the frequency domain have no window, so `get_enbw` keeps `-1` and no `ENBW` is written.
-- No radiation-impedance correction.
-- One multipole-order label per source. Each method implements one kernel per order, and drops its dipole-only check in `init` when it supports monopoles.
-- `mask_distance` set by the user in `Solver.nml`.
-- The plotting will read `ENBW` (Hann correction only if present) and `Method`.
+**Implemented (2026-10-06): `FrequencySource`.** `simulation_type = 'FrequencySource'`, `emitters/FrequencySource.f90` and `Emitters/FrequencySource.nml`. A few point dipoles with complex forces per frequency, with no window (`get_enbw` keeps `-1`, so no `ENBW` is written) and no radiation-impedance correction. `mask_distance` is set by the user in `Solver.nml`. The plotting reads `ENBW` (Hann correction only if present) and `Method`.
+
+**Planned:**
+- `TimeSource`: the same sources with forces given in the time domain (real), read from a file or computed from a function of time. They go through `compute_rfft`, so `get_enbw` returns `HANN_ENBW`.
+- A parent `ManualSources_t EXTENDS(Emitter_t)` (`emitters/ManualSources.f90`) with what both manual emitters share.
+- An input HDF5 file for many sources (`xyz`, `order`, `Freqs`, `Force`).
+- One multipole-order label per source (already in place). Each method implements one kernel per order, and drops its dipole-only check in `init` when it supports monopoles.
 
 ### 7.2 Acoustic methods
 - `Config_Environment_t` will grow optional arrays: c(z), ρ(z), attenuation, bathymetry H(x, y), sediment. It keeps the base scalars, so the simple methods keep working. Each method checks in `init` that the data it needs is present.
@@ -373,7 +397,7 @@ The sphere stays IM-only: a no-op in the parent plus the IM override, because `A
 Any change that is meant not to change the results follows `Programming_style_guidelines.txt` §8, plus the harness of `review/refactor_tools/` (git-ignored, kept locally):
 
 1. Keep a copy of the original sources and build the reference binary from them. Run everything in an isolated copy, never in `turbine_acoustic_data/`, `farm_acoustic_data/` or `SAITEC_acoustic_data/`.
-2. Builds: `make clean && make -j8`, `fpm build --flag "-O3 -fopenmp"`, and `make FFLAGS="-O3 -fopenmp -Wall"`, which must give no warning that the reference does not give. Since 10/2026 the only accepted `-Wall` warnings are the `-Wunused-dummy-argument` of the default procedures that ignore arguments by design: `default_z_seabed` (`x`, `y`), `default_in_water` (`self`), `excitation_spectrum` of the two DTU types (`self`), and `get_enbw` of `Emitter_t`, `WindTurbine_t` and `WindFarm_t` (`self`).
+2. Builds: `make clean && make -j8`, `fpm build --flag "-O3 -fopenmp"`, and `make FFLAGS="-O3 -fopenmp -Wall"`, which must give no warning that the reference does not give. Since 10/2026 the only accepted `-Wall` warnings are the `-Wunused-dummy-argument` of the default procedures that ignore arguments by design: `default_z_seabed` (`x`, `y`), `default_in_water` (`self`), `excitation_spectrum` of the two DTU types (`self`), `get_enbw` of `Emitter_t`, `WindTurbine_t` and `WindFarm_t` (`self`), and `to_source` of `FrequencySource_t` (`config`, which the `Emitter_t` interface requires).
 3. Cases, with `OMP_NUM_THREADS=1` (multi-threaded runs are not bit-reproducible):
    ```bash
    python refactor_cases.py setup   <reference_src_dir> <cases_root>

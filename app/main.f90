@@ -58,7 +58,7 @@ CHARACTER(len=8) :: tag
     CALL read_input_files(files_path, config)
 
     SELECT CASE (trim(config % solver % simulation_type))
-    CASE ('turbine')
+    CASE ('WindTurbine')
         ! --- 2. Polymorphic instance for wind turbine --- !
         CALL new_turbine(config % turbine % case_type, active_turbine)
         write(*,*) '>> Instantiating ', trim(config % turbine % case_type), ' Turbine...'
@@ -74,7 +74,7 @@ CHARACTER(len=8) :: tag
         CALL active_turbine % to_source(config, active_sources)
         CALL MOVE_ALLOC(active_turbine, active_emitter)
 
-    CASE ('farm')
+    CASE ('WindFarm')
         ! --- 2. Wind farm instance: one polymorphic turbine per &turbine block --- !
         ALLOCATE(active_farm)
         write(*,*) ">> Instantiating wind farm..."
@@ -102,13 +102,16 @@ CHARACTER(len=8) :: tag
         CALL active_freq_source % to_source(config, active_sources)
         CALL MOVE_ALLOC(active_freq_source, active_emitter)
 
+    CASE DEFAULT
+        error stop "main: no emitter is built for simulation_type " // trim(config % solver % simulation_type)
+    
     END SELECT
 
     ! --- 5. Execute generic solver --- !
     CALL new_solver(trim(config % solver % method), active_solver)
     write(*,*) ">> Launching acoustic propagation solver: ", trim(config % solver % method)
 
-    ! --- 6. Set acoustic solver (init frees config: the allocated emitter tells the paths apart) --- !
+    ! --- 6. Set acoustic solver (init frees config) --- !
     CALL active_solver % init(active_sources, config)
     CALL active_solver % save_parameters(active_emitter)
 

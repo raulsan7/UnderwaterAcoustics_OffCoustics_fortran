@@ -142,7 +142,7 @@ SUBROUTINE read_do_config(path, config)
 
 
     ! --- 2. Defaults (sphere and decay are only requested by default for a single turbine) --- !
-    is_farm          = (trim(config % solver % simulation_type) == 'farm')
+    is_farm          = (trim(config % solver % simulation_type) == 'WindFarm')
     do_all           = .true.
     do_spectrums     = .true.
     do_polar         = .true.

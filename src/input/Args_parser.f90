@@ -1,17 +1,14 @@
 ! ===============================================================================
 ! MODULE: Args_parser
 ! ===============================================================================
-! Reads the .nml configuration files that describe a simulation case
-! (Solver.nml, Environment.nml, WindTurbine.nml or WindFarm.nml,
-! ComputationSetupTurbine.nml or ComputationSetupFarm.nml, and
-! ImagesMethod.nml or AnalyticalNormalModes.nml) and packs their
-! contents into the global Config_t structure defined in
+! Reads the .nml configuration files that describe a simulation case and
+! packs their contents into the global Config_t structure defined in
 ! ConfigTypes.f90. get_input_path tells which directory holds them (the
 ! command-line argument, ./input_files/ by default) and read_input_files is the
-! entry point of the parsing: it locates the config files inside that
-! directory and dispatches to one reader subroutine per namelist (InputSolver,
-! InputEmitters and InputPostProcessing), plus one extra reader chosen
-! according to the selected acoustic solver method.
+! entry point of the parsing. The directory holds Solver.nml and Environment.nml,
+! plus three folders whose files are chosen by name: Emitters/<simulation_type>.nml,
+! ComputationSetups/<simulation_type>_CS.nml and AcousticMethods/<method>.nml.
+! Each file has its own reader (InputSolver, InputEmitters and InputPostProcessing).
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -89,8 +86,7 @@ SUBROUTINE read_input_files(files_path, config)
     TYPE(Config_t)  , INTENT(OUT), ALLOCATABLE :: config        ! [-] Global configuration filled in from the .nml files
 
     ! Local variables
-    CHARACTER(len=1024) :: turbine_config_path
-    CHARACTER(len=1024) :: farm_config_path
+    CHARACTER(len=1024) :: emitter_config_path
     CHARACTER(len=1024) :: solver_config_path
     CHARACTER(len=1024) :: environment_config_path
     CHARACTER(len=1024) :: computation_config_path
@@ -99,33 +95,35 @@ SUBROUTINE read_input_files(files_path, config)
 
     ALLOCATE(Config_t :: config)
 
-    turbine_config_path     = files_path // "WindTurbine.nml"
-    farm_config_path        = files_path // "WindFarm.nml"
+    
+    ! Set paths of the .nml files (Hardcoded names, but the directory is given by the command-line argument)
     solver_config_path      = files_path // "Solver.nml"
     environment_config_path = files_path // "Environment.nml"
+    emitter_config_path     = files_path // "Emitters/"
+    method_config_path      = files_path // "AcousticMethods/"
+    computation_config_path = files_path // "ComputationSetups/"
 
-    ! Read principal files
     CALL read_solver_config(solver_config_path, config)
     CALL read_environment_config(environment_config_path, config)
-
+    
     ! Emitter: a single turbine or a whole farm, each one with its own post-processing setup
+    computation_config_path = trim(computation_config_path) // trim(config % solver % simulation_type) // "_CS.nml"
+    emitter_config_path = trim(emitter_config_path) // trim(config % solver % simulation_type) // ".nml"
+    method_config_path = trim(method_config_path) // trim(config % solver % method) // ".nml"
+    
     SELECT CASE (trim(config % solver % simulation_type))
-    CASE ('turbine')
-        CALL read_turbine_config(turbine_config_path, config)
+    CASE ('WindTurbine')
+        CALL read_turbine_config(emitter_config_path, config)
         config % turbine % Depth = config % env % depth_base
-        computation_config_path  = files_path // "ComputationSetupTurbine.nml"
 
-    CASE ('farm')
-        CALL read_farm_config(farm_config_path, config)
-        computation_config_path = files_path // "ComputationSetupFarm.nml"
+    CASE ('WindFarm')
+        CALL read_farm_config(emitter_config_path, config)
 
     CASE ('FrequencySource')
-        CALL read_frequency_source_config(files_path // "FrequencySource.nml", config)
-        computation_config_path = files_path // "ComputationSetupSource.nml"
+        CALL read_frequency_source_config(emitter_config_path, config)
 
     CASE DEFAULT
-        error stop "read_input_files(): Unknown simulation_type (use 'turbine' or 'farm'): " // &
-                   trim(config % solver % simulation_type)
+        error stop "read_input_files(): Unknown simulation_type: " // trim(config % solver % simulation_type)
     END SELECT
 
     CALL read_computation_config(computation_config_path, config)
@@ -134,12 +132,10 @@ SUBROUTINE read_input_files(files_path, config)
     ! acoustic solver was selected in Solver.nml
     SELECT CASE (trim(config % solver % method))
     CASE ('ImageMethod')
-        method_config_path = files_path // "ImagesMethod.nml"
         ALLOCATE(Config_ImageMethod_t :: config % method)
         CALL read_ImageMethod_config(method_config_path, config)
 
     CASE ('AnalyticalNormalModes')
-        method_config_path = files_path // "AnalyticalNormalModes.nml"
         ALLOCATE(Config_AnalyticalNormalModes_t :: config % method)
         CALL read_AnalyticalNormalModes_config(method_config_path, config)
 
