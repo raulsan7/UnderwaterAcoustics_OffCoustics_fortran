@@ -1,8 +1,9 @@
 """
 Module: plot_farm_module.py
 Description: Plots of a wind farm (.hdf5 files of FORTRAN/farm_acoustic_data): structure of every turbine,
-             spectrums, polar directivity, cylinder, line and XY/XZ/vertical slices. Observers without data
-             (NaN pressure, inside a structure) are shown as holes.
+             spectrums, polar directivity, cylinder, line and XY/XZ/vertical slices, and the cylinder and
+             equivalent point source metrics. Observers without data (NaN pressure, inside a structure) are
+             shown as holes. A farm has no sphere nor decay step.
 
 Author: Raul Sanz Ramirez (raul.sanz.ramirez@upm.es / raul.sanz.ramirez@gmail.com)
 Institution: Universidad Politecnica de Madrid - ETSIAE
@@ -12,8 +13,43 @@ Date: 09/2026
 import numpy as np
 import matplotlib.pyplot as plt
 import plot_utils as pu
+import plot_single_case as psc
 import utils.AcousticUtils as au
 import utils.EnvironmentalData as ed
+
+
+# ---------- Helpers ---------- #
+def get_farm_color(case: dict = None):     # [-] Dictionary containing simulation data
+    """
+    Color of a farm: its own in a comparison (case["Color"]), otherwise that of the type of its first turbine.
+
+    Returns
+    -------
+    color : str or tuple
+    """
+
+    if "Color" in case:
+        return case["Color"]
+
+    return pu.get_case_color(tags=[case["Turbine_parameters"][0]["Case_type"]])[0]
+
+def get_contour_levels(vals,                # [-] Magnitude of the map (NaN: holes)
+                       n   : int = 60):     # [-] Number of levels
+    """
+    Levels of a map that shows its upper half, as in plot_single_case: from half of the maximum up to it
+    (contourf with extend='min' paints what lies below). Without a positive maximum (non-dB modes) the levels
+    span the whole range.
+
+    Returns
+    -------
+    levels : np.ndarray
+    """
+
+    max_val = np.nanmax(vals)
+    min_val = max_val / 2.0
+    if not min_val < max_val: min_val = np.nanmin(vals)     # Non-dB modes may have a maximum <= 0
+
+    return np.linspace(min_val, max_val, n)
 
 
 
@@ -236,17 +272,23 @@ def plot_structure(case   : dict = None,        # [-] Dictionary containing simu
 
 # ---------- Spectrum Plots ---------- #
 def plot_spectrums(case         : dict     = None,      # [-] Dictionary containing simulation data
-                   mode         : str      = 'SPL',     # [-] Selects Sound Pressure/Power Level 'SPL' or 'SWL'
+                   mode         : str      = 'SPL',     # [-] Selects Sound Pressure Level or PSD. 'SPL' or 'PSD'
                    absorption   : bool     = False,     # [-] Wheter to apply approximate absorption attenuation
                    octave       : bool     = True,      # [-] 1/3 octave or fine resolution
                    filter_under : float    = None,      # [Hz] Minimum frequency threshold
                    filter_over  : float    = None,      # [Hz] Maximum frequency threshold
                    do_thresholds: bool     = False,     # [-] Whether to plot regulatory/reference threholds
+                   smooth       : bool     = True,      # [-] Narrowband only: smooth every observer curve too (False: only the means)
+                   smooth_fraction: int    = 12,        # [-] Narrowband only: smoothing window, 1/N octave (None: no smoothing at all)
                    figsize      : tuple    = (10,5),    # [-] Figure size
                    ax_in        : plt.Axes = None):     # [-] Optional external axes for subplots
     """
     Plots the acoustic spectrum. Observers without data (NaN, inside a structure) are left out with a
-    message.
+    message. If every observer with data lies at the same distance to the centre of the farm (mean turbine
+    axis), their energetic mean (solid black) and arithmetic dB mean (dashed black) are added. In narrowband the
+    means are always smoothed over 1/smooth_fraction octave, so they read as a trend instead of a saw, and with
+    smooth=True so is every observer curve. The means are computed from the raw curves either way, and OASPL
+    never sees the smoothing.
 
     Returns
     -------
@@ -259,14 +301,13 @@ def plot_spectrums(case         : dict     = None,      # [-] Dictionary contain
         return None, None
     if absorption:
         print("plot_spectrums(): distances non defined since there are more than one turbine: Setting absorption = False")
+        absorption = False
 
-    tags = np.asarray([turb["Case_type"] for turb in case["Turbine_parameters"]])
-    colors = pu.get_case_color(tags=tags); color = colors[0]
-    Nturb = case["Nturbines"]
+    color = get_farm_color(case)
 
     # Extract data
     Freqs     = case["Freqs"]
-    Observers = case["Obs_spectrums"]
+    Observers = np.atleast_2d(case["Obs_spectrums"])
     p         = case["P_spectrums"]
     AxisPos   = np.asarray([turb["AxisPos"] for turb in case["Turbine_parameters"]])
     p_ref     = case["p_ref"]
@@ -274,11 +315,22 @@ def plot_spectrums(case         : dict     = None,      # [-] Dictionary contain
     if not pu.is_valid(p, "plot_spectrums"):
         return None, None
 
+    # Distance to the centre of the farm
+    centre    = AxisPos[:, :2].mean(axis=0)
+    distances = np.hypot(Observers[:,0] - centre[0], Observers[:,1] - centre[1])
+
+    mode = mode.upper()
+
     if mode == 'SPL':
         spl = au.pressure_to_SPL(p, p_ref)
         ylabel = r"SPL [dB re 1 $\mu$ Pa]"
+    elif mode == 'PSD':
+        df = pu.get_bin_width(Freqs)
+        if df is None: raise ValueError("plot_spectrums(): mode 'PSD' needs at least two frequencies to get the bin width")
+        spl = au.pressure_to_PSD(p, df, p_ref, enbw=case["ENBW"])
+        ylabel = r"PSD [dB re 1 $\mu$Pa$^2$/Hz]"
     else:
-        raise RuntimeError("plot_spectrum(): mode SWL not implemented yet")
+        raise RuntimeError(f"plot_spectrums(): mode {mode} not implemented yet")
 
     # Filter frequencies
     mask = np.ones_like(Freqs, dtype=bool)
@@ -297,6 +349,13 @@ def plot_spectrums(case         : dict     = None,      # [-] Dictionary contain
     if octave:
         Freqs, spl = au.to_third_octave(Freqs, spl, fmin=Freqs.min(), fmax=Freqs.max())
 
+        # PSD is a density: the energetic sum of its bins is band power / df, so rescale
+        # it to band power / band width (spectrum level), independent of the resolution
+        if mode == "PSD":
+            bw    = Freqs * (2**(1/6) - 2**(-1/6))      # [Hz] 1/3 octave band widths
+            shape = [-1] + [1] * (spl.ndim - 1)
+            spl   = spl - 10.0 * np.log10(bw / df).reshape(shape)
+
     # Plot
     if ax_in is None:
         fig, ax = plt.subplots(1, 1, figsize=figsize)
@@ -308,23 +367,54 @@ def plot_spectrums(case         : dict     = None,      # [-] Dictionary contain
     num_observers = spl.shape[1] if spl.ndim> 1 else 1
     if num_observers > len(linestyles): print("plot_spectrum(): too many observers, linestyles will be repeated")
 
+    # Narrowband smoothing: of every curve (smooth=True) or only of the means; the raw spl feeds the means
+    smooth_means  = (not octave) and bool(smooth_fraction)
+    smooth_curves = smooth_means and smooth
+    smooth_note   = f"1/{smooth_fraction} oct. smoothed" if smooth_means else ""
+
+    spl_plot = au.smooth_fractional_octave(Freqs, spl, smooth_fraction, domain='db') if smooth_curves else spl
+
+    # Observers with data: those inside a structure carry NaN at every frequency
+    valid = [i for i in range(num_observers) if not np.all(np.isnan(spl_plot[:,i] if spl_plot.ndim > 1 else spl_plot))]
+
+    # Observers all at the same distance to the centre of the farm (e.g. a ring around it): energetic and dB means
+    same_distance = len(valid) > 1 and np.allclose(distances[valid], distances[valid[0]], rtol=0.0, atol=0.1)
+
+    shades = pu.get_color_shades(color, num_observers)      # One shade per observer
+
     for i in range(num_observers):
         ls = linestyles[i % len(linestyles)]
-        y_data = spl[:,i] if spl.ndim > 1 else spl
-        if Observers.ndim > 1:
-            coord = tuple(float(f"{val:.1f}") for val in Observers[i])
-        else:
-            coord = (float(f"{Observers[i]:.1f}"),)
+        y_data = spl_plot[:,i] if spl_plot.ndim > 1 else spl_plot
+
+        # Observers are told apart by their coordinates: several of them may share the same distance
+        x_obs, y_obs, z_obs = Observers[i]
+        coords = f"({x_obs:.1f}, {y_obs:.1f}, {z_obs:.1f}) m"
 
         # Observers inside a structure carry no data (NaN at every frequency)
-        if np.all(np.isnan(y_data)):
-            print(f"plot_spectrums(): observer {coord} [m] has no data (NaN, inside a structure), skipping it")
+        if i not in valid:
+            print(f"plot_spectrums(): observer {coords} has no data (NaN, inside a structure), skipping it")
             continue
 
-        ax.semilogx(Freqs, y_data, ls, color=color, label=f"{coord} [m]")
+        ax.semilogx(Freqs, y_data, ls, color=shades[i], label=coords)
 
-        print(f"\nObserver coordinates: {coord} [m]")
+        print(f"\nObserver coordinates: {coords}")
         print(f"OASPL = {oaspl[i]:.1f}")
+
+    if same_distance:
+        spl_valid = spl[:, valid]
+        mean_energetic = 10.0 * np.log10(np.nanmean(10.0**(spl_valid / 10.0), axis=1))    # Mean of p^2, in dB
+        mean_db        = np.nanmean(spl_valid, axis=1)                                     # Mean of the levels
+
+        # Narrowband: each mean smoothed in its own domain (power for the energetic one, dB for the other)
+        if smooth_means:
+            mean_energetic = au.smooth_fractional_octave(Freqs, mean_energetic, smooth_fraction, domain='db')
+            mean_db        = au.smooth_fractional_octave(Freqs, mean_db, smooth_fraction, domain='mean')
+
+        # Only the means smoothed: the note goes on their labels (otherwise it goes on the title)
+        label_extra = f", {smooth_note}" if smooth_means and not smooth_curves else ""
+
+        ax.semilogx(Freqs, mean_energetic, '-' , color='k', label=f"Energetic mean{label_extra}")
+        ax.semilogx(Freqs, mean_db       , '--', color='k', label=f"Arithmetic mean (dB){label_extra}")
 
     # Animal thresholds
     if do_thresholds:
@@ -348,7 +438,9 @@ def plot_spectrums(case         : dict     = None,      # [-] Dictionary contain
 
     ax.set_ylabel(ylabel)
     ax.set_xlabel("Frequency [Hz]")
+    ax.set_title(f"Wind Farm Spectrum ({smooth_note})" if smooth_curves else "Wind Farm Spectrum")
     ax.grid(True, which='both', ls='--', alpha=0.4)
+    ax.set_ylim(bottom=0.)
 
     if do_thresholds:
         ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.16), ncol=3, frameon=False)
@@ -367,8 +459,8 @@ def plot_spectrums(case         : dict     = None,      # [-] Dictionary contain
 
 # ---------- Polar Plots ---------- #
 def plot_polar(case             : dict  = None,        # [-] Dictionary containing simulation data
-               mode             : str   = 'OASPL',     # [-] Magnitude to plot: 'OASPL', 'SPL', or 'ABS'
-               target_frequency : float = 0.88,        # [Hz] Target frequency for 'SPL' or 'ABS' modes
+               mode             : str   = 'OASPL',     # [-] Magnitude to plot: 'OASPL', 'SPL', 'PSD', or 'ABS'
+               target_frequency : float = 0.88,        # [Hz] Target frequency for 'SPL', 'PSD' or 'ABS' modes
                absorption       : bool  = False,        # [-] Whether to apply absorption attenuation
                bands            : list  = [10., 100.], # [Hz] Frequency band limits for OASPL
                figsize          : tuple = (7,7),       # [-] Figure size
@@ -398,6 +490,7 @@ def plot_polar(case             : dict  = None,        # [-] Dictionary containi
     theta      = case["Theta_deg_polar"]
     p          = case["P_polar"]
     Freqs      = case["Freqs"]
+    df         = pu.get_bin_width(Freqs)    # Frequency bin width [Hz] for 'PSD'
     p_ref      = case["p_ref"]
     r          = case["R_polar"]
 
@@ -405,22 +498,10 @@ def plot_polar(case             : dict  = None,        # [-] Dictionary containi
         return None, None
 
     theta_rad  = np.deg2rad(theta)
-    fmin, fmax = Freqs.min(), max(Freqs.max(), 1000)
     N_obs      = len(theta)
 
     # Filter frequencies within specified bands
-    if not bands:
-        band_labels = [f"All ({fmin:.2g}-{fmax:.2g} Hz)"]
-        band_masks  = [np.ones(len(Freqs), dtype=bool)]
-    else:
-        cuts = sorted(bands)
-        edges = [fmin] + cuts + [fmax]
-        band_labels, band_masks = [], []
-        for i in range(len(edges)-1):
-            lo, hi = edges[i], edges[i+1]
-            mask   = Freqs <= hi if i == 0 else (Freqs > lo) & (Freqs <= hi)
-            band_masks.append(mask)
-            band_labels.append(f"{lo:.4g}-{hi:.4g} Hz")
+    band_labels, band_masks = psc.get_bands(Freqs, bands)
 
     n_bands = len(band_labels)
     if n_bands > len(colors):
@@ -458,6 +539,7 @@ def plot_polar(case             : dict  = None,        # [-] Dictionary containi
         if all_oaspl_vals:
             vals = np.concatenate([oaspl for oaspl, _, _ in all_oaspl_vals])
             rmin, rmax = np.nanmin(vals), np.nanmax(vals)
+            if rmax > 0: rmin = max(0., rmin)
             margin = abs(rmax-rmin) * 0.1 if rmax != rmin else abs(rmin) * 0.1
             if margin == 0: margin = 1.0
 
@@ -477,9 +559,9 @@ def plot_polar(case             : dict  = None,        # [-] Dictionary containi
         p_f = p[idx, :]
         name_extra = f"{f:.2f}Hz"
 
-        vals, unit_label = pu.convert_to(p_f, mode=mode, enbw=case["ENBW"])
+        vals, unit_label = pu.convert_to(p_f, mode, df, enbw=case["ENBW"])
 
-        if absorption and mode == "SPL":
+        if absorption and mode in ("SPL", "PSD"):
             vals = au.add_absorption(f, vals, distances)
 
         vals_plot = np.append(vals, vals[0])
@@ -508,7 +590,7 @@ def plot_polar(case             : dict  = None,        # [-] Dictionary containi
 
 # ---------- Cylindrical Plots ---------- #
 def plot_cylinder(case            : dict = None,        # [-] Dictionary containing simulation data
-                  mode            : str = 'OASPL',      # [-] Magnitude to plot: 'OASPL', 'SPL', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
+                  mode            : str = 'OASPL',      # [-] Magnitude to plot: 'OASPL', 'SPL', 'PSD', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
                   target_frequency: float = 0.88,       # [Hz] Target frequency for single-frequency modes
                   absorption      : bool = False,        # [-] Whether to apply absorption attenuation
                   filter_under    : float = None,       # [Hz] Lower frequency cutoff (f >= filter_under)
@@ -539,6 +621,7 @@ def plot_cylinder(case            : dict = None,        # [-] Dictionary contain
     z         = case["Z_cylinder"]           # 1D array of height/depth [m]
     p         = case["P_cylinder"]           # Pressure grid
     Freqs     = case["Freqs"]
+    df        = pu.get_bin_width(Freqs)      # Frequency bin width [Hz] for 'PSD'
     p_ref     = case["p_ref"]
     r         = case["R_cylinder"]
 
@@ -588,16 +671,20 @@ def plot_cylinder(case            : dict = None,        # [-] Dictionary contain
         p_f = p[idx, :]
         title_extra = f"at {f:.2f} Hz"
 
-        vals, unit_label = pu.convert_to(p_f, mode=mode, enbw=case["ENBW"])
+        vals, unit_label = pu.convert_to(p_f, mode, df, enbw=case["ENBW"])
 
     # Plot Setup: close the cylinder at 360 degrees
     theta_plot = np.append(theta, 360.)
     vals = vals.reshape((ntheta, nz))
     vals_plot = np.append(vals, vals[0:1, :], axis=0)
 
+    # Upper half of the range
+    custom_levels = get_contour_levels(vals_plot)
+    line_levels   = custom_levels[::2]
+
     # Matplotlib contour expects Z shape (len(y), len(x)), so transpose vals_plot. NaN: holes
-    contour_set = ax.contourf(theta_plot, z, vals_plot.T, levels=60, cmap=cmap)
-    ax.contour(theta_plot, z, vals_plot.T, levels=30, colors='k', linewidths=0.4, alpha=0.5)
+    contour_set = ax.contourf(theta_plot, z, vals_plot.T, levels=custom_levels, cmap=cmap, extend='min')
+    ax.contour(theta_plot, z, vals_plot.T, levels=line_levels, colors='k', linewidths=0.4, alpha=0.5)
 
     cbar = fig.colorbar(contour_set, ax=ax, orientation='vertical', pad=0.02)
     cbar.set_label(unit_label)
@@ -618,7 +705,7 @@ def plot_cylinder(case            : dict = None,        # [-] Dictionary contain
 
 # ---------- Linear Plots ---------- #
 def plot_line(case            : dict = None,        # [-] Dictionary containing simulation data
-              mode            : str = 'OASPL',      # [-] Magnitude to plot: 'OASPL', 'SPL', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
+              mode            : str = 'OASPL',      # [-] Magnitude to plot: 'OASPL', 'SPL', 'PSD', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
               target_frequency: float = 0.88,       # [Hz] Target frequency for single-frequency modes
               absorption      : bool = False,        # [-] Whether to apply absorption attenuation
               filter_under    : float = None,       # [Hz] Lower frequency cutoff (f >= filter_under)
@@ -645,12 +732,13 @@ def plot_line(case            : dict = None,        # [-] Dictionary containing 
 
     # Extract data
     Freqs     = case["Freqs"]
+    df        = pu.get_bin_width(Freqs)      # Frequency bin width [Hz] for 'PSD'
     p         = case["P_line"]
     p_ref     = case["p_ref"]
     distances = case["Distances_line"]
     logspace  = case.get("Logspace_line", False)
 
-    # Points info for the title (defaulting to 0s if something is missing)
+    # Points of the line (defaulting to 0s if something is missing)
     p1 = case.get("P1_line", [0, 0, 0])
     p2 = case.get("P2_line", [0, 0, 0])
 
@@ -696,25 +784,29 @@ def plot_line(case            : dict = None,        # [-] Dictionary containing 
         p_f = p[idx, :]
         title_extra = f"at {f:.2f} Hz"
 
-        vals, unit_label = pu.convert_to(p_f, mode=mode, enbw=case["ENBW"])
+        vals, unit_label = pu.convert_to(p_f, mode, df, enbw=case["ENBW"])
 
-    # Plot Setup
-    ax.plot(distances, vals, '-', color='teal', linewidth=2.0, marker='o', markersize=4, markerfacecolor='white')
+    # Plot Setup (points without data: gap in the curve)
+    color = get_farm_color(case)
+    draw  = ax.semilogx if logspace else ax.plot      # Logarithmic X axis if the points were generated logarithmically
+    draw(distances, vals, lw=2, color=color)
+    ax.fill_between(distances, vals, 0, alpha=0.1, color=color)
 
-    ax.set_xlabel(r"Distance from along line [m]")
-    ax.set_ylabel(unit_label)
+    ax.grid(True, which='both', ls='--', alpha=0.7)
 
-    # Format points for title readability
+    # Add text box with P1 and P2 coordinates for context (farm coordinates reach the km: no scientific notation)
     p1_str = f"({p1[0]:.1f}, {p1[1]:.1f}, {p1[2]:.1f})" if len(p1) == 3 else f"{p1}"
     p2_str = f"({p2[0]:.1f}, {p2[1]:.1f}, {p2[2]:.1f})" if len(p2) == 3 else f"{p2}"
+    coord_text = f"P1: {p1_str} m\nP2: {p2_str} m"
+    ax.text(0.97, 0.95, coord_text, transform=ax.transAxes, ha='right', va='top',
+            bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.8, edgecolor='gray'),
+            fontsize=9)
 
-    ax.set_title(f"Wind Farm Line Profile - {mode} {title_extra}\nFrom {p1_str} to {p2_str}")
-
-    # Apply logarithmic scale to X axis if points were generated logarithmically
-    if logspace:
-        ax.set_xscale('log')
-
-    ax.grid(True, which='both', linestyle='--', alpha=0.6)
+    ax.set_xlabel("Distance from P1 [m]")
+    ax.set_ylabel(unit_label)
+    ax.set_title(f"Wind Farm Line Profile - {mode} {title_extra}")
+    ax.set_xlim(distances.min(), distances.max())
+    ax.set_ylim(np.nanmin(vals), np.nanmax(vals))
 
     if ax_in is None:
         fig.tight_layout()
@@ -725,7 +817,7 @@ def plot_line(case            : dict = None,        # [-] Dictionary containing 
 
 # ---------- Slice Plots ---------- #
 def plot_sliceXY(case            : dict  = None,         # [-] Dictionary containing simulation data
-                 mode            : str   = 'OASPL',      # [-] Magnitude to plot: 'OASPL', 'SPL', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
+                 mode            : str   = 'OASPL',      # [-] Magnitude to plot: 'OASPL', 'SPL', 'PSD', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
                  target_frequency: float = 0.88,         # [Hz] Target frequency for single-frequency modes
                  absorption      : bool  = False,        # [-] Whether to apply absorption attenuation
                  filter_under    : float = None,         # [Hz] Lower frequency cutoff (f >= filter_under)
@@ -757,6 +849,7 @@ def plot_sliceXY(case            : dict  = None,         # [-] Dictionary contai
     z_slice   = case["Z_slicexy"]           # Z level of the slice [m]
     p         = case["P_slicexy"]           # Pressure grid
     Freqs     = case["Freqs"]
+    df        = pu.get_bin_width(Freqs)     # Frequency bin width [Hz] for 'PSD'
     p_ref     = case["p_ref"]
 
     if not pu.is_valid(p, "plot_sliceXY"):
@@ -801,7 +894,7 @@ def plot_sliceXY(case            : dict  = None,         # [-] Dictionary contai
         p_f = p[idx, :]
         title_extra = f"at {f:.2f} Hz"
 
-        vals, unit_label = pu.convert_to(p_f, mode=mode, enbw=case["ENBW"])
+        vals, unit_label = pu.convert_to(p_f, mode, df, enbw=case["ENBW"])
 
     # Plot (NaN: holes)
     contour_set = ax.contourf(X, Y, vals, levels=60, cmap=cmap)
@@ -832,7 +925,7 @@ def plot_sliceXY(case            : dict  = None,         # [-] Dictionary contai
     return fig, ax
 
 def plot_sliceXZ(case            : dict  = None,         # [-] Dictionary containing simulation data
-                 mode            : str   = 'OASPL',      # [-] Magnitude to plot: 'OASPL', 'SPL', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
+                 mode            : str   = 'OASPL',      # [-] Magnitude to plot: 'OASPL', 'SPL', 'PSD', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
                  target_frequency: float = 0.88,         # [Hz] Target frequency for single-frequency modes
                  absorption      : bool  = False,        # [-] Whether to apply absorption attenuation
                  filter_under    : float = None,         # [Hz] Lower frequency cutoff (f >= filter_under)
@@ -864,6 +957,7 @@ def plot_sliceXZ(case            : dict  = None,         # [-] Dictionary contai
     y_slice   = case["Y_slicexz"]           # Y level of the slice [m]
     p         = case["P_slicexz"]           # Pressure grid (Nf, nx, nz)
     Freqs     = case["Freqs"]
+    df        = pu.get_bin_width(Freqs)     # Frequency bin width [Hz] for 'PSD'
     p_ref     = case["p_ref"]
 
     if not pu.is_valid(p, "plot_sliceXZ"):
@@ -908,10 +1002,10 @@ def plot_sliceXZ(case            : dict  = None,         # [-] Dictionary contai
         p_f = p[idx, :, :]
         title_extra = f"at {f:.2f} Hz"
 
-        vals, unit_label = pu.convert_to(p_f, mode=mode, enbw=case["ENBW"])
+        vals, unit_label = pu.convert_to(p_f, mode, df, enbw=case["ENBW"])
 
-    # Plot (NaN: holes)
-    contour_set = ax.contourf(X, Z, vals, levels=60, cmap=cmap)
+    # Plot (upper half of the range, NaN: holes)
+    contour_set = ax.contourf(X, Z, vals, levels=get_contour_levels(vals), cmap=cmap, extend='min')
     cbar = fig.colorbar(contour_set, ax=ax, orientation='horizontal', pad=0.1)
     cbar.set_label(unit_label)
     if abs(x[-1]-x[0]) == abs(z[-1]-z[0]): ax.set_aspect('equal')
@@ -948,7 +1042,7 @@ def plot_sliceXZ(case            : dict  = None,         # [-] Dictionary contai
     return fig, ax
 
 def plot_sliceVertical(case            : dict  = None,         # [-] Dictionary containing simulation data
-                       mode            : str   = 'OASPL',      # [-] Magnitude to plot: 'OASPL', 'SPL', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
+                       mode            : str   = 'OASPL',      # [-] Magnitude to plot: 'OASPL', 'SPL', 'PSD', 'SWL', 'ABS', 'REAL', 'IMAG', 'PHASE'
                        target_frequency: float = 0.88,         # [Hz] Target frequency for single-frequency modes
                        absorption      : bool  = False,        # [-] Whether to apply absorption attenuation
                        filter_under    : float = None,         # [Hz] Lower frequency cutoff (f >= filter_under)
@@ -983,6 +1077,7 @@ def plot_sliceVertical(case            : dict  = None,         # [-] Dictionary 
     azimuth   = case["Azimuth_sliceV"]      # Azimuth angle of the slice [deg]
     center    = case["Center_sliceV"]       # Center point [cx, cy]
     Freqs     = case["Freqs"]
+    df        = pu.get_bin_width(Freqs)     # Frequency bin width [Hz] for 'PSD'
     p_ref     = case["p_ref"]
 
     if not pu.is_valid(p, "plot_sliceVertical"):
@@ -1027,10 +1122,10 @@ def plot_sliceVertical(case            : dict  = None,         # [-] Dictionary 
         p_f = p[idx, :, :]
         title_extra = f"at {f:.2f} Hz"
 
-        vals, unit_label = pu.convert_to(p_f, mode=mode, enbw=case["ENBW"])
+        vals, unit_label = pu.convert_to(p_f, mode, df, enbw=case["ENBW"])
 
-    # Plot (NaN: holes)
-    contour_set = ax.contourf(U, Z, vals, levels=60, cmap=cmap)
+    # Plot (upper half of the range, NaN: holes)
+    contour_set = ax.contourf(U, Z, vals, levels=get_contour_levels(vals), cmap=cmap, extend='min')
     cbar = fig.colorbar(contour_set, ax=ax, orientation='horizontal', pad=0.1)
     cbar.set_label(unit_label)
     if abs(u[-1]-u[0]) == abs(z[-1]-z[0]): ax.set_aspect('equal')
@@ -1079,3 +1174,76 @@ def plot_sliceVertical(case            : dict  = None,         # [-] Dictionary 
 
     return fig, ax
 
+
+# ---------- Compute metrics ---------- #
+def as_single_case(case: dict = None):     # [-] Dictionary containing simulation data
+    """
+    The farm as the single source the metrics of plot_single_case work with: it carries its label (Case_type),
+    its color and no sphere (a farm has none), so only the cylinder is used.
+
+    Returns
+    -------
+    case : dict
+        Shallow copy of the farm, the arrays are not duplicated.
+    """
+
+    return dict(case, Color=get_farm_color(case), has_sphere=False)
+
+def compute_cylinder_metrics(case            : dict  = None,         # [-] Dictionary containing simulation data
+                             filter_under    : float = None,         # [Hz] Lower frequency cutoff (f >= filter_under)
+                             filter_over     : float = None,         # [Hz] Upper frequency cutoff (f <= filter_over)
+                             rho_water       : float = 1025.0,       # [kg/m³] Water density
+                             c_water         : float = 1500.0,       # [m/s] Speed of sound in water
+                             verbose         : bool  = True):        # [-] Print metrics to console
+    """
+    Computes and optionally prints the propagation metrics of the cylinder around the wind farm
+    (plot_single_case.compute_cylinder_metrics). If the cylinder encloses the whole farm, the power flow is
+    that of the farm as a whole. Observers without data (NaN, inside a structure) are left out and the
+    excluded fraction of the lateral area is reported.
+
+    Returns
+    -------
+    metrics : dict
+        Dictionary containing all computed acoustic metrics (Power, SPL, etc.). None without cylinder data.
+    """
+
+    return psc.compute_cylinder_metrics(as_single_case(case),
+                                        filter_under=filter_under,
+                                        filter_over=filter_over,
+                                        rho_water=rho_water,
+                                        c_water=c_water,
+                                        verbose=verbose)
+
+def compute_point_source(case            : dict  = None,         # [-] Dictionary containing simulation data
+                         filter_under    : float = None,         # [Hz] Lower frequency cutoff (f >= filter_under)
+                         filter_over     : float = None,         # [Hz] Upper frequency cutoff (f <= filter_over)
+                         enbw            : float = None,         # [bins] Equivalent noise bandwidth of the FFT window (None: case["ENBW"], from the file)
+                         smooth_fraction : int   = 12,           # [-] Plots only: narrowband curves smoothed over 1/N octave (None: raw)
+                         rho_water       : float = 1025.0,       # [kg/m³] Water density (if not in the file)
+                         c_water         : float = 1500.0,       # [m/s] Speed of sound in water (if not in the file)
+                         verbose         : bool  = True,         # [-] Print totals and the 1/3 octave table
+                         do_plot         : bool  = True,         # [-] Plot SL spectra and PL
+                         figsize         : tuple = (10, 5)):     # [-] Size of the SL figure
+    """
+    Reduces the whole wind farm to an equivalent point source (plot_single_case.compute_point_source): the
+    free-field monopole that radiates the same power as the farm. A farm has no sphere, so only the in situ
+    source level comes from the cylinder around it (waveguide), which must enclose every turbine, and carries
+    the bias of the |p|^2 power of the cylinder (~+0.5 to +4.7 dB). The propagation loss is that from this single
+    point to the spectrum observers; the farm is an extended source, so it only holds far from it.
+
+    Returns
+    -------
+    metrics : dict
+        See plot_single_case.compute_point_source. None without cylinder data.
+    """
+
+    return psc.compute_point_source(as_single_case(case),
+                                    filter_under=filter_under,
+                                    filter_over=filter_over,
+                                    enbw=enbw,
+                                    smooth_fraction=smooth_fraction,
+                                    rho_water=rho_water,
+                                    c_water=c_water,
+                                    verbose=verbose,
+                                    do_plot=do_plot,
+                                    figsize=figsize)

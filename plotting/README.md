@@ -23,6 +23,7 @@ python plotting/turbine.py plot_mn_IM30_ws11.4 --ws                   # line plo
 python plotting/turbine.py --list                                     # files, date, method and saved steps
 python plotting/farm.py                                               # most recent file of farm_acoustic_data/
 python plotting/farm.py Farm_2_DTU10MN_ANM24_ws8.0-11.4 --save
+python plotting/farm.py 4.5_kincardine 15.0_kincardine                # two or more farms: comparison
 ```
 
 A file can be given as a path or as a bare name (with or without `.hdf5`), which is searched in `--data_dir`.
@@ -72,6 +73,21 @@ whole file. Without `ws<speed>` in the name the file is plotted alone, and a win
 left out of that plot, both with a message. The figures are saved with the suffix `_allws`
 (`decay_OASPL_allws.png`), so they do not overwrite the plain ones.
 
+## Wind farms
+
+`farm.py` takes one file (one branch of `main()`) or several (comparison, one panel per farm, labelled with its
+turbines, wind speed and method, e.g. `5 x DTU10MWFloating, 11.4 m/s, ANM98`). It has the same options as the
+turbine plots, except `--ws`:
+
+- `plot_spectrums`: `mode='SPL'` or `'PSD'`, narrowband smoothing (`smooth`, `smooth_fraction`, 1/12 octave by default;
+  the energetic and dB means of observers at the same distance to the centre of the farm, i.e. the mean turbine
+  axis, are added and smoothed too).
+- `mode='PSD'` in the polar, cylinder, line and the three slices (single-frequency maps and lines).
+- Cylinder, XZ and vertical slices show the upper half of the range (`max/2` to `max`), as the turbine plots.
+- `compute_cylinder_metrics` and `compute_point_source`: the farm as a whole through the cylinder around it, which
+  must enclose every turbine. A farm has no sphere, so there are no free-field metrics: the source level is the
+  in situ one, with the bias of the cylinder `|p|^2` power (see `compute_point_source` in `plot_single_case.py`).
+
 ## Files
 
 | File | Content |
@@ -80,7 +96,8 @@ left out of that plot, both with a message. The figures are saved with the suffi
 | `plot_utils.py` | CLI, `.hdf5` discovery and loading (`read_ds`, `load_turbine`, `load_farm`), saving, helpers |
 | `plot_single_case.py` | single-turbine plots and sphere/cylinder metrics |
 | `plot_comparison.py` | several turbines side by side (up to 3 panels per row); the equivalent point source overlays them |
-| `plot_farm_module.py` | wind farm plots |
+| `plot_farm_module.py` | wind farm plots and the cylinder / equivalent point source metrics of the farm |
+| `plot_farm_comparison.py` | several farms side by side (one panel per farm); the equivalent point source overlays them |
 | `plot_style.py` | `AcademicStyle` (fonts, colormaps, colors, line styles) |
 | `utils/` | copies of `AcousticUtils` and `EnvironmentalData` (hearing thresholds, Ge 2025 data) |
 

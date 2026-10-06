@@ -106,7 +106,7 @@ def load_turbine(path   : Path = None,      # [-] Path to the single-turbine .hd
 
         if "Nturbines" in f:
             raise ValueError(f"plot_utils.load_turbine(): {path.name} is a wind farm file, "
-                             f"plot it with plotting/plot_farm.py")
+                             f"plot it with plotting/farm.py")
 
         case = {}
         case["Path"] = path
@@ -319,6 +319,15 @@ def set_comparison_labels(cases: list = None):     # [-] List of dictionaries co
                         ([] if "WS_cases" in case else [get_ws_label(case)]) +
                         [case['Method_tag']]) for case in cases]
 
+    apply_comparison_labels(cases, labels)
+
+def apply_comparison_labels(cases : list = None,     # [-] List of dictionaries containing simulation data
+                            labels: list = None):    # [-] One label per case
+    """
+    Stores the labels of a comparison in the cases (Case_type) with a color each, by position. The water depth is
+    added to the labels that match, and the file name to those that still do.
+    """
+
     if len(set(labels)) < len(labels):
         labels = [f"{label}, H = {case['Depth']:.0f} m" for label, case in zip(labels, cases)]
     if len(set(labels)) < len(labels):
@@ -335,21 +344,19 @@ def parse_farm_args():
     Parses arguments from the terminal.
     """
 
-    parser = argparse.ArgumentParser(description="Plots a wind farm (one .hdf5 file).")
+    parser = argparse.ArgumentParser(description="Plots a wind farm (one .hdf5 file) or compares several of them "
+                                                 "(two or more files).")
     parser.add_argument(
-        "file", type = str, nargs = "?", default = None,
-        help = "Wind farm .hdf5 file written by Fortran. A bare file name is also searched in --data_dir "
-               "(default: most recent .hdf5 in --data_dir)"
+        "files", type = str, nargs = "*",
+        help = "Wind farm .hdf5 files written by Fortran: one file plots a single farm, several files are compared. "
+               "A bare file name is also searched in --data_dir (default: most recent .hdf5 in --data_dir)"
     )
     add_common_args(parser, FARM_DATA_DIR)
 
-    args = parser.parse_args()
-    args.files = [args.file] if args.file else []
+    return finish_args(parser.parse_args())
 
-    return finish_args(args)
-
-def load_farm(args   : argparse.Namespace = None,   # [-] Parsed command-line arguments
-              verbose: bool = False):               # [-] if True, prints a list of keys available in the file
+def load_farm(path   : Path = None,      # [-] Path to the wind farm .hdf5 file
+              verbose: bool = False):    # [-] if True, prints a list of keys available in the file
     """
     Loads files from farm simulation
 
@@ -358,18 +365,22 @@ def load_farm(args   : argparse.Namespace = None,   # [-] Parsed command-line ar
     case : dict
         Simulation data. The parameters of each turbine are in case["Turbine_parameters"] (one dict per
         turbine, same keys as a single-turbine case) and every post-processing step has a has_<step> flag.
+        Case_type is the label of the farm in titles (see get_farm_label), replaced in comparisons.
     """
 
-    path = resolve_paths(args.files, args.data_dir)[0]
+    path = Path(path)
     print(f"Loading HDF5 file: {path}")
 
+    if not path.exists():
+        raise FileNotFoundError(f"plot_utils.load_farm(): File not found {path}")
+
     with h5py.File(path, 'r') as f:
-        if verbose or args.verbose:
+        if verbose:
             print_keys(f)
 
         if "Nturbines" not in f:
             raise ValueError(f"plot_utils.load_farm(): {path.name} is a single-turbine file, "
-                             f"plot it with plotting/plot_turbine.py")
+                             f"plot it with plotting/turbine.py")
 
         # ---------- Create case dictionary ---------- #
         case = {}
@@ -380,6 +391,8 @@ def load_farm(args   : argparse.Namespace = None,   # [-] Parsed command-line ar
         case["Nturbines"]          = int(read_ds(f, "Nturbines"))
         case["Source_offset"]      = read_array(f, "Source_offset")
         case["Turbine_parameters"] = [read_turbine_params(f, f"_{i}") for i in range(1, case["Nturbines"] + 1)]
+        case["has_nodes"]          = all("Structure_nodes" in turb for turb in case["Turbine_parameters"])
+        case["Case_type"]          = get_farm_label(case)
 
         # Solver parameters: method autodetected, water depth from the boundaries (no "Depth" in farm files)
         read_solver_params(f, case)
@@ -391,6 +404,69 @@ def load_farm(args   : argparse.Namespace = None,   # [-] Parsed command-line ar
         read_steps(f, case)
 
     return case
+
+def load_farms(args   : argparse.Namespace = None,   # [-] Parsed command-line arguments
+               verbose: bool = False):               # [-] if True, prints a list of keys available in the file
+    """
+    Loads the farm given in the terminal, or all of them to compare them.
+
+    Returns
+    -------
+    cases : list of dict
+        One dictionary per file. With several files every case gets a distinct label (Case_type) and color.
+    """
+
+    paths = resolve_paths(args.files, args.data_dir)
+    cases = [load_farm(path, verbose=verbose or args.verbose) for path in paths]
+
+    if len(cases) > 1:
+        set_farm_comparison_labels(cases)
+
+    return cases
+
+def get_farm_label(case: dict = None):     # [-] Dictionary containing simulation data of a wind farm
+    """
+    Label of a farm: number of turbines and their types, e.g. '5 x DTU10MWFloating' or
+    '2 x DTU10MWMonopile + DTU10MWFloating'.
+
+    Returns
+    -------
+    label : str
+    """
+
+    types = list(dict.fromkeys(turb["Case_type"] for turb in case["Turbine_parameters"]))
+
+    return f"{case['Nturbines']} x {' + '.join(types)}"
+
+def get_farm_ws_label(case: dict = None):     # [-] Dictionary containing simulation data of a wind farm
+    """
+    Wind speed of a farm: that of its turbines ('11.4 m/s') or the range they span ('8.0-11.4 m/s').
+
+    Returns
+    -------
+    label : str
+        Empty if the file has no wind speed.
+    """
+
+    speeds = [turb["WindSpeed"] for turb in case["Turbine_parameters"] if np.isfinite(turb["WindSpeed"])]
+    if not speeds:
+        return ""
+
+    low, high = min(speeds), max(speeds)
+
+    return f"{low:.1f} m/s" if f"{low:.1f}" == f"{high:.1f}" else f"{low:.1f}-{high:.1f} m/s"
+
+def set_farm_comparison_labels(cases: list = None):     # [-] List of dictionaries containing simulation data
+    """
+    Gives every farm of a comparison a distinct label, used by titles (Case_type), built from its turbines,
+    wind speed and method (e.g. '5 x DTU10MWFloating, 11.4 m/s, ANM24'). The water depth is added if two labels
+    match, and the file name if they still do. Colors are assigned by position.
+    """
+
+    labels = [", ".join(part for part in (get_farm_label(case), get_farm_ws_label(case), case['Method_tag']) if part)
+              for case in cases]
+
+    apply_comparison_labels(cases, labels)
 
 
 # ---------- FILE UTILITIES ---------- #
