@@ -129,6 +129,9 @@ SUBROUTINE init_AnalyticalNormalModes(self, sources, config)
     self % Lower_HBC = - self % env % depth_base
     self % H         = - self % Lower_HBC
 
+    ! Sources inside the water column (the seabed is known from here on)
+    CALL self % check_sources_in_water()
+
     ! Number of modes
     if (self % Nmodes == DEFAULT_I) then
         f_max              = maxval(self % sources % Freqs)

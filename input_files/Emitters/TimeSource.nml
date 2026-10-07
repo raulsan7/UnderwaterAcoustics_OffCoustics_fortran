@@ -1,0 +1,63 @@
+! =====================================================================
+! Time-domain point sources configuration file
+! =====================================================================
+! Used when simulation_type = 'TimeSource' in Solver.nml: a few
+! hand-made point dipoles whose force is given as a real function of
+! time. The solver works in the frequency domain, so every series is
+! taken there with the FFT of the turbines (mean removed, Hann window),
+! and the forces keep that window (an ENBW of 1.5 bins is saved).
+! There is no radiation-impedance correction.
+!
+! Conventions
+!   - Frame, positions and force: as in FrequencySource.nml (x, y
+!     horizontal, z upwards with the free surface at z = 0; the force
+!     [N] is the one the source applies on the fluid, in the global
+!     frame). Sources are dipoles.
+!   - Time axis: Nt samples of [t_start, t_end), so
+!         dt = (t_end - t_start) / Nt      (printed when the run starts)
+!         record length T = t_end - t_start
+!         frequency resolution df = 1 / T, Nyquist frequency 1 / (2 dt)
+!     A tone gets its full amplitude only if its frequency is a multiple
+!     of df; at any other frequency its energy is shared by the two
+!     nearest bins (the power is the same).
+!   - Force: one text expression of t [s] per source and component
+!     (Fx, Fy, Fz), '0' if left out. It can use numbers (12, 0.5, 1.0e-3),
+!     the constant pi, the operators + - * / **, parentheses and
+!         sin cos tan asin acos atan sinh cosh tanh exp log log10 sqrt abs
+!         step(x)  1 if x >= 0, else 0           sgn(x)  -1, 0 or 1
+!         floor(x) atan2(y, x) min(a, b) max(a, b)
+!         mod(a, b) and modulo(a, b)  as in Fortran (the sign of a / of b)
+!     Examples:  '1000*sin(2*pi*50*t)'
+!                '500*exp(-((t-1.0)/0.1)**2)*cos(2*pi*80*t)'
+!                '200*step(t-0.5)*sgn(sin(2*pi*10*t))'
+!
+! Instead of expressions, the time axis and the forces can be read from
+! text files (blanks, tabs or commas separate the values; lines starting
+! with # or ! are comments): time_file has one time per row, uniformly
+! spaced; force_file has Nt rows and 3*Nsources columns,
+!     Fx1 Fy1 Fz1 Fx2 Fy2 Fz2 ...
+! Paths are relative to the working directory.
+! =====================================================================
+
+&time_source_config
+    Nsources = 1                                ! [-] Number of sources
+    source_xyz(1, 1:3) = 0.0, 0.0, -15.0        ! [m] Source 1
+
+    ! --- Time axis: Nt samples of [t_start, t_end) --- !
+    t_start = 0.0                               ! [s] First time
+    t_end   = 2.0                               ! [s] End of the record (not included): T = 2 s, df = 0.5 Hz
+    Nt      = 2000                              ! [-] Number of samples: dt = 1 ms, Nyquist frequency = 500 Hz
+    time_file = 'None'                          ! [-] Text file with the times, instead of the three values above
+
+    ! --- Force of every source: Fx, Fy, Fz [N] --- !
+    force_expr(1, 1:3) = '0', '0', '1000*sin(2*pi*50*t)'    ! Source 1: 50 Hz vertical force, amplitude 1000 N
+    force_file = 'None'                         ! [-] Text file with the forces, instead of the expressions
+
+    ! --- Frequencies passed to the solver --- !
+    skipf = 1                                   ! [-] Keep 1 out of every skipf bins (1, 1+skipf, ...: with skipf > 1 a tone can be dropped, prefer fmin and fmax)
+    fmin  = 30.0                                ! [Hz] Lowest frequency kept (-999.0 = all)
+    fmax  = 70.0                                ! [Hz] Highest frequency kept (-999.0 = up to the Nyquist frequency)
+/
+
+
+! Mandatory: Leave blank space at the end of the file

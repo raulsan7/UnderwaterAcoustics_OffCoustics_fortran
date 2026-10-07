@@ -26,11 +26,11 @@
 ! Which post-processing steps to run
 ! ---------------------------------------------------------------
 &do_config
-    do_all           = .true.       ! [-] Run all cases listed bellow
+    do_all           = .false.       ! [-] Run all cases listed bellow
     do_spectrums     = .false.      ! [-] Spectrums at observer points (run_spectrums)
     do_polar         = .false.      ! [-] Polar contour (run_polar)
     do_cylinder      = .false.      ! [-] Cylinder surface (run_cylinder)
-    do_decay         = .false.      ! [-] Distance decay along wind direction (run_decay)
+    do_decay         = .true.      ! [-] Distance decay along wind direction (run_decay)
     do_line          = .false.      ! [-] Line between two points (run_line)
     do_sliceXY       = .false.      ! [-] Horizontal slice XY (run_sliceXY)
     do_sliceXZ       = .false.      ! [-] Vertical slice XZ (run_sliceXZ)
@@ -130,7 +130,7 @@
 ! azimuth_sv = -90.0 gives the XZ plane with the span axis along +x;
 ! if it is the sliceXZ plane (center_sv(2) = y_xz) the step is skipped.
 &sliceVertical_config
-    azimuth_sv = 0.0                ! [deg] Azimuth of the plane normal (0 deg: normal along +x, YZ plane; anticlockwise)
+    azimuth_sv = 90.0                ! [deg] Azimuth of the plane normal (0 deg: normal along +x, YZ plane; anticlockwise)
     center_sv = -999.0, -999.0      ! [m] Plane centre (x, y); -999.0 = auto: turbine axis position
     width_sv = -999.0               ! [m] Full horizontal span; -999.0 = auto: every source projected + margin_sv
     zlim_sv = -999.0, 0.0           ! [m] Depth extent (min, max); -999.0 = auto: -Depth (min) or 0 (max)

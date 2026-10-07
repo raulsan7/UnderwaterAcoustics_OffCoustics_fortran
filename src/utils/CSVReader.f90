@@ -14,11 +14,13 @@
 MODULE CSVReader
 
 USE Kinds, ONLY: I32, WP
+USE FileUtils, ONLY: read_full_line
+USE StringUtils, ONLY: split_tokens
 
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: read_curve
+PUBLIC :: read_curve, read_table
 
 
 CONTAINS
@@ -153,5 +155,85 @@ SUBROUTINE parse_csv_row(text_line, values, is_row)
     is_row = .true.
 
 END SUBROUTINE parse_csv_row
+
+
+SUBROUTINE read_table(path, ncols, table)
+    ! -------------------------------------------------------------------------
+    ! Reads a text table of ncols numeric columns separated by blanks, TABs or
+    ! commas. Blank lines and lines starting with '#' or '!' are skipped. A data
+    ! row with another number of values, or with a value that is not a number,
+    ! stops the run with the number of its line.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)               :: path          ! [-] Path to the text file
+    INTEGER(I32)    , INTENT(IN)               :: ncols         ! [-] Number of columns of every data row
+    REAL(WP)        , INTENT(OUT), ALLOCATABLE :: table(:,:)    ! [-] Values (number of data rows, ncols)
+
+    ! Local variables
+    CHARACTER(len=:) , ALLOCATABLE :: line
+    CHARACTER(len=32), ALLOCATABLE :: tokens(:)
+    INTEGER(I32)                   :: unit_num, ios, pass, n_rows, i_line, i, j
+
+
+    open(newunit=unit_num, file=path, status='old', action='read', iostat=ios)
+    if (ios /= 0_I32) then
+        write(*,*) "ERROR: Could not open the table file: ", path
+        error stop
+    end if
+
+    ! Two passes: the first counts the data rows, the second reads them
+    do pass = 1, 2
+        n_rows = 0_I32
+        i_line = 0_I32
+        if (pass == 2_I32) rewind(unit_num)
+
+        do
+            CALL read_full_line(unit_num, line, ios)
+            if (ios /= 0_I32) exit
+            i_line = i_line + 1_I32
+
+            ! Commas and TABs separate values as blanks do
+            do i = 1, len(line)
+                if (line(i:i) == ',' .or. line(i:i) == achar(9)) line(i:i) = ' '
+            end do
+
+            line = adjustl(line)
+            if (len_trim(line) == 0 .or. line(1:1) == '#' .or. line(1:1) == '!') cycle
+
+            n_rows = n_rows + 1_I32
+            if (pass == 1_I32) cycle
+
+            CALL split_tokens(line, tokens)
+            if (size(tokens) /= ncols) then
+                write(*, '(A,I0,A,I0,A,I0,A)') " ERROR: line ", i_line, " of " // trim(path) // " has ", size(tokens), &
+                                               " values, ", ncols, " are required"
+                close(unit_num)
+                error stop
+            end if
+
+            do j = 1, ncols
+                read(tokens(j), *, iostat=ios) table(n_rows, j)
+                if (ios /= 0_I32) then
+                    write(*, '(A,I0,A,I0,A)') " ERROR: line ", i_line, " of " // trim(path) // ", column ", j, &
+                                              " is not a number"
+                    close(unit_num)
+                    error stop
+                end if
+            end do
+        end do
+
+        if (pass == 1_I32) then
+            if (n_rows == 0_I32) then
+                write(*,*) "ERROR: No data rows in the table file: ", path
+                close(unit_num)
+                error stop
+            end if
+            ALLOCATE(table(n_rows, ncols))
+        end if
+    end do
+
+    close(unit_num)
+
+END SUBROUTINE read_table
 
 END MODULE CSVReader

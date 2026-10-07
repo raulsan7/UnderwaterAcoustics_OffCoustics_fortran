@@ -1,7 +1,8 @@
 # plotting — figures of the Fortran outputs
 
 Plots the `.hdf5` files written by the Fortran code: single turbines (`turbine_acoustic_data/`), wind farms
-(`farm_acoustic_data/`) and frequency-domain point sources (`source_acoustic_data/`), alone or compared. Every
+(`farm_acoustic_data/`) and point sources, with forces given in frequency or in time (`source_acoustic_data/`), alone
+or compared. Every
 emitter is drawn by the same generic plots: one entry script per emitter reads its files, and the plots never
 see which emitter they draw.
 
@@ -23,6 +24,7 @@ python plotting/farm.py Farm_2_DTU10MN_ANM24_ws8.0-11.4 --save
 python plotting/farm.py 4.5_kincardine 15.0_kincardine                # two or more farms: comparison
 python plotting/source.py                                             # most recent file of source_acoustic_data/
 python plotting/source.py Source_Ns2_Nf3_ANM9 --save --no-show
+python plotting/source.py Source_Ns1_Nt2000_ANM8                        # a TimeSource file
 ```
 
 A file can be given as a path or as a bare name (with or without `.hdf5`), which is searched in `--data_dir`.
@@ -62,7 +64,7 @@ the same names and arguments for every emitter:
 | `plot_line` | magnitude along the line P1 -> P2 |
 | `plot_sliceXY`, `plot_sliceXZ`, `plot_sliceVertical` | maps of the slices, with the nodes of the emitter drawn as points (`structure`) |
 | `plot_structure` | members and wind direction of a turbine or of every turbine of a farm (`mode='3D'`, `'xy'`, `'xz'`) |
-| `plot_sources` | positions of frequency-domain sources and the amplitude of their force at every tone |
+| `plot_sources` | positions of point sources and the amplitude of their force at every tone; a TimeSource also has its force series in time and the amplitude of its spectrum |
 | `compute_sphere_metrics` | free-field radiation metrics of the sphere (Image Method) |
 | `compute_cylinder_metrics` | power flow through the cylinder |
 | `compute_point_source` | equivalent point source (free field and in situ), with its figures |
@@ -110,20 +112,27 @@ as the turbine script, except `--ws`, with the same titles and layout (the label
   must enclose every turbine. A farm has no sphere, so there are no free-field metrics: the source level is the
   in situ one, with the bias of the cylinder `|p|^2` power (see `compute_point_source` in `plots/metrics.py`).
 
-## Frequency-domain sources
+## Point sources
 
-`source.py` plots the files of the emitter `FrequencySource`: monopoles or dipoles at the positions of
-`Source_xyz`, forced at the tones given by the user (`Source_Force`). Same plots and options as the turbine script,
-except `--ws` and the turbine-only ones (`plot_structure`, `turbine_data`).
+`source.py` plots the files of the emitters `FrequencySource` and `TimeSource`: monopoles or dipoles at the positions of
+`Source_xyz`, with the complex force of `Source_Force` at every frequency. Same plots and options as the turbine
+script, except `--ws` and the turbine-only ones (`plot_structure`, `turbine_data`). The emitter of a file is its
+`Emitter` dataset; a file of another emitter is rejected with the script that reads it.
 
-- The frequencies are tones, not the bins of an FFT: they have a bin width only when they are uniformly spaced.
-  Otherwise the PSD, the 1/3 octave bands and `compute_point_source` are not applicable and are skipped with a
-  message; SPL per tone, OASPL and the band sums of the polar plot remain valid.
+- **FrequencySource** (forces given per frequency): the frequencies are tones, not the bins of an FFT. They have a
+  bin width only when they are uniformly spaced (their spacing); otherwise the PSD, the 1/3 octave bands and
+  `compute_point_source` are not applicable and are skipped with a message. SPL per tone, OASPL and the band sums
+  of the polar plot remain valid. A comparison labels the file `<N> sources, <Nf> tones, <method>`.
+- **TimeSource** (forces given as real series in time): `Source_Force` is the Hann-windowed FFT of the series
+  `Source_Force_time` (Nt, Nsources, 3) on the times `Source_time`, so its frequencies are FFT bins: the bin width is
+  the frequency resolution `1 / (Nt * Time_step)` (whatever frequencies were kept with `skipf`, `fmin` and `fmax`),
+  `ENBW` is 1.5 as for a turbine, and the PSD, the 1/3 octave bands and `compute_point_source` work. A comparison
+  labels the file `<N> sources, <Nt> samples, <method>`.
 - A single source is the origin of the distances (absorption); several sources have none (absorption off, with a
   message, as for a farm).
-- `plot_sources` draws their positions (XZ plane) and the amplitude of their force at every tone. The maps draw
-  the sources as points (monopoles as squares). A comparison labels every file with its number of
-  sources and tones and its method, e.g. `2 sources, 3 tones, ANM9`.
+- `plot_sources` draws their positions (XZ plane) and the amplitude of their force at every tone (bars); for a
+  TimeSource, the force series in time and the amplitude of its spectrum (lines). The maps draw the sources as
+  points (monopoles as squares).
 - Files written before the `Emitter` dataset (06/10/2026) are not supported: regenerate them.
 
 ## Layout
@@ -163,7 +172,7 @@ is therefore divided by the equivalent noise bandwidth of the window, read from 
 
 | File | ENBW [bins] |
 |---|---|
-| with the `ENBW` dataset (written since 10/2026 when the forces come from a windowed FFT) | its value, 1.5 |
+| with the `ENBW` dataset (written since 10/2026 when the forces come from a windowed FFT: turbines, farms and TimeSource) | its value, 1.5 |
 | without `ENBW` nor `Method` (written before 10/2026: always turbines or farms) | 1.5 |
 | with `Method` but without `ENBW` (forces without a window, e.g. sources given in frequency) | 1.0, no correction |
 

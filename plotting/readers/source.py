@@ -1,9 +1,9 @@
 """
 Module: readers/source.py
-Description: Reader of the frequency-domain source files (FORTRAN/source_acoustic_data, emitter
-             FrequencySource, FrequencySource.save_params): positions, multipole order and complex forces of
-             the point sources, and the steps of the solver. Its frequencies are the tones given by the user,
-             not the bins of an FFT.
+Description: Reader of the point-source files (FORTRAN/source_acoustic_data, emitters FrequencySource and
+             TimeSource, ManualSources.save_params): positions, multipole order and complex forces of the point
+             sources, and the steps of the solver. The frequencies of a FrequencySource file are the tones given by
+             the user; those of a TimeSource file are bins of the FFT of its force series, which are read too.
 
 Author: Raul Sanz Ramirez (raul.sanz.ramirez@upm.es / raul.sanz.ramirez@gmail.com)
 Institution: Universidad Politecnica de Madrid - ETSIAE
@@ -20,14 +20,16 @@ from readers.solver import read_solver_params, read_steps
 def read_source(path   : Path = None,      # [-] Path to the source .hdf5 file
                 verbose: bool = False):    # [-] if True, prints a list of keys available in the file
     """
-    Reads a frequency-domain source .hdf5 file coming from Fortran.
+    Reads a point-source .hdf5 file (FrequencySource or TimeSource) coming from Fortran.
 
     Returns
     -------
     raw : dict
         Datasets with their Fortran names: Emitter, Nsources, NFreqs, Source_xyz (Nsources, 3) [m],
         Source_order (Nsources,) (0 monopole, 1 dipole), Source_Force (NFreqs, Nsources, 3) [N] complex (peak
-        amplitude, time factor exp(-i w t)), the solver parameters, Freqs and the post-processing steps.
+        amplitude, time factor exp(-i w t)), the solver parameters, Freqs and the post-processing steps. A
+        TimeSource file also has Nt, Time_step [s], Source_time (Nt,) [s] and Source_Force_time (Nt, Nsources, 3)
+        [N], the real force series that the Fortran FFT took to Source_Force.
     """
 
     path = Path(path)
@@ -60,6 +62,13 @@ def read_source(path   : Path = None,      # [-] Path to the source .hdf5 file
         raw["Source_xyz"]   = np.atleast_2d(read_ds(f, "Source_xyz"))
         raw["Source_order"] = read_array(f, "Source_order").astype(int)
         raw["Source_Force"] = read_complex(f, "Source_Force").reshape(raw["NFreqs"], raw["Nsources"], 3)
+
+        # Time-domain sources: the force series whose FFT is Source_Force
+        if raw["Emitter"] == "TimeSource":
+            raw["Nt"]                = int(read_ds(f, "Nt"))
+            raw["Time_step"]         = float(read_ds(f, "Time_step"))
+            raw["Source_time"]       = read_array(f, "Source_time")
+            raw["Source_Force_time"] = read_ds(f, "Source_Force_time").reshape(raw["Nt"], raw["Nsources"], 3)
 
         # Solver parameters: method autodetected, water depth from the boundaries
         read_solver_params(f, raw)

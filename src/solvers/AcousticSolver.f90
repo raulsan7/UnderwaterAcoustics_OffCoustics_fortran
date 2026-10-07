@@ -59,6 +59,7 @@ TYPE, ABSTRACT :: AcousticSolver_t
 
     ! --- Public type-bound procedures --- !
     PROCEDURE :: check_observers_distances              ! Observer mask: .false. closer than mask_distance to a source
+    PROCEDURE :: check_sources_in_water                 ! Stops the run if a source lies outside the water column
     PROCEDURE :: compute_pressure_masked                ! compute_pressure with NaN at the masked observers
     PROCEDURE :: resolve_save_path                      ! Output path shared by every solver (build_save_path helper)
     PROCEDURE :: check_update                           ! Keeps an existing output only if it holds the same case
@@ -75,9 +76,9 @@ TYPE, ABSTRACT :: AcousticSolver_t
     PROCEDURE :: run_sliceVertical
     PROCEDURE :: run_sphere => dummy_run_sphere
 
-    ! --- Water-column queries (a method overrides them to publish its boundaries) --- !
-    PROCEDURE :: z_seabed  => default_z_seabed          ! z of the seabed at (x, y)
-    PROCEDURE :: in_water  => default_in_water          ! Observer mask: .true. inside the water column
+    ! --- Water-column queries (a method with its own seabed overrides z_seabed; in_water follows it) --- !
+    PROCEDURE :: z_seabed  => z_seabed_base          ! z of the seabed at (x, y)
+    PROCEDURE :: in_water  => in_water_base          ! Mask of the points (observers or sources) inside the water column
 
     ! --- Deferred (abstract) procedures --- !
     PROCEDURE(init_i)             , DEFERRED :: init
@@ -98,7 +99,9 @@ ABSTRACT INTERFACE
     SUBROUTINE init_i(self, sources, config)
         ! -------------------------------------------------------------------------
         ! Constructor: copies the shared and method-specific configuration into
-        ! the solver and prepares it for the pressure computations.
+        ! the solver and prepares it for the pressure computations. Once the
+        ! environment of the method is set (its seabed included) and before
+        ! anything is saved, it must call check_sources_in_water.
         ! -------------------------------------------------------------------------
 
         IMPORT :: AcousticSolver_t, AcousticSource_t, Config_t
@@ -396,6 +399,41 @@ CONTAINS
 ! ===============================================================================
 ! HELPERS
 ! ===============================================================================
+SUBROUTINE check_sources_in_water(self)
+    ! -------------------------------------------------------------------------
+    ! Stops the run when a source node lies outside the water column (in_water:
+    ! between the seabed z_seabed(x, y) and the surface z = 0). The methods do
+    ! not notice it: a source below the seabed is computed all the same, and
+    ! gives finite but wrong pressures. It is the solver that checks it, and not
+    ! the input readers, because the seabed belongs to the method and may depend
+    ! on (x, y). Every init must call it, once the environment of the method
+    ! (its seabed included) is set and before anything is written.
+    ! -------------------------------------------------------------------------
+
+    CLASS(AcousticSolver_t), INTENT(IN) :: self    ! [-] Solver instance
+
+    ! Local variables
+    LOGICAL, ALLOCATABLE :: wet(:)
+    REAL(WP)             :: z_bot
+    INTEGER(I32)         :: i, n_dry
+
+
+    wet   = self % in_water(self % sources % xyz)
+    n_dry = int(count(.not. wet), I32)
+    if (n_dry == 0_I32) return
+
+    i     = int(minloc(merge(1, 0, wet), dim=1), I32)    ! First source outside the water column
+    z_bot = self % z_seabed(self % sources % xyz(i, 1), self % sources % xyz(i, 2))
+
+    write(*, '(A,I0,A,I0,A,I0,A,F0.2,A,F0.2,A)') " ERROR: ", n_dry, " of ", size(wet), &
+                                                 " sources are outside the water column; the first one, source ", i, &
+                                                 ", is at z = ", self % sources % xyz(i, 3), " m (the seabed is at ", &
+                                                 z_bot, " m and the surface at 0 m)"
+    error stop
+
+END SUBROUTINE check_sources_in_water
+
+
 FUNCTION check_observers_distances(self, observers) RESULT(valid)
     ! -------------------------------------------------------------------------
     ! Flags the observers lying closer than mask_distance to any source node.
@@ -544,14 +582,14 @@ END FUNCTION pressure_norm
 ! ===============================================================================
 
 
-FUNCTION default_z_seabed(self, x, y) RESULT(z)
+FUNCTION z_seabed_base(self, x, y) RESULT(z)
     ! -------------------------------------------------------------------------
     ! Default water-column query: z of the seabed at (x, y), the plane
     ! z = -depth_base.
-    ! A method overrides, z_seabed and in_water to publish its own
-    ! boundaries (a surface at z = 0, a variable bathymetry, ...). The
-    ! run_* steps never read depth_base directly: they only ask these
-    ! queries, so they stay generic for every method.
+    ! A method with its own seabed (a variable bathymetry, ...) overrides
+    ! z_seabed only: in_water asks it. The run_* steps never read depth_base
+    ! directly: they only ask these queries, so they stay generic for every
+    ! method.
     ! -------------------------------------------------------------------------
 
     CLASS(AcousticSolver_t), INTENT(IN) :: self    ! [-] Solver instance
@@ -562,36 +600,37 @@ FUNCTION default_z_seabed(self, x, y) RESULT(z)
 
     z = -self % env % depth_base
 
-END FUNCTION default_z_seabed
+END FUNCTION z_seabed_base
 
 
-FUNCTION default_in_water(self, observers) RESULT(valid)
+FUNCTION in_water_base(self, points) RESULT(valid)
     ! -------------------------------------------------------------------------
-    ! Default water-column query: flags the observers inside the water
-    ! column, between the seabed z_seabed(x, y) and the surface z = 0. Both
-    ! limits are inclusive with a tolerance tol_z: the last level of a regular
-    ! depth grid (z_bot + (n-1)*dz, or the sliceXZ grid from 0 down to z_bot)
-    ! can round a few 1e-15 m beyond the plane it should hit exactly.
+    ! Default water-column query: flags the points (observers or sources)
+    ! inside the water column, between the seabed z_seabed(x, y) and the
+    ! surface z = 0. Both limits are inclusive with a tolerance tol_z: the
+    ! last level of a regular depth grid (z_bot + (n-1)*dz, or the sliceXZ
+    ! grid from 0 down to z_bot) can round a few 1e-15 m beyond the plane it
+    ! should hit exactly.
     ! A method with a variable bathymetry only overrides z_seabed; it
     ! overrides in_water only to publish a different mask.
     ! -------------------------------------------------------------------------
 
     CLASS(AcousticSolver_t), INTENT(IN)  :: self              ! [-] Solver instance
-    REAL(WP)               , INTENT(IN)  :: observers(:,:)    ! [m] Observers coords (Nobs, 3)
-    LOGICAL                , ALLOCATABLE :: valid(:)          ! [-] Observer mask (Nobs), .true. inside the water
+    REAL(WP)               , INTENT(IN)  :: points(:,:)       ! [m] Points coords (Npoints, 3)
+    LOGICAL                , ALLOCATABLE :: valid(:)          ! [-] Point mask (Npoints), .true. inside the water
 
     ! Local variables
     REAL(WP), PARAMETER :: tol_z = 1.0e-9_WP    ! [m] Tolerance on the surface and seabed planes
     INTEGER(I32)        :: i
 
 
-    ALLOCATE(valid(size(observers, 1)))
+    ALLOCATE(valid(size(points, 1)))
 
-    do i = 1, size(observers, 1)
-        valid(i) = observers(i, 3) <= tol_z .and. &
-                   observers(i, 3) >= self % z_seabed(observers(i, 1), observers(i, 2)) - tol_z
+    do i = 1, size(points, 1)
+        valid(i) = points(i, 3) <= tol_z .and. &
+                   points(i, 3) >= self % z_seabed(points(i, 1), points(i, 2)) - tol_z
     end do
 
-END FUNCTION default_in_water
+END FUNCTION in_water_base
 
 END MODULE AcousticSolver

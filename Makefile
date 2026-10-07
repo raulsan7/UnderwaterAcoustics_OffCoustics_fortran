@@ -86,6 +86,7 @@ OBJS := \
     $(BUILD)/FileUtils.o \
     $(BUILD)/HDF5Utils.o \
     $(BUILD)/CSVReader.o \
+    $(BUILD)/ExpressionParser.o \
     $(BUILD)/Sorting.o \
     $(BUILD)/Timing.o \
     $(BUILD)/SignalProcessing.o \
@@ -105,7 +106,9 @@ OBJS := \
     $(BUILD)/SAITEC2MWFloating.o \
     $(BUILD)/TurbineFactory.o \
     $(BUILD)/WindFarm.o \
-	$(BUILD)/FrequencySource.o \
+    $(BUILD)/ManualSources.o \
+    $(BUILD)/FrequencySource.o \
+    $(BUILD)/TimeSource.o \
     $(BUILD)/AcousticSolver.o \
     $(BUILD)/AcousticSolver_output.o \
     $(BUILD)/AcousticSolver_steps.o \
@@ -140,7 +143,10 @@ $(BUILD)/FileUtils.o: $(SRC_DIR)/utils/FileUtils.f90 $(BUILD)/Kinds.o | $(BUILD)
 $(BUILD)/HDF5Utils.o: $(SRC_DIR)/utils/HDF5Utils.f90 $(BUILD)/Kinds.o | $(BUILD)
 	$(H5FC) $(FFLAGS) $(HDF5_INCLUDE) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/CSVReader.o: $(SRC_DIR)/utils/CSVReader.f90 $(BUILD)/Kinds.o | $(BUILD)
+$(BUILD)/CSVReader.o: $(SRC_DIR)/utils/CSVReader.f90 $(BUILD)/Kinds.o $(BUILD)/FileUtils.o $(BUILD)/StringUtils.o | $(BUILD)
+	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
+
+$(BUILD)/ExpressionParser.o: $(SRC_DIR)/utils/ExpressionParser.f90 $(BUILD)/Kinds.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/Sorting.o: $(SRC_DIR)/utils/Sorting.f90 $(BUILD)/Kinds.o | $(BUILD)
@@ -158,7 +164,7 @@ $(BUILD)/SpecialFunctions.o: $(SRC_DIR)/utils/SpecialFunctions.f90 $(BUILD)/Kind
 $(BUILD)/InputChecks.o: $(SRC_DIR)/input/InputChecks.f90 $(BUILD)/Kinds.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/InputEmitters.o: $(SRC_DIR)/input/InputEmitters.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/InputChecks.o | $(BUILD)
+$(BUILD)/InputEmitters.o: $(SRC_DIR)/input/InputEmitters.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/StringUtils.o $(BUILD)/ExpressionParser.o $(BUILD)/InputChecks.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/InputSolver.o: $(SRC_DIR)/input/InputSolver.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/InputChecks.o | $(BUILD)
@@ -200,7 +206,13 @@ $(BUILD)/TurbineFactory.o: $(SRC_DIR)/emitters/TurbineFactory.f90 $(BUILD)/WindT
 $(BUILD)/WindFarm.o: $(SRC_DIR)/emitters/WindFarm.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/StringUtils.o $(BUILD)/HDF5Utils.o $(BUILD)/SignalProcessing.o $(BUILD)/Emitter.o $(BUILD)/WindTurbine.o $(BUILD)/TurbineFactory.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/FrequencySource.o: $(SRC_DIR)/emitters/FrequencySource.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/HDF5Utils.o $(BUILD)/Emitter.o | $(BUILD)
+$(BUILD)/ManualSources.o: $(SRC_DIR)/emitters/ManualSources.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/HDF5Utils.o $(BUILD)/Emitter.o | $(BUILD)
+	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
+
+$(BUILD)/FrequencySource.o: $(SRC_DIR)/emitters/FrequencySource.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/ManualSources.o | $(BUILD)
+	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
+
+$(BUILD)/TimeSource.o: $(SRC_DIR)/emitters/TimeSource.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/HDF5Utils.o $(BUILD)/CSVReader.o $(BUILD)/SignalProcessing.o $(BUILD)/ExpressionParser.o $(BUILD)/ManualSources.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/AcousticSolver.o: $(SRC_DIR)/solvers/AcousticSolver.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/Emitter.o | $(BUILD)

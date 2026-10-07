@@ -43,16 +43,16 @@ def main():
     else:
         pc.plot_spectrum(cases, do_thresholds=False, absorption=False, filter_under=10.0, mode='SPL')
         pc.plot_spectrum(cases, do_thresholds=False, absorption=False, filter_over=10.0, octave=False, mode='PSD', smooth=False)
-        # pc.plot_polar(cases)
-        # pc.plot_cylinder(cases)
-        # pc.plot_distance_decay(cases, turbine_data=True)
-        # pc.plot_line(cases)
-        # pc.plot_sliceXY(cases, mode='SPL', target_frequency=16.4)
-        # pc.plot_sliceXZ(cases, mode='SPL', target_frequency=16.4)
-        # pc.plot_sliceVertical(cases)
-        # pc.compute_sphere_metrics(cases)
-        # pc.compute_cylinder_metrics(cases)
-        # pc.compute_point_source(cases)
+        pc.plot_polar(cases)
+        pc.plot_cylinder(cases)
+        pc.plot_distance_decay(cases, turbine_data=True)
+        pc.plot_line(cases)
+        pc.plot_sliceXY(cases, mode='SPL', target_frequency=16.4)
+        pc.plot_sliceXZ(cases, mode='SPL', target_frequency=16.4)
+        pc.plot_sliceVertical(cases)
+        pc.compute_sphere_metrics(cases)
+        pc.compute_cylinder_metrics(cases)
+        pc.compute_point_source(cases)
 
 
     # 2. Save (only with --save) and show

@@ -8,7 +8,7 @@ Description: Readers of the .hdf5 files written by the Fortran code. They return
              solver    datasets written by the solver in every file (method, environment, post-processing steps)
              turbine   single wind turbine (and the per-turbine datasets of a farm)
              farm      wind farm
-             source    frequency-domain point sources (FrequencySource)
+             source    point sources (FrequencySource and TimeSource)
              describe  one-line description of any file for --list
 
 Author: Raul Sanz Ramirez (raul.sanz.ramirez@upm.es / raul.sanz.ramirez@gmail.com)

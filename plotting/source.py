@@ -1,14 +1,18 @@
 """
-Plots frequency-domain point sources (.hdf5 files written by Fortran in FORTRAN/source_acoustic_data, emitter
-FrequencySource: dipoles or monopoles at given positions, forced at given tones).
+Plots point sources (.hdf5 files written by Fortran in FORTRAN/source_acoustic_data: emitter FrequencySource,
+dipoles or monopoles at given positions forced at given tones, and emitter TimeSource, forced by a force series
+in time).
 
     python plotting/source.py                            # most recent file
     python plotting/source.py Source_Ns2_Nf3_ANM9        # one file: single case
+    python plotting/source.py Source_Ns1_Nt2000_ANM8     # a TimeSource file
     python plotting/source.py a.hdf5 b.hdf5 ...          # several files: comparison
     python plotting/source.py --list                     # available files
     python plotting/source.py ... --save [--no-show]     # figures saved in FORTRAN/figures/<case>/
 
-The frequencies are tones, not the bins of an FFT: there is no PSD (its plots are skipped with a message).
+The frequencies of a FrequencySource are tones, not the bins of an FFT: there is a PSD only if they are uniformly
+spaced (otherwise its plots are skipped with a message). Those of a TimeSource are the bins of an FFT with a
+Hann window, so it has a PSD, as a turbine has.
 The plots shown are selected below.
 """
 

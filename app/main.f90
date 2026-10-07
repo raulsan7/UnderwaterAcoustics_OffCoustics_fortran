@@ -27,6 +27,7 @@ USE Emitter, ONLY: Emitter_t
 USE WindFarm, ONLY: WindFarm_t
 USE ConfigTypes, ONLY: Config_t
 USE Timing, ONLY: format_elapsed
+USE TimeSource, ONLY: TimeSource_t
 USE SolverFactory, ONLY: new_solver
 USE WindTurbine, ONLY: WindTurbine_t
 USE TurbineFactory, ONLY: new_turbine
@@ -41,6 +42,7 @@ TYPE(Config_t)         , ALLOCATABLE :: config
 TYPE(AcousticSource_t) , ALLOCATABLE :: active_sources
 TYPE(WindFarm_t)       , ALLOCATABLE :: active_farm
 TYPE(FrequencySource_t), ALLOCATABLE :: active_freq_source
+TYPE(TimeSource_t)     , ALLOCATABLE :: active_time_source
 CLASS(WindTurbine_t)   , ALLOCATABLE :: active_turbine
 CLASS(AcousticSolver_t), ALLOCATABLE :: active_solver
 CLASS(Emitter_t)       , ALLOCATABLE :: active_emitter
@@ -101,6 +103,19 @@ CHARACTER(len=8) :: tag
         write(*,*) ">> Translating frequency-domain forces to mathematical acoustic sources..."
         CALL active_freq_source % to_source(config, active_sources)
         CALL MOVE_ALLOC(active_freq_source, active_emitter)
+
+    CASE ('TimeSource')
+        ! --- 2. TimeSource instance: a single emitter with forces given in the time domain --- !
+        ALLOCATE(active_time_source)
+        write(*,*) ">> Instantiating TimeSource..."
+
+        ! --- 3. Build the force series of TimeSource.nml and take them to the frequency domain --- !
+        CALL active_time_source % init(config)
+
+        ! --- 4. Translate the forces to mathematical acoustic sources --- !
+        write(*,*) ">> Translating time-domain forces to mathematical acoustic sources..."
+        CALL active_time_source % to_source(config, active_sources)
+        CALL MOVE_ALLOC(active_time_source, active_emitter)
 
     CASE DEFAULT
         error stop "main: no emitter is built for simulation_type " // trim(config % solver % simulation_type)

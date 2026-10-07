@@ -20,7 +20,7 @@ USE Kinds, ONLY: I32, WP, DEFAULT_R, DEFAULT_I
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: check_time_window, check_fits, check_all_or_none, check_count
+PUBLIC :: check_time_window, check_fits, check_all_or_none, check_count, check_source_positions
 
 
 CONTAINS
@@ -118,5 +118,47 @@ SUBROUTINE check_count(n, name)
     end if
 
 END SUBROUTINE check_count
+
+
+SUBROUTINE check_source_positions(source_xyz, Nsources, block_name)
+    ! -------------------------------------------------------------------------
+    ! Stops the run when the positions of the point sources of a namelist
+    ! cannot be used: rows given beyond Nsources, a source with a missing or
+    ! non-finite coordinate, or a source above the free surface (z > 0). The
+    ! seabed is not checked here, since it can depend on (x, y) and on the
+    ! method: the solver checks that every source is inside the water column
+    ! (check_sources_in_water). The buffer is initialised to NaN, so NaN marks
+    ! an entry not given.
+    ! -------------------------------------------------------------------------
+
+    USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_is_finite
+
+    REAL(WP)        , INTENT(IN) :: source_xyz(:,:)    ! [m] Positions as read (rows of the buffer, 3)
+    INTEGER(I32)    , INTENT(IN) :: Nsources           ! [-] Number of sources
+    CHARACTER(len=*), INTENT(IN) :: block_name         ! [-] Namelist group shown in the error message
+
+    ! Local variables
+    INTEGER(I32) :: i_s
+
+
+    if (any(ieee_is_finite(source_xyz(Nsources+1:, :)))) then
+        write(*, '(A,I0,A)') " ERROR: &" // block_name // ": source_xyz has more than Nsources = ", Nsources, " rows"
+        error stop
+    end if
+
+    do i_s = 1, Nsources
+        if (.not. all(ieee_is_finite(source_xyz(i_s, :)))) then
+            write(*, '(A,I0,A)') " ERROR: &" // block_name // ": source_xyz(", i_s, ", 1:3) is missing or not finite"
+            error stop
+        end if
+
+        if (source_xyz(i_s, 3) > 0.0_WP) then
+            write(*, '(A,I0,A,F0.2,A)') " ERROR: &" // block_name // ": source ", i_s, " is at z = ", &
+                                        source_xyz(i_s, 3), " m, above the free surface (z = 0)"
+            error stop
+        end if
+    end do
+
+END SUBROUTINE check_source_positions
 
 END MODULE InputChecks

@@ -1,7 +1,7 @@
 """
 Module: readers/describe.py
 Description: One-line description of any .hdf5 file written by the Fortran code (single turbine, wind farm or
-             frequency-domain sources), for the --list of every entry script.
+             point sources, FrequencySource and TimeSource), for the --list of every entry script.
 
 Author: Raul Sanz Ramirez (raul.sanz.ramirez@upm.es / raul.sanz.ramirez@gmail.com)
 Institution: Universidad Politecnica de Madrid - ETSIAE
@@ -19,8 +19,8 @@ def describe_hdf5(f):     # [-] Open h5py.File
     Returns
     -------
     description, steps : str, str
-        Case, method, wind speed and depth of the file (sources: number of sources and tones instead of the
-        wind speed), and the post-processing steps it contains.
+        Case, method, wind speed and depth of the file (sources: number of sources and tones, or of samples
+        of the force series, instead of the wind speed), and the post-processing steps it contains.
     """
 
     if "Nmodes" in f:
@@ -34,9 +34,13 @@ def describe_hdf5(f):     # [-] Open h5py.File
     steps   = steps if steps else "none"
     emitter = detect_emitter(f)
 
-    # Frequency-domain sources: no wind, the depth is the one of the solver
+    # Point sources: no wind, the depth is the one of the solver
     if emitter == "source":
-        name  = f"{read_ds(f, 'Emitter')}: {read_ds(f, 'Nsources')} sources, {read_ds(f, 'NFreqs')} tones"
+        if read_ds(f, "Emitter") == "TimeSource":
+            name = (f"TimeSource: {read_ds(f, 'Nsources')} sources, {read_ds(f, 'Nt')} samples "
+                    f"(dt = {read_ds(f, 'Time_step'):.3g} s), {read_ds(f, 'NFreqs')} frequencies")
+        else:
+            name = f"{read_ds(f, 'Emitter')}: {read_ds(f, 'Nsources')} sources, {read_ds(f, 'NFreqs')} tones"
         depth = f" | H = {-read_ds(f, 'Lower_HBC'):.0f} m" if "Lower_HBC" in f else ""
         return f"{name} | {method}{depth}", steps
 

@@ -213,7 +213,7 @@ Water-column queries (non-deferred, overridable, implemented in the parent):
 | Binding | Default | Use |
 |---|---|---|
 | `z_seabed(x, y)` | `-depth_base` | Bottom of the water column at `(x, y)` |
-| `in_water(observers)` | all `.true.` | Mask of the observers inside the water column |
+| `in_water(points)` | `z_seabed(x, y) <= z <= 0` | Mask of the points `(N, 3)`, observers or sources, inside the water column. It asks `z_seabed`, so a method with its own seabed only overrides `z_seabed` |
 
 The `run_*` steps never read `depth_base`: at their reference point they ask `z_top = 0` and `z_bot = z_seabed(xr, yr)`, and use `z_top = 0`, `z_bot` and `0.5 * (z_top + z_bot)` for the surface, the seabed and mid-depth. With the defaults every expression gives the same bits as the former literals.
 
@@ -230,6 +230,7 @@ The `run_*` steps never read `depth_base`: at their reference point they ask `z_
 
 Other shared procedures:
 - `compute_pressure_masked(label, observers, block_size, total_pressure)`: the wrapper every step uses. Observers closer than `mask_distance` to a source node (`check_observers_distances`) or outside the water column (`in_water`) are not computed and get NaN; one WARNING line per criterion reports how many. Without masked observers it is a plain `compute_pressure` call.
+- `check_sources_in_water()`: stops the run, naming the first offender, if a source is outside the water column (`in_water` on `sources % xyz`). The input readers only check that `z <= 0`, because the seabed belongs to the method. Every `init` must call it (§5.3).
 - `save_shared_parameters(emitter)`: writes `Method` (`solver_name`) and, if `emitter % get_enbw() > 0`, `ENBW`. Neither goes to the `.dat`.
 - `run()`: executes the enabled steps in a fixed order (spectrums, polar, decay, line, sphere, sliceXY, sliceXZ, sliceVertical, cylinder).
 - `run_sphere`: a no-op in the parent (`dummy_run_sphere`, which switches `do_sphere` off); `ImageMethod` overrides it with the free-field sphere.
@@ -292,14 +293,15 @@ The planned emitters are in §7.1.
 
 ### 5.3 An acoustic method
 1. `src/solvers/methods/X.f90`: `X_t EXTENDS(AcousticSolver_t)` with the deferred procedures (§4.2); `save_parameters` calls `save_shared_parameters`.
-2. `Config_X_t EXTENDS(Config_Method_t)` in `types/ConfigTypes.f90`.
-3. `read_X_config` in `input/InputSolver.f90`, and its `CASE` in `read_input_files` (`input/Args_parser.f90`), with its own `.nml` in `input_files/AcousticMethods/<method>.nml`.
-4. Its `CASE` in `new_solver` (`solvers/SolverFactory.f90`).
-5. Makefile: the object before `SolverFactory`.
-6. Nothing else: the `Method` dataset is written automatically.
-7. Always surface is supposed to be at z = 0
+2. Its `init` calls `CALL self % check_sources_in_water()` once the environment of the method is set (its seabed included) and before anything is saved. The compiler cannot enforce it: without that line the sources are never checked, and one below the seabed gives finite but wrong pressures.
+3. `Config_X_t EXTENDS(Config_Method_t)` in `types/ConfigTypes.f90`.
+4. `read_X_config` in `input/InputSolver.f90`, and its `CASE` in `read_input_files` (`input/Args_parser.f90`), with its own `.nml` in `input_files/AcousticMethods/<method>.nml`.
+5. Its `CASE` in `new_solver` (`solvers/SolverFactory.f90`).
+6. Makefile: the object before `SolverFactory`.
+7. Nothing else: the `Method` dataset is written automatically.
+8. Always surface is supposed to be at z = 0
 
-If the method has its own boundaries, it overrides `z_seabed` and `in_water`, not the `run_*` steps.
+If the method has its own seabed, it overrides `z_seabed` only: `in_water` and `check_sources_in_water` ask it. It never overrides the `run_*` steps.
 
 ### 5.4 A post-processing step
 1. `run_X` in `solvers/AcousticSolver_steps.f90`, its interface body and type-bound binding in `solvers/AcousticSolver.f90`, and its call in `run()`.
@@ -384,7 +386,7 @@ Decided on 2026-10-02. Section 7.1 is partly implemented.
 
 ### 7.2 Acoustic methods
 - `Config_Environment_t` will grow optional arrays: c(z), ρ(z), attenuation, bathymetry H(x, y), sediment. It keeps the base scalars, so the simple methods keep working. Each method checks in `init` that the data it needs is present.
-- The boundaries belong to each method: constants in IM and ANM, arrays in complex methods. A method publishes them by overriding `z_seabed` and `in_water`.
+- The boundaries belong to each method: constants in IM and ANM, arrays in complex methods. A method publishes the seabed by overriding `z_seabed`; `in_water` and `check_sources_in_water` follow it.
 - Overriding a whole `run_*` is the exception (precedent: IM's `run_sphere`).
 
 ### 7.3 Sphere

@@ -20,7 +20,7 @@ MODULE Args_parser
 
 USE Kinds
 USE InputPostProcessing, ONLY: read_computation_config
-USE InputEmitters, ONLY: read_turbine_config, read_farm_config, read_frequency_source_config
+USE InputEmitters, ONLY: read_turbine_config, read_farm_config, read_frequency_source_config, read_time_source_config
 USE ConfigTypes, ONLY: Config_ImageMethod_t, Config_AnalyticalNormalModes_t, Config_t
 USE InputSolver, ONLY: read_solver_config, read_environment_config, read_ImageMethod_config, &
                        read_AnalyticalNormalModes_config
@@ -106,11 +106,13 @@ SUBROUTINE read_input_files(files_path, config)
     CALL read_solver_config(solver_config_path, config)
     CALL read_environment_config(environment_config_path, config)
     
-    ! Emitter: a single turbine or a whole farm, each one with its own post-processing setup
+    ! Build paths of the simulation-type-specific .nml files, which are named after the simulation_type in Solver.nml
     computation_config_path = trim(computation_config_path) // trim(config % solver % simulation_type) // "_CS.nml"
     emitter_config_path = trim(emitter_config_path) // trim(config % solver % simulation_type) // ".nml"
     method_config_path = trim(method_config_path) // trim(config % solver % method) // ".nml"
     
+    ! Dispatch to the simulation-type-specific config reader based on which
+    ! simulation_type was selected in Solver.nml
     SELECT CASE (trim(config % solver % simulation_type))
     CASE ('WindTurbine')
         CALL read_turbine_config(emitter_config_path, config)
@@ -121,6 +123,9 @@ SUBROUTINE read_input_files(files_path, config)
 
     CASE ('FrequencySource')
         CALL read_frequency_source_config(emitter_config_path, config)
+
+    CASE ('TimeSource')
+        CALL read_time_source_config(emitter_config_path, config)
 
     CASE DEFAULT
         error stop "read_input_files(): Unknown simulation_type: " // trim(config % solver % simulation_type)

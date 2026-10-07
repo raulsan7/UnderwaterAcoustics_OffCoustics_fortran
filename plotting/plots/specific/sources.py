@@ -1,7 +1,8 @@
 """
 Module: plots/specific/sources.py
-Description: Frequency-domain point sources (emitter FrequencySource): their positions and the amplitude of the
-             force of every source at every tone, read from case["specific"] (Source_xyz, Source_Force).
+Description: Point sources (emitters FrequencySource and TimeSource): their positions and the amplitude of the
+             force of every source at every frequency, and for a TimeSource also the force series, read from
+             case["specific"] (Source_xyz, Source_Force, Source_time, Source_Force_time).
 
 Author: Raul Sanz Ramirez (raul.sanz.ramirez@upm.es / raul.sanz.ramirez@gmail.com)
 Institution: Universidad Politecnica de Madrid - ETSIAE
@@ -15,12 +16,15 @@ from plot_utils.colors import get_band_colors
 from plot_utils.saving import set_figure_name
 
 
-def plot_sources(case   : dict  = None,       # [-] Case of frequency-domain sources
-                 figsize: tuple = (12, 5)):   # [-] Figure size
+def plot_sources(case   : dict  = None,       # [-] Case of point sources
+                 figsize: tuple = (12, 5)):   # [-] Figure size (a TimeSource has a third panel: 1.5 times wider)
     """
     Plots the sources of the case: their positions in the vertical plane XZ (left; dipoles as circles,
     monopoles as squares, the surface and the seabed as dashed lines) and the amplitude of their force,
     |F| = sqrt(|Fx|^2 + |Fy|^2 + |Fz|^2), at every tone (right; one bar per source).
+    A TimeSource has its force series in time (middle; one color per source, a solid line for its first
+    component that is not zero and dashed ones for the next, the components that are always zero left out) and
+    the amplitude of its force spectrum as lines (right; the bins of the FFT, with the Hann window).
 
     Returns
     -------
@@ -28,7 +32,7 @@ def plot_sources(case   : dict  = None,       # [-] Case of frequency-domain sou
     """
 
     if case["Emitter"] != "source":
-        print("plot_sources(): no frequency-domain sources in the case, skipping")
+        print("plot_sources(): no point sources in the case, skipping")
         return None, None
 
     tag    = emitter_label(case)
@@ -42,8 +46,12 @@ def plot_sources(case   : dict  = None,       # [-] Case of frequency-domain sou
 
     n_src  = len(xyz)
     F_abs  = np.sqrt(np.sum(np.abs(force)**2, axis=2))      # [N] (Nfreqs, Nsources)
+    is_time = "Source_Force_time" in case["specific"]
 
-    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    if is_time:
+        fig, axes = plt.subplots(1, 3, figsize=(1.5 * figsize[0], figsize[1]))
+    else:
+        fig, axes = plt.subplots(1, 2, figsize=figsize)
 
     # 1. Positions (XZ plane)
     ax = axes[0]
@@ -62,19 +70,52 @@ def plot_sources(case   : dict  = None,       # [-] Case of frequency-domain sou
     ax.grid(True, ls='--', alpha=0.4)
     ax.legend(fontsize=10)
 
-    # 2. Force amplitude per source and tone (grouped bars)
-    ax    = axes[1]
-    x     = np.arange(len(Freqs))
-    width = 0.8 / n_src
-    for i in range(n_src):
-        ax.bar(x + (i - (n_src - 1) / 2) * width, F_abs[:, i], width, color=colors[i % len(colors)], label=labels[i])
-    ax.set_xticks(x)
-    ax.set_xticklabels([f"{f:g}" for f in Freqs])
-    ax.set_xlabel("Frequency [Hz]")
-    ax.set_ylabel(r"$|F|$ [N]")
-    ax.set_title(f"{tag} - Force amplitude")
-    ax.grid(True, axis='y', ls='--', alpha=0.4)
-    ax.legend(fontsize=10)
+    if is_time:
+        # 2. Force series (a color per source; the first component of a source that is not zero is a solid line,
+        #    the next ones dashed and dash-dotted)
+        ax       = axes[1]
+        time     = case["specific"]["Source_time"]            # [s] (Nt,)
+        series   = case["specific"]["Source_Force_time"]      # [N] (Nt, Nsources, 3)
+        styles   = ['-', '--', '-.']
+        n_lines  = 0
+        for i in range(n_src):
+            n_drawn = 0
+            for k, component in enumerate(("Fx", "Fy", "Fz")):
+                if np.any(series[:, i, k] != 0.0):
+                    ax.plot(time, series[:, i, k], styles[n_drawn], color=colors[i % len(colors)], lw=1.0,
+                            label=f"{labels[i]} {component}")
+                    n_drawn += 1
+                    n_lines += 1
+        ax.set_xlabel("Time [s]")
+        ax.set_ylabel("F [N]")
+        ax.set_title(f"{tag} - Force series")
+        ax.grid(True, ls='--', alpha=0.4)
+        if n_lines > 0: ax.legend(fontsize=10)
+
+        # 3. Amplitude of the force spectrum, one line per source
+        ax = axes[2]
+        for i in range(n_src):
+            ax.plot(Freqs, F_abs[:, i], color=colors[i % len(colors)], lw=1.5, label=labels[i])
+        ax.set_xlabel("Frequency [Hz]")
+        ax.set_ylabel(r"$|F|$ [N]")
+        ax.set_title(f"{tag} - Force spectrum (Hann window)")
+        ax.grid(True, ls='--', alpha=0.4)
+        ax.legend(fontsize=10)
+    else:
+        # 2. Force amplitude per source and tone (grouped bars)
+        ax    = axes[1]
+        x     = np.arange(len(Freqs))
+        width = 0.8 / n_src
+        for i in range(n_src):
+            ax.bar(x + (i - (n_src - 1) / 2) * width, F_abs[:, i], width, color=colors[i % len(colors)],
+                   label=labels[i])
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{f:g}" for f in Freqs])
+        ax.set_xlabel("Frequency [Hz]")
+        ax.set_ylabel(r"$|F|$ [N]")
+        ax.set_title(f"{tag} - Force amplitude")
+        ax.grid(True, axis='y', ls='--', alpha=0.4)
+        ax.legend(fontsize=10)
 
     fig.tight_layout()
     set_figure_name(fig, "sources")

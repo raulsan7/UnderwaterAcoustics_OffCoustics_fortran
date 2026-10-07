@@ -5,6 +5,7 @@
 ! - WindTurbine.nml for a single wind turbine (read_turbine_config)
 ! - WindFarm.nml for a wind farm (read_farm_config)
 ! - FrequencySource.nml for frequency-domain point sources (read_frequency_source_config).
+! - TimeSource.nml for time-domain point sources (read_time_source_config).
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -16,12 +17,17 @@ MODULE InputEmitters
 
 USE Kinds
 USE ConfigTypes, ONLY: Config_t
-USE InputChecks, ONLY: check_time_window, check_fits
+USE StringUtils, ONLY: to_upper
+USE ExpressionParser, ONLY: Expression_t, compile_expression
+USE InputChecks, ONLY: check_time_window, check_fits, check_source_positions
 
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: read_turbine_config, read_farm_config, read_frequency_source_config
+PUBLIC :: read_turbine_config, read_farm_config, read_frequency_source_config, read_time_source_config
+
+
+INTEGER(I32), PARAMETER :: MIN_NT = 4_I32    ! [-] Fewest samples of a time axis that compute_rfft can use
 
 
 CONTAINS
@@ -350,9 +356,8 @@ SUBROUTINE read_frequency_source_config(path, config)
     ! The values are read into buffers of fixed size (MAX_PARSE_SRC sources and
     ! MAX_PARSE_FREQ frequencies) initialised to NaN, so that a missing entry,
     ! or one given beyond Nsources or Nfreqs, stops the run instead of being
-    ! used as zero. The water depth of Environment.nml, which must therefore be
-    ! read first, bounds the depth of the sources. The result is packed into
-    ! config % freq_source, with Force of shape (Nfreqs, Nsources, 3).
+    ! used as zero. The result is packed into config % freq_source, with Force
+    ! of shape (Nfreqs, Nsources, 3).
     ! -------------------------------------------------------------------------
 
     USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_value, ieee_is_finite, IEEE_QUIET_NAN
@@ -439,24 +444,7 @@ SUBROUTINE read_frequency_source_config(path, config)
     end if
 
     ! --- 5. Source positions: given for every source, inside the water column --- !
-    if (any(ieee_is_finite(source_xyz(Nsources+1:,:)))) then
-        write(*, '(A,I0,A)') " ERROR: &frequency_source_config: source_xyz has more than Nsources = ", Nsources, " rows"
-        error stop
-    end if
-
-    do i_s = 1, Nsources
-        if (.not. all(ieee_is_finite(source_xyz(i_s, :)))) then
-            write(*, '(A,I0,A)') " ERROR: &frequency_source_config: source_xyz(", i_s, ", 1:3) is missing or not finite"
-            error stop
-        end if
-
-        if (source_xyz(i_s, 3) > 0.0_WP .or. source_xyz(i_s, 3) < -config % env % depth_base) then
-            write(*, '(A,I0,A,F0.2,A,F0.2,A)') " ERROR: &frequency_source_config: source ", i_s, " is at z = ", &
-                                               source_xyz(i_s, 3), " m, outside the water column from ", &
-                                               -config % env % depth_base, " to 0 m"
-            error stop
-        end if
-    end do
+    CALL check_source_positions(source_xyz, Nsources, 'frequency_source_config')
 
     ! --- 6. Forces: real part given for every (frequency, source), nothing beyond Nfreqs or Nsources --- !
     if (any(ieee_is_finite(force_re(Nfreqs+1:, :, :))) .or. any(ieee_is_finite(force_re(:, Nsources+1:, :))) .or. &
@@ -494,5 +482,207 @@ SUBROUTINE read_frequency_source_config(path, config)
     end associate
     
 END SUBROUTINE read_frequency_source_config
+
+
+SUBROUTINE read_time_source_config(path, config)
+    ! -------------------------------------------------------------------------
+    ! Reads TimeSource.nml: the &time_source_config block with the source
+    ! positions, the time axis (Nt samples of [t_start, t_end), or the times of
+    ! a file), the force of every source and component (a text expression of t,
+    ! default '0', or a file with Nt rows and 3 * Nsources columns) and the
+    ! frequencies kept after the FFT (skipf, fmin, fmax). The values are read
+    ! into buffers of fixed size initialised to NaN, so that a position that is
+    ! missing, or given beyond Nsources, stops the run. Every expression is
+    ! compiled here to report a syntax error before any work is done; the
+    ! series themselves are built by TimeSource % init. The result is packed
+    ! into config % time_source.
+    ! -------------------------------------------------------------------------
+
+    USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_value, ieee_is_finite, IEEE_QUIET_NAN
+
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to TimeSource.nml
+    TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
+
+    ! Local variables
+    INTEGER(I32)                  :: unit_num, ierr, i_s, k
+    CHARACTER(len=200)            :: iomsg
+    CHARACTER(len=:), ALLOCATABLE :: message
+    CHARACTER(len=2)              :: component(3) = ['Fx', 'Fy', 'Fz']
+    LOGICAL                       :: file_exists
+    REAL(WP)                      :: nan
+    TYPE(Expression_t)            :: expr
+
+    ! Input variables
+    INTEGER(I32)        :: Nsources
+    INTEGER(I32)        :: Nt
+    INTEGER(I32)        :: skipf
+    REAL(WP)            :: source_xyz(MAX_PARSE_SRC, 3)
+    REAL(WP)            :: t_start
+    REAL(WP)            :: t_end
+    REAL(WP)            :: fmin
+    REAL(WP)            :: fmax
+    CHARACTER(len=1024) :: time_file
+    CHARACTER(len=1024) :: force_file
+    CHARACTER(len=256)  :: force_expr(MAX_PARSE_SRC, 3)
+
+    ! --- 1. Configuration namelist --- !
+    NAMELIST /time_source_config/ &
+        Nsources,                 &
+        source_xyz,               &
+        time_file,                &
+        t_start,                  &
+        t_end,                    &
+        Nt,                       &
+        force_file,               &
+        force_expr,               &
+        skipf,                    &
+        fmin,                     &
+        fmax
+
+
+    ! --- 2. Defaults: NaN marks a position that was not given --- !
+    nan = ieee_value(0.0_WP, IEEE_QUIET_NAN)
+
+    Nsources   = DEFAULT_I
+    source_xyz = nan
+    time_file  = 'None'
+    t_start    = DEFAULT_R
+    t_end      = DEFAULT_R
+    Nt         = DEFAULT_I
+    force_file = 'None'
+    force_expr = '0'
+    skipf      = 1_I32
+    fmin       = DEFAULT_R
+    fmax       = DEFAULT_R
+
+    ! --- 3. Open and read namelist file --- !
+    open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
+    if (ierr /= 0_I32) then
+        write(*,*) "ERROR: Could not open input file: ", path
+        error stop
+    end if
+
+    rewind(unit_num)
+    read(unit_num, nml=time_source_config, iostat=ierr, iomsg=iomsg)
+    if (ierr /= 0_I32) then
+        write(*,*) "ERROR: Failed to read &time_source_config: ", trim(iomsg)
+        close(unit_num)
+        error stop
+    end if
+
+    close(unit_num)
+
+    ! --- 4. Sources: count and positions --- !
+    if (Nsources < 1_I32 .or. Nsources > MAX_PARSE_SRC) then
+        write(*, '(A,I0,A,I0,A)') " ERROR: &time_source_config: Nsources = ", Nsources, &
+                                  " is out of bounds [1, ", MAX_PARSE_SRC, "]"
+        error stop
+    end if
+
+    CALL check_source_positions(source_xyz, Nsources, 'time_source_config')
+
+    ! --- 5. Time axis: a uniform one, or the times of a file --- !
+    CALL check_fits(time_file, config % time_source % time_file, 'time_file')
+    config % time_source % time_from_file = to_upper(trim(time_file)) /= 'NONE'
+
+    if (config % time_source % time_from_file) then
+        inquire(file=trim(time_file), exist=file_exists)
+        if (.not. file_exists) then
+            write(*,*) "ERROR: &time_source_config: time_file not found: ", trim(time_file)
+            error stop
+        end if
+
+        if (t_start /= DEFAULT_R .or. t_end /= DEFAULT_R .or. Nt /= DEFAULT_I) &
+            write(*,*) " WARNING &time_source_config: t_start, t_end and Nt are ignored because time_file is given"
+    else
+        if (.not. (ieee_is_finite(t_start) .and. ieee_is_finite(t_end)) .or. &
+            t_start == DEFAULT_R .or. t_end == DEFAULT_R) then
+            write(*,*) " ERROR: &time_source_config: t_start and t_end are needed when time_file is 'None'"
+            error stop
+        end if
+
+        if (.not. (t_end > t_start)) then
+            write(*, '(A,ES12.5,A,ES12.5)') " ERROR: &time_source_config: t_end must be greater than t_start: ", &
+                                            t_end, " <= ", t_start
+            error stop
+        end if
+
+        if (Nt < MIN_NT) then
+            write(*, '(A,I0,A,I0,A)') " ERROR: &time_source_config: Nt = ", Nt, " (at least ", MIN_NT, &
+                                      " samples are required)"
+            error stop
+        end if
+    end if
+
+    ! --- 6. Forces: expressions of t, or the columns of a file --- !
+    CALL check_fits(force_file, config % time_source % force_file, 'force_file')
+    config % time_source % force_from_file = to_upper(trim(force_file)) /= 'NONE'
+
+    if (any(force_expr(Nsources+1:, :) /= '0')) then
+        write(*, '(A,I0,A)') " ERROR: &time_source_config: force_expr has entries beyond Nsources = ", Nsources, " rows"
+        error stop
+    end if
+
+    if (config % time_source % force_from_file) then
+        inquire(file=trim(force_file), exist=file_exists)
+        if (.not. file_exists) then
+            write(*,*) "ERROR: &time_source_config: force_file not found: ", trim(force_file)
+            error stop
+        end if
+
+        if (any(force_expr(1:Nsources, :) /= '0')) &
+            write(*,*) " WARNING &time_source_config: force_expr is ignored because force_file is given"
+    else
+        do i_s = 1, Nsources
+            do k = 1, 3
+                CALL compile_expression(force_expr(i_s, k), expr, message)
+                if (len(message) > 0) then
+                    write(*, '(A,I0,A)') " ERROR: &time_source_config: force_expr(", i_s, ", " // component(k) // &
+                                         "): " // message
+                    error stop
+                end if
+            end do
+        end do
+
+        if (all(force_expr(1:Nsources, :) == '0')) &
+            write(*,*) " WARNING &time_source_config: every force_expr is '0', the sources do not radiate"
+    end if
+
+    ! --- 7. Frequencies kept after the FFT --- !
+    if (skipf < 1_I32) then
+        write(*, '(A,I0,A)') " ERROR: &time_source_config: skipf = ", skipf, " (it must be at least 1)"
+        error stop
+    end if
+
+    if ((fmin /= DEFAULT_R .and. .not. fmin >= 0.0_WP) .or. (fmax /= DEFAULT_R .and. .not. fmax > 0.0_WP)) then
+        write(*, '(A,ES12.5,A,ES12.5,A)') " ERROR: &time_source_config: fmin = ", fmin, " and fmax = ", fmax, &
+                                          " (they must be positive, or -999.0 for all)"
+        error stop
+    end if
+
+    if (fmin /= DEFAULT_R .and. fmax /= DEFAULT_R .and. .not. fmax > fmin) then
+        write(*, '(A,ES12.5,A,ES12.5)') " ERROR: &time_source_config: fmax must be greater than fmin: ", &
+                                        fmax, " <= ", fmin
+        error stop
+    end if
+
+    ! --- 8. Pack values into Config_t --- !
+    associate(ts => config % time_source)
+        ts % Nsources = Nsources
+        ts % time_file  = trim(time_file)
+        ts % t_start  = t_start
+        ts % t_end    = t_end
+        ts % Nt       = Nt
+        ts % force_file = trim(force_file)
+        ts % skipf    = skipf
+        ts % fmin     = fmin
+        ts % fmax     = fmax
+
+        ALLOCATE(ts % source_xyz(Nsources, 3), ts % force_expr(Nsources, 3))
+        ts % source_xyz = source_xyz(1:Nsources, :)
+        ts % force_expr = force_expr(1:Nsources, :)
+    end associate
+
+END SUBROUTINE read_time_source_config
 
 END MODULE InputEmitters

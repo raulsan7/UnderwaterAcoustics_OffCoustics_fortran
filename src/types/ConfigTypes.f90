@@ -88,6 +88,32 @@ TYPE :: Config_FrequencySource_t
 END TYPE Config_FrequencySource_t
 
 
+TYPE :: Config_TimeSource_t
+    ! -------------------------------------------------------------------------
+    ! Holds the time-domain point sources read from TimeSource.nml: their
+    ! positions, the time axis (a uniform axis or a file), the force of every
+    ! source and component (a text expression of t, or a file) and the
+    ! frequencies that are kept after the FFT.
+    ! -------------------------------------------------------------------------
+
+    ! --- Input parameters --- !
+    INTEGER(I32)                    :: Nsources           ! [-] Number of sources
+    REAL(WP)          , ALLOCATABLE :: source_xyz(:,:)    ! [m] Source coordinates (Nsources, 3)
+    LOGICAL                         :: time_from_file     ! [-] Whether the time axis is read from time_file
+    CHARACTER(len=200)              :: time_file          ! [-] File with one time per row
+    REAL(WP)                        :: t_start            ! [s] First time of the uniform axis
+    REAL(WP)                        :: t_end              ! [s] End of the uniform axis (not included)
+    INTEGER(I32)                    :: Nt                 ! [-] Number of samples of the uniform axis
+    LOGICAL                         :: force_from_file    ! [-] Whether the forces are read from force_file
+    CHARACTER(len=200)              :: force_file         ! [-] File with Nt rows and 3 * Nsources columns
+    CHARACTER(len=256), ALLOCATABLE :: force_expr(:,:)    ! [-] Force as a text expression of t (Nsources, 3)
+    INTEGER(I32)                    :: skipf              ! [-] Keep 1 out of every skipf frequency bins
+    REAL(WP)                        :: fmin               ! [Hz] Lowest frequency kept (DEFAULT_R: all)
+    REAL(WP)                        :: fmax               ! [Hz] Highest frequency kept (DEFAULT_R: Nyquist)
+
+END TYPE Config_TimeSource_t
+
+
 TYPE :: Config_Environment_t
     ! -------------------------------------------------------------------------
     ! Holds the base environmental/fluid properties read from the input namelist
@@ -365,6 +391,7 @@ TYPE :: Config_t
     TYPE(Config_Solver_t)                   :: solver           ! [-] Acoustic solver configuration
     TYPE(Config_Computation_t)              :: run_inputs       ! [-] Per-run_* post-processing step configuration
     TYPE(Config_FrequencySource_t)          :: freq_source      ! [-] Frequency-domain source configuration
+    TYPE(Config_TimeSource_t)               :: time_source      ! [-] Time-domain source configuration
     CLASS(Config_Method_t)    , ALLOCATABLE :: method           ! [-] Polymorphic, solver-method-specific configuration
 
 END TYPE Config_t

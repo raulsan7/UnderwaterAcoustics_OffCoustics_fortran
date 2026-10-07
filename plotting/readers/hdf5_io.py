@@ -12,7 +12,7 @@ import numpy as np
 from pathlib import Path
 
 # Value of the "Emitter" dataset -> emitter type of the plotting package
-EMITTERS = {"FrequencySource": "source"}
+EMITTERS = {"FrequencySource": "source", "TimeSource": "source"}
 
 # Entry script of every emitter type, for the messages of a file given to the wrong script
 SCRIPTS = {"turbine": "plotting/turbine.py",
@@ -169,7 +169,7 @@ def wrong_emitter(path   : Path = None,     # [-] Path of the file
     error : ValueError
     """
 
-    names  = {"turbine": "a single-turbine file", "farm": "a wind farm file", "source": "a FrequencySource file"}
+    names  = {"turbine": "a single-turbine file", "farm": "a wind farm file", "source": "a point-source file (FrequencySource or TimeSource)"}
     what   = names.get(emitter, f"a file of emitter '{emitter}'")
     script = SCRIPTS.get(emitter)
     hint   = f", plot it with {script}" if script else ", no plotting script reads it yet"

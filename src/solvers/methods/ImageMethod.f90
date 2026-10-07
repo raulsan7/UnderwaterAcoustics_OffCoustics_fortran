@@ -147,6 +147,9 @@ SUBROUTINE init_ImageMethod(self, sources, config)
     if (self % env % depth_base <= 0.0_WP) error stop "ImageMethod % init(): depth_base must be strictly positive"
     self % Lower_HBC = - self % env % depth_base
 
+    ! Sources inside the water column (the seabed is known from here on)
+    CALL self % check_sources_in_water()
+
     ! Build save_path
     CALL self % build_save_path()
 
