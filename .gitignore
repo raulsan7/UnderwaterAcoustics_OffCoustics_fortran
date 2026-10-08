@@ -17,6 +17,7 @@ refactor*
 cases_farm*
 NEXT_STEPS.md
 docs/
+.vscode/
 
 # 2. Permite explorar dentro de las carpetas (necesario para que
 #    Git entre en subdirectorios y aplique las reglas siguientes)
