@@ -2,9 +2,10 @@
 ! MODULE: ConfigTypes
 ! ===============================================================================
 ! Defines the configuration types filled in from the input namelist files:
-! turbine, wind farm, environment, solver, the per-method solver settings
-! (Config_Method_t and its extensions), the per-step post-processing
-! settings, and the top-level Config_t that aggregates all of them.
+! turbine, wind farm, frequency-domain and time-domain point sources,
+! environment, solver, the per-method solver settings (Config_Method_t and
+! its extensions), the per-step post-processing settings, and the top-level
+! Config_t that aggregates all of them.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -75,15 +76,31 @@ END TYPE Config_WindFarm_t
 TYPE :: Config_FrequencySource_t
     ! -------------------------------------------------------------------------
     ! Holds the frequency-domain point sources read from FrequencySource.nml:
-    ! their positions and the complex force of every source at every frequency.
+    ! their positions (written in the namelist or read from a file), the way
+    ! the frequency axis is given (a list, a grid or a file) and the way the
+    ! complex forces are given (written in the namelist, text expressions of f
+    ! or files). The axis and the forces of the grid, file and expression
+    ! modes are built by FrequencySource % init.
     ! -------------------------------------------------------------------------
 
     ! --- Input parameters --- !
-    INTEGER(I32)             :: Nsources         ! [-] Number of sources
-    INTEGER(I32)             :: Nfreqs           ! [-] Number of frequencies
-    REAL(WP)   , ALLOCATABLE :: Freqs(:)         ! [Hz] Frequency vector (Nfreqs)
-    REAL(WP)   , ALLOCATABLE :: source_xyz(:,:)  ! [m] Source coordinates (Nsources, 3)
-    COMPLEX(WP), ALLOCATABLE :: Force(:,:,:)     ! [N] Complex force on the fluid (Nfreqs, Nsources, 3)
+    INTEGER(I32)                    :: Nsources              ! [-] Number of sources
+    INTEGER(I32)                    :: Nfreqs                ! [-] Number of frequencies (DEFAULT_I: rows of freq_file)
+    REAL(WP)          , ALLOCATABLE :: Freqs(:)              ! [Hz] Frequency vector of the list mode (Nfreqs)
+    REAL(WP)          , ALLOCATABLE :: source_xyz(:,:)       ! [m] Source coordinates (Nsources, 3)
+    COMPLEX(WP)       , ALLOCATABLE :: Force(:,:,:)          ! [N] Complex force written inline (Nfreqs, Nsources, 3)
+    LOGICAL                         :: source_from_file      ! [-] Whether the positions are read from source_file
+    CHARACTER(len=200)              :: source_file           ! [-] File with one row x, y, z per source
+    CHARACTER(len=10)               :: freq_mode             ! [-] Frequency axis: 'list', 'grid' or 'file'
+    REAL(WP)                        :: fmin                  ! [Hz] First frequency of the grid
+    REAL(WP)                        :: fmax                  ! [Hz] Last frequency of the grid
+    CHARACTER(len=10)               :: freq_spacing          ! [-] Spacing of the grid: 'linear' or 'log'
+    CHARACTER(len=200)              :: freq_file             ! [-] File with one frequency per row
+    CHARACTER(len=10)               :: force_mode            ! [-] Forces: 'inline', 'expression' or 'file'
+    CHARACTER(len=256), ALLOCATABLE :: force_re_expr(:,:)    ! [-] Real part as an expression of f (Nsources, 3)
+    CHARACTER(len=256), ALLOCATABLE :: force_im_expr(:,:)    ! [-] Imaginary part as an expression of f (Nsources, 3)
+    CHARACTER(len=200)              :: force_re_file         ! [-] Real part: Nfreqs rows and 3 * Nsources columns
+    CHARACTER(len=200)              :: force_im_file         ! [-] Imaginary part, same layout ('None': 0)
 
 END TYPE Config_FrequencySource_t
 
@@ -91,14 +108,17 @@ END TYPE Config_FrequencySource_t
 TYPE :: Config_TimeSource_t
     ! -------------------------------------------------------------------------
     ! Holds the time-domain point sources read from TimeSource.nml: their
-    ! positions, the time axis (a uniform axis or a file), the force of every
-    ! source and component (a text expression of t, or a file) and the
-    ! frequencies that are kept after the FFT.
+    ! positions (written in the namelist or read from a file), the time axis
+    ! (a uniform axis or a file), the force of every source and component (a
+    ! text expression of t, or a file) and the frequencies that are kept after
+    ! the FFT.
     ! -------------------------------------------------------------------------
 
     ! --- Input parameters --- !
     INTEGER(I32)                    :: Nsources           ! [-] Number of sources
     REAL(WP)          , ALLOCATABLE :: source_xyz(:,:)    ! [m] Source coordinates (Nsources, 3)
+    LOGICAL                         :: source_from_file   ! [-] Whether the positions are read from source_file
+    CHARACTER(len=200)              :: source_file        ! [-] File with one row x, y, z per source
     LOGICAL                         :: time_from_file     ! [-] Whether the time axis is read from time_file
     CHARACTER(len=200)              :: time_file          ! [-] File with one time per row
     REAL(WP)                        :: t_start            ! [s] First time of the uniform axis
@@ -106,7 +126,7 @@ TYPE :: Config_TimeSource_t
     INTEGER(I32)                    :: Nt                 ! [-] Number of samples of the uniform axis
     LOGICAL                         :: force_from_file    ! [-] Whether the forces are read from force_file
     CHARACTER(len=200)              :: force_file         ! [-] File with Nt rows and 3 * Nsources columns
-    CHARACTER(len=256), ALLOCATABLE :: force_expr(:,:)    ! [-] Force as a text expression of t (Nsources, 3)
+    CHARACTER(len=256), ALLOCATABLE :: force_expr(:,:)    ! [-] Force as an expression of t (Nsources or 0 rows, 3)
     INTEGER(I32)                    :: skipf              ! [-] Keep 1 out of every skipf frequency bins
     REAL(WP)                        :: fmin               ! [Hz] Lowest frequency kept (DEFAULT_R: all)
     REAL(WP)                        :: fmax               ! [Hz] Highest frequency kept (DEFAULT_R: Nyquist)
@@ -146,7 +166,7 @@ TYPE :: Config_Solver_t
     CHARACTER(len=200) :: save_path         ! [-] Where to save results
     CHARACTER(len=100) :: extra_label       ! [-] Label appended to the output file name ('None' or '': none)
     CHARACTER(len=50)  :: method            ! [-] Acoustic method to use
-    CHARACTER(len=20)  :: simulation_type   ! [-] WindTurbine, WindFarm or FrequencySource
+    CHARACTER(len=20)  :: simulation_type   ! [-] WindTurbine, WindFarm, FrequencySource or TimeSource
     INTEGER(I32)       :: block_size        ! [-] Block size for each CPU in parallel computations
     REAL(WP)           :: mask_distance     ! [m] Observers closer than this to a source node get NaN (0: none)
 
@@ -166,10 +186,11 @@ END TYPE Config_Method_t
 
 TYPE, EXTENDS(Config_Method_t) :: Config_ImageMethod_t
     ! -------------------------------------------------------------------------
-    ! Method-of-Images solver configuration, read from the ImagesMethod.nml
-    ! namelist. Sets how many image sources are used to enforce the boundary
-    ! conditions at the free surface and the seabed, the boundary types, 
-    ! and the per-boundary reflection attenuation coefficients.
+    ! Method-of-Images solver configuration, read from the &ImagesMethod_config
+    ! group of AcousticMethods/ImageMethod.nml. Sets how many image sources
+    ! are used to enforce the boundary conditions at the free surface and the
+    ! seabed, the boundary types, and the per-boundary reflection attenuation
+    ! coefficients.
     ! -------------------------------------------------------------------------
 
     INTEGER(I32) :: N_images               ! [-] Number of image source levels used to enforce boundary conditions
@@ -184,8 +205,8 @@ END TYPE Config_ImageMethod_t
 
 TYPE, EXTENDS(Config_Method_t) :: Config_AnalyticalNormalModes_t
     ! -------------------------------------------------------------------------
-    ! Analytical Normal Modes solver configuration, read from the
-    ! AnalyticalNormalModes.nml namelist. Sets how many normal modes are
+    ! Analytical Normal Modes solver configuration, read from
+    ! AcousticMethods/AnalyticalNormalModes.nml. Sets how many normal modes are
     ! retained in the modal expansion and the singularity tolerance.
     ! -------------------------------------------------------------------------
 
@@ -199,9 +220,10 @@ TYPE :: Config_DoRun_t
     ! -------------------------------------------------------------------------
     ! Which post-processing steps run() executes. do_all is a master switch
     ! resolved by the parser: when .true. every step that makes sense for the
-    ! emitter (turbine or farm) is switched on; when .false., only the steps
-    ! whose own do_<name> is .true. run. Steps without meaning for a wind farm
-    ! (sphere, decay) are always switched off by the parser in farm mode.
+    ! emitter (turbine, farm or point sources) is switched on; when .false.,
+    ! only the steps whose own do_<name> is .true. run. Steps without meaning
+    ! for a wind farm (sphere, decay) are always switched off by the parser in
+    ! farm mode.
     ! -------------------------------------------------------------------------
 
     LOGICAL :: do_all              ! [-] Master switch: run every step valid for the emitter
@@ -343,14 +365,14 @@ END TYPE Config_SliceVertical_t
 TYPE :: Config_Sphere_t
     ! -------------------------------------------------------------------------
     ! Configuration for run_sphere(): free-field pressure on a spherical
-    ! surface of observers around the turbine (auto-enlarged if too small to
-    ! enclose every turbine node).
+    ! surface of observers around the sources (automatic radius: the distance
+    ! to the farthest source plus 3/k at f_farfield_sphere).
     ! -------------------------------------------------------------------------
 
     REAL(WP)     :: r_sphere            ! [m] Sphere radius
     INTEGER(I32) :: n_theta_sphere      ! [-] Number of azimuthal observer points
     INTEGER(I32) :: nz_sphere           ! [-] Number of vertical observer levels
-    REAL(WP)     :: f_farfield_sphere   ! [-] Frequency from which all f> f_farfield are considered to be in far-field
+    REAL(WP)     :: f_farfield_sphere   ! [Hz] Frequency from which all f> f_farfield are considered to be in far-field
     REAL(WP)     :: center_sphere(3)    ! [m] Sphere centre (x, y, z)
 
 END TYPE Config_Sphere_t
@@ -359,8 +381,8 @@ END TYPE Config_Sphere_t
 TYPE :: Config_Computation_t
     ! -------------------------------------------------------------------------
     ! Aggregates the per-step configuration for every run_* post-processing
-    ! routine that run() can execute, read from ComputationSetupTurbine.nml
-    ! (single turbine) or ComputationSetupFarm.nml (wind farm).
+    ! routine that run() can execute, read from
+    ! ComputationSetups/<simulation_type>_CS.nml.
     ! -------------------------------------------------------------------------
 
     TYPE(Config_DoRun_t)         :: do_run                  ! [-] Which steps to run

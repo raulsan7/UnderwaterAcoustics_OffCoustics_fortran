@@ -77,9 +77,10 @@ SUBROUTINE read_input_files(files_path, config)
     ! -------------------------------------------------------------------------
     ! Top-level entry point of the input-parsing stage. Builds the paths of
     ! the .nml files from files_path, reads the solver and environment
-    ! namelists, the turbine or wind farm namelists and their
-    ! post-processing setup, then dispatches to the method-specific config
-    ! reader based on the selected acoustic solver (config % solver % method).
+    ! namelists, the emitter namelist (Emitters/<simulation_type>.nml) and its
+    ! post-processing setup (ComputationSetups/<simulation_type>_CS.nml),
+    ! then dispatches to the method-specific config reader based on the
+    ! selected acoustic solver (AcousticMethods/<method>.nml).
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN)               :: files_path    ! [-] Directory of the .nml files (with trailing '/')
@@ -95,7 +96,7 @@ SUBROUTINE read_input_files(files_path, config)
 
     ALLOCATE(Config_t :: config)
 
-    
+
     ! Set paths of the .nml files (Hardcoded names, but the directory is given by the command-line argument)
     solver_config_path      = files_path // "Solver.nml"
     environment_config_path = files_path // "Environment.nml"
@@ -105,12 +106,12 @@ SUBROUTINE read_input_files(files_path, config)
 
     CALL read_solver_config(solver_config_path, config)
     CALL read_environment_config(environment_config_path, config)
-    
+
     ! Build paths of the simulation-type-specific .nml files, which are named after the simulation_type in Solver.nml
     computation_config_path = trim(computation_config_path) // trim(config % solver % simulation_type) // "_CS.nml"
     emitter_config_path = trim(emitter_config_path) // trim(config % solver % simulation_type) // ".nml"
     method_config_path = trim(method_config_path) // trim(config % solver % method) // ".nml"
-    
+
     ! Dispatch to the simulation-type-specific config reader based on which
     ! simulation_type was selected in Solver.nml
     SELECT CASE (trim(config % solver % simulation_type))

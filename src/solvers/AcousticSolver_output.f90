@@ -212,7 +212,7 @@ SUBROUTINE read_header_lines(path, lines)
             if (ios /= 0_I32) exit
             if (trim(line) == 'POST-PROCESSING STEPS EXECUTED') exit
             if (index(line, 'Block size') == 1 .or. index(line, 'In cluster') == 1) cycle
-            buffer = [buffer, line]
+            buffer = [CHARACTER(len=256) :: buffer, line]
         end do
         close(u)
     end if

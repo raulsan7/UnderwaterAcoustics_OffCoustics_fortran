@@ -48,8 +48,10 @@ TYPE, EXTENDS(ManualSources_t) :: TimeSource_t
     REAL(WP)                        :: fmax               ! [Hz] Highest frequency kept (DEFAULT_R: Nyquist)
     REAL(WP)          , ALLOCATABLE :: time(:)            ! [s] Time axis (Nt)
     REAL(WP)          , ALLOCATABLE :: Ft(:,:,:)          ! [N] Force series (Nt, Nsources, 3)
+    LOGICAL                         :: source_from_file   ! [-] Whether the positions were read from source_file
     LOGICAL                         :: time_from_file     ! [-] Whether the time axis was read from time_file
     LOGICAL                         :: force_from_file    ! [-] Whether the forces were read from force_file
+    CHARACTER(len=200)              :: source_file        ! [-] File of the positions
     CHARACTER(len=200)              :: time_file          ! [-] File of the time axis
     CHARACTER(len=200)              :: force_file         ! [-] File of the forces
     CHARACTER(len=256), ALLOCATABLE :: force_expr(:,:)    ! [-] Text expressions of the forces (Nsources, 3)
@@ -85,16 +87,18 @@ SUBROUTINE init_TimeSource(self, config)
     self % kind_name = 'TimeSource'
     self % title     = 'TIME-DOMAIN SOURCES'
 
-    self % Nsources        = config % time_source % Nsources
-    self % xyz             = config % time_source % source_xyz
-    self % skipf           = config % time_source % skipf
-    self % fmin            = config % time_source % fmin
-    self % fmax            = config % time_source % fmax
-    self % time_from_file  = config % time_source % time_from_file
-    self % force_from_file = config % time_source % force_from_file
-    self % time_file       = config % time_source % time_file
-    self % force_file      = config % time_source % force_file
-    self % force_expr      = config % time_source % force_expr
+    self % Nsources         = config % time_source % Nsources
+    self % xyz              = config % time_source % source_xyz
+    self % skipf            = config % time_source % skipf
+    self % fmin             = config % time_source % fmin
+    self % fmax             = config % time_source % fmax
+    self % source_from_file = config % time_source % source_from_file
+    self % source_file      = config % time_source % source_file
+    self % time_from_file   = config % time_source % time_from_file
+    self % force_from_file  = config % time_source % force_from_file
+    self % time_file        = config % time_source % time_file
+    self % force_file       = config % time_source % force_file
+    self % force_expr       = config % time_source % force_expr
 
     ! Every source radiates as a point dipole
     ALLOCATE(self % order(self % Nsources), source=SOURCE_DIPOLE)
@@ -306,8 +310,9 @@ END SUBROUTINE save_params_TimeSource
 SUBROUTINE write_txt_TimeSource(self, unit)
     ! -------------------------------------------------------------------------
     ! Writes the sources block of the .dat summary: the title and positions of
-    ! ManualSources_t, the time axis, the frequencies kept and the origin of the
-    ! forces (their expressions, or the file). A series is too long to be
+    ! ManualSources_t, the file of the positions if they were read from one,
+    ! the time axis, the frequencies kept and the origin of the forces (their
+    ! expressions, or the file). A series is too long to be
     ! listed, so for every force it writes the sum of its values, of their
     ! squares and of the values weighted by the sample index: any change in the
     ! series changes them, and check_update sees it.
@@ -323,6 +328,11 @@ SUBROUTINE write_txt_TimeSource(self, unit)
 
 
     CALL self % write_txt_base(unit)
+
+    if (self % source_from_file) then
+        write(unit, '(A)') 'Source file : ' // trim(self % source_file)
+        write(unit, *)
+    end if
 
     write(unit, '(A)') 'Time axis'
     write(unit, '(A,I0)')      'N samples   : ', self % Nt

@@ -1,12 +1,13 @@
 ! ===============================================================================
 ! PROGRAM: main
 ! ===============================================================================
-! Entry point of the off_coustics_fortran application. Orchestrates the full
+! Entry point of the off_coustics application. Orchestrates the full
 ! simulation pipeline: load the .nml configuration, build the emitter (a single
-! wind turbine, a whole wind farm or a few frequency-domain point sources) and
-! solve its structural dynamics when it has any, translate the physical forces
-! into acoustic point-dipole sources, then instantiate and run the requested
-! acoustic propagation solver over all post-processing outputs.
+! wind turbine, a whole wind farm, or point sources with forces given in the
+! frequency or in the time domain) and solve its structural dynamics when it
+! has any, translate the physical forces into acoustic point-dipole sources,
+! then instantiate and run the requested acoustic propagation solver over all
+! post-processing outputs.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -84,7 +85,7 @@ CHARACTER(len=8) :: tag
 
         ! --- 3. Solve the structural dynamics of every turbine, one after another --- !
         write(*,*) ">> Processing the dynamics and structural forces of every turbine..."
-        CALL active_farm % compute_forces(config=config % farm, verbose=.true.)     ! COntains read_input()
+        CALL active_farm % compute_forces(config=config % farm, verbose=.true.)     ! Contains read_input()
 
         ! --- 4. Merge every turbine into a single set of acoustic sources --- !
         write(*,*) ">> Merging every turbine into a single set of acoustic sources..."
@@ -95,8 +96,8 @@ CHARACTER(len=8) :: tag
         ! --- 2. FrequencySource instance: a single emitter with user-defined sources --- !
         ALLOCATE(active_freq_source)
         write(*,*) ">> Instantiating FrequencySource..."
-        
-        ! --- 3. Nothing to solve: copy the forces given in FrequencySource.nml --- !
+
+        ! --- 3. Nothing to solve: build the frequencies and forces of FrequencySource.nml --- !
         CALL active_freq_source % init(config)
 
         ! --- 4. Translate the forces to mathematical acoustic sources --- !
@@ -119,14 +120,14 @@ CHARACTER(len=8) :: tag
 
     CASE DEFAULT
         error stop "main: no emitter is built for simulation_type " // trim(config % solver % simulation_type)
-    
+
     END SELECT
 
     ! --- 5. Execute generic solver --- !
     CALL new_solver(trim(config % solver % method), active_solver)
     write(*,*) ">> Launching acoustic propagation solver: ", trim(config % solver % method)
 
-    ! --- 6. Set acoustic solver (init frees config) --- !
+    ! --- 6. Set the acoustic solver (init frees config) and save the parameters of the case --- !
     CALL active_solver % init(active_sources, config)
     CALL active_solver % save_parameters(active_emitter)
 

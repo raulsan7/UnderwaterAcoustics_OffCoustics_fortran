@@ -3,8 +3,9 @@
 ! ===============================================================================
 ! Defines the readers of the solver namelists: Solver.nml
 ! (read_solver_config), Environment.nml (read_environment_config), and the
-! method-specific ImagesMethod.nml (read_ImageMethod_config) and
-! AnalyticalNormalModes.nml (read_AnalyticalNormalModes_config).
+! method-specific AcousticMethods/ImageMethod.nml (read_ImageMethod_config)
+! and AcousticMethods/AnalyticalNormalModes.nml
+! (read_AnalyticalNormalModes_config).
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -192,14 +193,14 @@ END SUBROUTINE read_environment_config
 
 SUBROUTINE read_ImageMethod_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads the "ImagesMethod_config" namelist from ImagesMethod.nml (number
-    ! of images, surface/bottom boundary condition types and heights,
+    ! Reads the "ImagesMethod_config" namelist from ImageMethod.nml (number
+    ! of images, surface/bottom boundary condition types,
     ! attenuation coefficients, epsilon) and packs the values into the
     ! Config_ImageMethod_t instance held by config % method. Only called when
     ! the Image Method solver was selected in Solver.nml.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ImagesMethod.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ImageMethod.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
@@ -267,7 +268,7 @@ SUBROUTINE read_AnalyticalNormalModes_config(path, config)
     ! -------------------------------------------------------------------------
     ! Reads the "AnalyticalNormalModes_config" namelist from
     ! AnalyticalNormalModes.nml (number of retained modes, upper/lower
-    ! waveguide boundary heights, epsilon) and packs the values into the
+    ! epsilon) and packs the values into the
     ! Config_AnalyticalNormalModes_t instance held by config % method. Only
     ! called when the Analytical Normal Modes solver was selected in Solver.nml.
     ! -------------------------------------------------------------------------

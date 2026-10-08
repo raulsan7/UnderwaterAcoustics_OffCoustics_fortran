@@ -95,7 +95,7 @@ SUBROUTINE compute_force_DTU10MWMonopile(self, config, verbose)
     ! Computes the nodal structural forces from OpenFAST accelerations: removes
     ! duplicate/dry (above-water) nodes, computes the real FFT of the wet-node
     ! accelerations, and multiplies by the effective (dry + added) mass to get
-    ! F = -m*a in the frequency domain. Optionally keeps only the frequencies
+    ! F = m*a in the frequency domain. Optionally keeps only the frequencies
     ! relevant to the drivetrain excitation.
     ! -------------------------------------------------------------------------
 

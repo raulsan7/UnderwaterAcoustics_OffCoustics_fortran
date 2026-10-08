@@ -2,7 +2,7 @@
 ! Post-processing configuration file (wind farm)
 ! =====================================================================
 ! Configures every observer-geometry post-processing step that run()
-! can execute for a wind farm (simulation_type = 'farm' in Solver.nml).
+! can execute for a wind farm (simulation_type = 'WindFarm' in Solver.nml).
 ! Sphere and decay have no meaning for a farm (no single turbine to
 ! enclose or to follow downstream) and are always skipped, even with
 ! do_all = .true.; use run_line with explicit end points instead of decay.
@@ -23,7 +23,7 @@
 !   turbine 1 at (0, 0), turbine 2 at (1000, 0), depth 30 m,
 !   farm centroid (500, 0), wind along +x (WindDir = 0).
 ! Points, circles, lines and the XY/XZ slices stay tens of metres away
-! from both turbine axes. Observers closer than 5 m to any source node
+! from both turbine axes. Observers closer than mask_distance (Solver.nml) to any source node
 ! (inside the structure) are never computed: their pressure is saved as
 ! NaN, so vertical slices through the turbines show a hole there.
 ! Revise the values if the layout changes.
@@ -130,7 +130,7 @@
     nx_xz = 61                      ! [-] Number of observer points along x (dx = 50 m)
     nz_xz = 16                      ! [-] Number of observer points along z (dz = 2 m)
     xlim_xz = -1000.0, 2000.0       ! [m] Slice extent along x (min, max)
-    zlim_xz = 0.0, -999.0           ! [m] Slice extent along z (min, max); max = -999.0 = auto: -Depth
+    zlim_xz = 0.0, -999.0           ! [m] Slice extent along z, from zlim_xz(1) to zlim_xz(2); -999.0 = auto: 0 (first), -Depth (second)
 /
 
 
@@ -143,7 +143,7 @@
 ! with the span axis along +x, i.e. the vertical plane through the
 ! turbine row. The automatic width covers both turbines; margin_sv =
 ! 500 m extends it 500 m beyond each one: x from -500 to 1500 m.
-! The plane crosses both monopiles: observers closer than 5 m to their
+! The plane crosses both monopiles: observers closer than mask_distance to their
 ! nodes are masked (NaN pressure) instead of computed.
 &sliceVertical_config
     azimuth_sv = -90.0              ! [deg] Azimuth of the plane normal: -90 = plane through the turbine row

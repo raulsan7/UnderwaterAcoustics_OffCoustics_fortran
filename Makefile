@@ -1,5 +1,5 @@
 # =====================================================================
-# Makefile — standalone build for Off_coustics_fortran
+# Makefile — standalone build for off_coustics
 # =====================================================================
 # Drop-in replacement for `fpm build` / `fpm run`, for machines (e.g.
 # cluster login/compute nodes) where installing fpm is inconvenient.
@@ -21,7 +21,7 @@
 #     `link = ["fftw3"]` line in fpm.toml
 #
 # Usage:
-#   make                        builds ./off_coustics_fortran
+#   make                        builds ./off_coustics
 #   make FFLAGS="-O2 -g"        override optimization/debug flags
 #   make FC=ifort               override the compiler
 #   make run                    build, then run from this directory
@@ -164,7 +164,7 @@ $(BUILD)/SpecialFunctions.o: $(SRC_DIR)/utils/SpecialFunctions.f90 $(BUILD)/Kind
 $(BUILD)/InputChecks.o: $(SRC_DIR)/input/InputChecks.f90 $(BUILD)/Kinds.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/InputEmitters.o: $(SRC_DIR)/input/InputEmitters.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/StringUtils.o $(BUILD)/ExpressionParser.o $(BUILD)/InputChecks.o | $(BUILD)
+$(BUILD)/InputEmitters.o: $(SRC_DIR)/input/InputEmitters.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/StringUtils.o $(BUILD)/CSVReader.o $(BUILD)/ExpressionParser.o $(BUILD)/InputChecks.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/InputSolver.o: $(SRC_DIR)/input/InputSolver.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/InputChecks.o | $(BUILD)
@@ -209,7 +209,7 @@ $(BUILD)/WindFarm.o: $(SRC_DIR)/emitters/WindFarm.f90 $(BUILD)/Kinds.o $(BUILD)/
 $(BUILD)/ManualSources.o: $(SRC_DIR)/emitters/ManualSources.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/HDF5Utils.o $(BUILD)/Emitter.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/FrequencySource.o: $(SRC_DIR)/emitters/FrequencySource.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/ManualSources.o | $(BUILD)
+$(BUILD)/FrequencySource.o: $(SRC_DIR)/emitters/FrequencySource.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/StringUtils.o $(BUILD)/CSVReader.o $(BUILD)/ExpressionParser.o $(BUILD)/ManualSources.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/TimeSource.o: $(SRC_DIR)/emitters/TimeSource.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/HDF5Utils.o $(BUILD)/CSVReader.o $(BUILD)/SignalProcessing.o $(BUILD)/ExpressionParser.o $(BUILD)/ManualSources.o | $(BUILD)

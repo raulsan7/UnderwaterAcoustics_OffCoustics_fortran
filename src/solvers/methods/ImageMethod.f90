@@ -653,11 +653,13 @@ END SUBROUTINE dipole_pressure_images
 ! ===============================================================================
 SUBROUTINE run_sphere(self)
     ! -------------------------------------------------------------------------
-    ! Builds a spherical (theta, z) grid of observer points enclosing the
-    ! turbine, enlarging the requested radius if needed so every source lies
-    ! inside it, then evaluates the free-field pressure on that surface
-    ! (temporarily forcing N_images = 0, i.e. no boundary reflections) for
-    ! later far-field/radiated-power post-processing. Reshapes and saves the
+    ! Builds a spherical (theta, z) grid of observer points around the
+    ! sources, of the requested radius (used as it is) or, when it is 0 or
+    ! -999, of the automatic one: the distance from the centre to the
+    ! farthest source plus 3/k at f_farfield.
+    ! Then evaluates the free-field pressure on that surface (temporarily
+    ! forcing N_images = 0, i.e. no boundary reflections) for later
+    ! far-field/radiated-power post-processing. Reshapes and saves the
     ! pressure field, observer coordinates, angular/vertical grids and surface
     ! element area to the HDF5 output.
     ! -------------------------------------------------------------------------
@@ -702,7 +704,7 @@ SUBROUTINE run_sphere(self)
         end do
 
         k_far = 2.0_WP * PI * f_farfield_ / self % env % speed_sound_base
-        r_ = a_max + 3.0_WP / k_far     ! [-] Farfield criterion: 3 
+        r_ = a_max + 3.0_WP / k_far     ! [-] Farfield criterion: 3
     end if
 
     self % run_inputs % params_sphere % r_sphere = r_

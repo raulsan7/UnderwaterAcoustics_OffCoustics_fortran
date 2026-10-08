@@ -15,16 +15,21 @@ from wrappers.case import emitter_label, seabed_depth, point
 from plot_utils.colors import get_band_colors
 from plot_utils.saving import set_figure_name
 
+MAX_LEGEND_SOURCES = 10     # [-] More sources than this (e.g. read from a source_file) get no legend entry each
+MAX_BAR_TONES      = 20     # [-] More tones than this (a grid, a file) are drawn as lines instead of grouped bars
+
 
 def plot_sources(case   : dict  = None,       # [-] Case of point sources
                  figsize: tuple = (12, 5)):   # [-] Figure size (a TimeSource has a third panel: 1.5 times wider)
     """
     Plots the sources of the case: their positions in the vertical plane XZ (left; dipoles as circles,
     monopoles as squares, the surface and the seabed as dashed lines) and the amplitude of their force,
-    |F| = sqrt(|Fx|^2 + |Fy|^2 + |Fz|^2), at every tone (right; one bar per source).
+    |F| = sqrt(|Fx|^2 + |Fy|^2 + |Fz|^2), at every tone (right; one bar per source, or one line per source
+    with more than MAX_BAR_TONES tones, on a logarithmic axis if they span two decades or more).
     A TimeSource has its force series in time (middle; one color per source, a solid line for its first
     component that is not zero and dashed ones for the next, the components that are always zero left out) and
     the amplitude of its force spectrum as lines (right; the bins of the FFT, with the Hann window).
+    With more than MAX_LEGEND_SOURCES sources the legends only say how many there are.
 
     Returns
     -------
@@ -47,6 +52,7 @@ def plot_sources(case   : dict  = None,       # [-] Case of point sources
     n_src  = len(xyz)
     F_abs  = np.sqrt(np.sum(np.abs(force)**2, axis=2))      # [N] (Nfreqs, Nsources)
     is_time = "Source_Force_time" in case["specific"]
+    legend  = n_src <= MAX_LEGEND_SOURCES                   # [-] One legend entry per source
 
     if is_time:
         fig, axes = plt.subplots(1, 3, figsize=(1.5 * figsize[0], figsize[1]))
@@ -59,8 +65,11 @@ def plot_sources(case   : dict  = None,       # [-] Case of point sources
     ax.axhline(-Depth, color='gray', linestyle='--', linewidth=1.0, alpha=0.6, label='Seabed')
     for i in range(n_src):
         marker = 's' if order[i] == 0 else 'o'
-        ax.plot(xyz[i, 0], xyz[i, 2], marker, color=colors[i % len(colors)], ms=8,
-                label=f"{labels[i]}: ({xyz[i, 0]:.1f}, {xyz[i, 1]:.1f}, {xyz[i, 2]:.1f}) m")
+        if legend:
+            label = f"{labels[i]}: ({xyz[i, 0]:.1f}, {xyz[i, 1]:.1f}, {xyz[i, 2]:.1f}) m"
+        else:
+            label = f"{n_src} sources" if i == 0 else None
+        ax.plot(xyz[i, 0], xyz[i, 2], marker, color=colors[i % len(colors)], ms=8, label=label)
     xpad = max(1.0, 0.1 * np.ptp(xyz[:, 0]))
     ax.set_xlim(xyz[:, 0].min() - xpad, xyz[:, 0].max() + xpad)
     ax.set_ylim(-1.05 * Depth, 0.05 * Depth)
@@ -83,14 +92,14 @@ def plot_sources(case   : dict  = None,       # [-] Case of point sources
             for k, component in enumerate(("Fx", "Fy", "Fz")):
                 if np.any(series[:, i, k] != 0.0):
                     ax.plot(time, series[:, i, k], styles[n_drawn], color=colors[i % len(colors)], lw=1.0,
-                            label=f"{labels[i]} {component}")
+                            label=f"{labels[i]} {component}" if legend else None)
                     n_drawn += 1
                     n_lines += 1
         ax.set_xlabel("Time [s]")
         ax.set_ylabel("F [N]")
         ax.set_title(f"{tag} - Force series")
         ax.grid(True, ls='--', alpha=0.4)
-        if n_lines > 0: ax.legend(fontsize=10)
+        if n_lines > 0 and legend: ax.legend(fontsize=10)
 
         # 3. Amplitude of the force spectrum, one line per source
         ax = axes[2]
@@ -100,8 +109,8 @@ def plot_sources(case   : dict  = None,       # [-] Case of point sources
         ax.set_ylabel(r"$|F|$ [N]")
         ax.set_title(f"{tag} - Force spectrum (Hann window)")
         ax.grid(True, ls='--', alpha=0.4)
-        ax.legend(fontsize=10)
-    else:
+        if legend: ax.legend(fontsize=10)
+    elif len(Freqs) <= MAX_BAR_TONES:
         # 2. Force amplitude per source and tone (grouped bars)
         ax    = axes[1]
         x     = np.arange(len(Freqs))
@@ -115,7 +124,20 @@ def plot_sources(case   : dict  = None,       # [-] Case of point sources
         ax.set_ylabel(r"$|F|$ [N]")
         ax.set_title(f"{tag} - Force amplitude")
         ax.grid(True, axis='y', ls='--', alpha=0.4)
-        ax.legend(fontsize=10)
+        if legend: ax.legend(fontsize=10)
+    else:
+        # 2. Force amplitude per source at many tones (one line per source, a point per tone)
+        ax = axes[1]
+        for i in range(n_src):
+            ax.plot(Freqs, F_abs[:, i], '.-', color=colors[i % len(colors)], lw=1.0, ms=3,
+                    label=labels[i] if legend else None)
+        if Freqs.max() / Freqs.min() >= 100.0:
+            ax.set_xscale('log')
+        ax.set_xlabel("Frequency [Hz]")
+        ax.set_ylabel(r"$|F|$ [N]")
+        ax.set_title(f"{tag} - Force amplitude ({len(Freqs)} tones)")
+        ax.grid(True, ls='--', alpha=0.4)
+        if legend: ax.legend(fontsize=10)
 
     fig.tight_layout()
     set_figure_name(fig, "sources")

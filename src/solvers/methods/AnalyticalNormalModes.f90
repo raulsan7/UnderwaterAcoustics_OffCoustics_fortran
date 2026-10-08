@@ -558,7 +558,7 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
     ! stops at the first evanescent mode whose decay exp(-kappa*r) is more
     ! than exp(-EVAN_CUTOFF) below the dominant term of that frequency (a
     ! propagating mode, or else the first evanescent mode): kappa grows with
-    ! m, so every later mode is smaller still. The global -i/4 coefficient is
+    ! m, so every later mode is smaller still. The global i/4 coefficient is
     ! applied at the end.
     ! -------------------------------------------------------------------------
 

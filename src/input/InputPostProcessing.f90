@@ -2,7 +2,7 @@
 ! MODULE: InputPostProcessing
 ! ===============================================================================
 ! Defines the readers of the post-processing namelists of
-! ComputationSetupTurbine.nml or ComputationSetupFarm.nml: the entry point
+! ComputationSetups/<simulation_type>_CS.nml: the entry point
 ! read_computation_config, the do_config switches (read_do_config), and one
 ! reader per run_* step (read_spectrums_config ... read_sphere_config).
 ! -------------------------------------------------------------------------------
@@ -29,17 +29,16 @@ CONTAINS
 
 SUBROUTINE read_computation_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads every namelist group in ComputationSetupTurbine.nml or
-    ! ComputationSetupFarm.nml (do_config plus one group per run_*
-    ! post-processing step) and packs the values into config % run_inputs.
-    ! Only the groups of the steps that will actually run are read. Every
-    ! observer count must be -999 (auto) or at least 1, and the vectors whose
-    ! -999.0 sentinel applies to the whole vector (centres, x/y limits, decay
-    ! distances) must be given in full or left at -999.0; p1_line, p2_line,
-    ! zlim_xz and zlim_sv resolve each component on its own.
+    ! Reads every namelist group in <simulation_type>_CS.nml (do_config plus
+    ! one group per run_* post-processing step) and packs the values into
+    ! config % run_inputs. Only the groups of the steps that will actually run
+    ! are read. Every observer count must be -999 (auto) or at least 1, and
+    ! the vectors whose -999.0 sentinel applies to the whole vector (centres,
+    ! x/y limits, decay distances) must be given in full or left at -999.0;
+    ! p1_line, p2_line, zlim_xz and zlim_sv resolve each component on its own.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to <simulation_type>_CS.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
 
@@ -106,16 +105,16 @@ END SUBROUTINE read_computation_config
 
 SUBROUTINE read_do_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads the "do_config" namelist from ComputationSetupTurbine.nml or
-    ! ComputationSetupFarm.nml and packs the post-processing execution
-    ! switches into config % run_inputs. When do_all is enabled, every
-    ! post-processing switch is forced to true. In farm mode the steps that
-    ! make no sense for a wind farm (sphere, decay) default to false and are
-    ! then always switched off, so run() never needs to know what produced
-    ! the sources; the warning is only printed when the file requests them.
+    ! Reads the "do_config" namelist from <simulation_type>_CS.nml and packs
+    ! the post-processing execution switches into config % run_inputs. When
+    ! do_all is enabled, every post-processing switch is forced to true. In
+    ! farm mode the steps that make no sense for a wind farm (sphere, decay)
+    ! default to false and are then always switched off, so run() never needs
+    ! to know what produced the sources; the warning is only printed when the
+    ! file requests them.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to <simulation_type>_CS.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration (solver settings already read)
 
     ! Local variables
@@ -209,19 +208,19 @@ END SUBROUTINE read_do_config
 
 SUBROUTINE read_spectrums_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads the "spectrums_config" namelist from ComputationSetupTurbine.nml
-    ! or ComputationSetupFarm.nml (number of spectrum observer points and
-    ! their coordinates) and packs the values into config % run_inputs.
-    ! n_observers = -999 selects the 3 automatic points; any other value must
-    ! lie in 1..MAX_PARSE_OBS and come with its n_observers (x, y, z)
-    ! triplets. The coordinate buffers start as NaN, so a missing coordinate
-    ! is detected without mistaking a real -999.0 m for the sentinel.
-    ! Coordinates listed beyond n_observers are ignored with a warning.
+    ! Reads the "spectrums_config" namelist from <simulation_type>_CS.nml
+    ! (number of spectrum observer points and their coordinates) and packs the
+    ! values into config % run_inputs. n_observers = -999 selects the 3
+    ! automatic points; any other value must lie in 1..MAX_PARSE_OBS and come
+    ! with its n_observers (x, y, z) triplets. The coordinate buffers start as
+    ! NaN, so a missing coordinate is detected without mistaking a real -999.0
+    ! m for the sentinel. Coordinates listed beyond n_observers are ignored
+    ! with a warning.
     ! -------------------------------------------------------------------------
 
     USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_value, ieee_is_nan, IEEE_QUIET_NAN
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to <simulation_type>_CS.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
@@ -308,12 +307,12 @@ END SUBROUTINE read_spectrums_config
 
 SUBROUTINE read_polar_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads the "polar_config" namelist from ComputationSetupTurbine.nml or
-    ! ComputationSetupFarm.nml (circle radius, depth, observer count and
-    ! centre) and packs the values into config % run_inputs.
+    ! Reads the "polar_config" namelist from <simulation_type>_CS.nml (circle
+    ! radius, depth, observer count and centre) and packs the values into
+    ! config % run_inputs.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to <simulation_type>_CS.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
@@ -366,13 +365,12 @@ END SUBROUTINE read_polar_config
 
 SUBROUTINE read_cylinder_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads the "cylinder_config" namelist from ComputationSetupTurbine.nml
-    ! or ComputationSetupFarm.nml (cylinder radius, azimuthal and vertical
-    ! observer counts, and centre) and packs the values into
-    ! config % run_inputs.
+    ! Reads the "cylinder_config" namelist from <simulation_type>_CS.nml
+    ! (cylinder radius, azimuthal and vertical observer counts, and centre)
+    ! and packs the values into config % run_inputs.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to <simulation_type>_CS.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
@@ -425,12 +423,12 @@ END SUBROUTINE read_cylinder_config
 
 SUBROUTINE read_decay_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads the "decay_config" namelist from ComputationSetupTurbine.nml
+    ! Reads the "decay_config" namelist from <simulation_type>_CS.nml
     ! (start/end distances, observer count, depth and spacing mode) and packs
     ! the values into config % run_inputs.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to <simulation_type>_CS.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
@@ -484,12 +482,12 @@ END SUBROUTINE read_decay_config
 
 SUBROUTINE read_line_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads the "line_config" namelist from ComputationSetupTurbine.nml or
-    ! ComputationSetupFarm.nml (line endpoints, observer count and spacing
-    ! mode) and packs the values into config % run_inputs.
+    ! Reads the "line_config" namelist from <simulation_type>_CS.nml (line
+    ! endpoints, observer count and spacing mode) and packs the values into
+    ! config % run_inputs.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to <simulation_type>_CS.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
@@ -543,12 +541,12 @@ END SUBROUTINE read_line_config
 
 SUBROUTINE read_sliceXY_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads the "sliceXY_config" namelist from ComputationSetupTurbine.nml
-    ! or ComputationSetupFarm.nml (slice depth, grid dimensions, extents and
-    ! centre) and packs the values into config % run_inputs.
+    ! Reads the "sliceXY_config" namelist from <simulation_type>_CS.nml (slice
+    ! depth, grid dimensions, extents and centre) and packs the values into
+    ! config % run_inputs.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to <simulation_type>_CS.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
@@ -607,12 +605,12 @@ END SUBROUTINE read_sliceXY_config
 
 SUBROUTINE read_sliceXZ_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads the "sliceXZ_config" namelist from ComputationSetupTurbine.nml
-    ! or ComputationSetupFarm.nml (slice position, grid dimensions and x/z
-    ! extents) and packs the values into config % run_inputs.
+    ! Reads the "sliceXZ_config" namelist from <simulation_type>_CS.nml (slice
+    ! position, grid dimensions and x/z extents) and packs the values into
+    ! config % run_inputs.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to <simulation_type>_CS.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
@@ -668,16 +666,16 @@ END SUBROUTINE read_sliceXZ_config
 
 SUBROUTINE read_sliceVertical_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads the "sliceVertical_config" namelist from ComputationSetupTurbine.nml
-    ! or ComputationSetupFarm.nml (plane azimuth, centre, width, depth extent,
-    ! grid dimensions and automatic-width margin) and packs the values into
-    ! config % run_inputs. Since do_all also switches this newer step on, a
-    ! file without the group is accepted and every value stays automatic.
+    ! Reads the "sliceVertical_config" namelist from <simulation_type>_CS.nml
+    ! (plane azimuth, centre, width, depth extent, grid dimensions and
+    ! automatic-width margin) and packs the values into config % run_inputs.
+    ! Since do_all also switches this newer step on, a file without the group
+    ! is accepted and every value stays automatic.
     ! -------------------------------------------------------------------------
 
     USE, INTRINSIC :: iso_fortran_env, ONLY: IOSTAT_END
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml or ComputationSetupFarm.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to <simulation_type>_CS.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables
@@ -742,12 +740,12 @@ END SUBROUTINE read_sliceVertical_config
 
 SUBROUTINE read_sphere_config(path, config)
     ! -------------------------------------------------------------------------
-    ! Reads the "sphere_config" namelist from ComputationSetupTurbine.nml
-    ! (sphere radius, angular and vertical observer counts, and centre) and
-    ! packs the values into config % run_inputs.
+    ! Reads the "sphere_config" namelist from <simulation_type>_CS.nml (sphere
+    ! radius, angular and vertical observer counts, and centre) and packs the
+    ! values into config % run_inputs.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to ComputationSetupTurbine.nml
+    CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to <simulation_type>_CS.nml
     TYPE(Config_t)  , INTENT(INOUT) :: config    ! [-] Global configuration
 
     ! Local variables

@@ -2,11 +2,12 @@
 ! MODULE: ExpressionParser
 ! ===============================================================================
 ! Defines the compiler and the evaluator of the mathematical expressions that
-! the namelists give as text, e.g. a force as a function of time:
-! '1000*sin(2*pi*50*t)'. Fortran cannot evaluate a text at run time, so
-! compile_expression turns it into a list of operations in postfix order,
-! checking its syntax, and evaluate_expression runs that list over a whole
-! vector of values of t at once.
+! the namelists give as text, e.g. a force as a function of time,
+! '1000*sin(2*pi*50*t)', or of the frequency, '100/(1+(f/50)**2)'. Fortran
+! cannot evaluate a text at run time, so compile_expression turns it into a
+! list of operations in postfix order, checking its syntax, and
+! evaluate_expression runs that list over a whole vector of values of the
+! variable at once.
 !
 ! Grammar, with the usual precedence (** is right-associative and binds tighter
 ! than the unary minus, so -t**2 means -(t**2)):
@@ -16,8 +17,9 @@
 !     power   := primary [ ** unary ]
 !     primary := number | name | name '(' sum { ',' sum } ')' | '(' sum ')'
 ! Numbers are written as 12, 0.5, .5, 1.0e-3 or 2d3. The names are the variable
-! t, the constant pi and the functions of FUNCTION_NAMES. Upper and lower case
-! are the same, and blanks are ignored.
+! (t by default; the caller of compile_expression chooses it, e.g. f), the
+! constant pi and the functions of FUNCTION_NAMES. Upper and lower case are the
+! same, and blanks are ignored.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -41,7 +43,7 @@ PUBLIC :: Expression_t, compile_expression, evaluate_expression, function_list
 ! ===============================================================================
 INTEGER(I32), PARAMETER :: MAX_TOKENS    = 256_I32    ! [-] Maximum number of operations of an expression
 INTEGER(I32), PARAMETER :: OP_NUMBER     = 1_I32      ! [-] Pushes a number
-INTEGER(I32), PARAMETER :: OP_T          = 2_I32      ! [-] Pushes the variable t
+INTEGER(I32), PARAMETER :: OP_VAR        = 2_I32      ! [-] Pushes the variable (t, f, ...)
 INTEGER(I32), PARAMETER :: OP_ADD        = 3_I32      ! [-] a + b
 INTEGER(I32), PARAMETER :: OP_SUB        = 4_I32      ! [-] a - b
 INTEGER(I32), PARAMETER :: OP_MUL        = 5_I32      ! [-] a * b
@@ -101,12 +103,13 @@ END TYPE Expression_t
 
 TYPE :: Parser_t
     ! -------------------------------------------------------------------------
-    ! State of compile_expression: the text, the position being read, the
-    ! first error found (empty if none), the depth of the stack and the
-    ! expression under construction.
+    ! State of compile_expression: the text, the name of its variable, the
+    ! position being read, the first error found (empty if none), the depth
+    ! of the stack and the expression under construction.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=:), ALLOCATABLE :: text         ! [-] Text of the expression
+    CHARACTER(len=:), ALLOCATABLE :: variable     ! [-] Name of the variable, in lower case
     CHARACTER(len=:), ALLOCATABLE :: error        ! [-] First error found ('' if none)
     INTEGER(I32)                  :: pos = 1_I32  ! [-] Position being read
     INTEGER(I32)                  :: sp  = 0_I32  ! [-] Current depth of the stack
@@ -118,24 +121,30 @@ END TYPE Parser_t
 CONTAINS
 
 
-SUBROUTINE compile_expression(text, expr, error_message)
+SUBROUTINE compile_expression(text, expr, error_message, variable)
     ! -------------------------------------------------------------------------
-    ! Compiles the text of an expression. error_message is empty if the text is
-    ! a valid expression, and otherwise describes the first error and where it
-    ! is, so that the caller can tell the user which input is wrong.
+    ! Compiles the text of an expression of one variable, t unless the caller
+    ! names another one (e.g. 'f' for a frequency). error_message is empty if
+    ! the text is a valid expression, and otherwise describes the first error
+    ! and where it is, so that the caller can tell the user which input is
+    ! wrong. Any other name than the variable, pi and the functions is an
+    ! error, and the message says which variable the expression has.
     ! -------------------------------------------------------------------------
 
-    CHARACTER(len=*)             , INTENT(IN)  :: text             ! [-] Text of the expression
-    TYPE(Expression_t)           , INTENT(OUT) :: expr             ! [-] Compiled expression
-    CHARACTER(len=:), ALLOCATABLE, INTENT(OUT) :: error_message    ! [-] '' if the text is valid
+    CHARACTER(len=*)             , INTENT(IN)           :: text             ! [-] Text of the expression
+    TYPE(Expression_t)           , INTENT(OUT)          :: expr             ! [-] Compiled expression
+    CHARACTER(len=:), ALLOCATABLE, INTENT(OUT)          :: error_message    ! [-] '' if the text is valid
+    CHARACTER(len=*)             , INTENT(IN), OPTIONAL :: variable         ! [-] Name of the variable ('t' if absent)
 
     ! Local variables
     TYPE(Parser_t)   :: p
     CHARACTER(len=1) :: c
 
 
-    p % text  = trim(adjustl(text))
-    p % error = ''
+    p % text     = trim(adjustl(text))
+    p % variable = 't'
+    if (present(variable)) p % variable = to_lower(trim(adjustl(variable)))
+    p % error    = ''
 
     if (len(p % text) == 0) then
         CALL set_error(p, 'the expression is empty')
@@ -153,24 +162,24 @@ SUBROUTINE compile_expression(text, expr, error_message)
 END SUBROUTINE compile_expression
 
 
-SUBROUTINE evaluate_expression(expr, t, values)
+SUBROUTINE evaluate_expression(expr, x, values)
     ! -------------------------------------------------------------------------
-    ! Evaluates a compiled expression for every value of t at once: each
-    ! operation of the postfix list works on whole vectors. Operations outside
-    ! their domain (a logarithm of a negative number, a division by zero) give
-    ! NaN or Inf, which the caller must check.
+    ! Evaluates a compiled expression for every value of its variable at once:
+    ! each operation of the postfix list works on whole vectors. Operations
+    ! outside their domain (a logarithm of a negative number, a division by
+    ! zero) give NaN or Inf, which the caller must check.
     ! -------------------------------------------------------------------------
 
     TYPE(Expression_t), INTENT(IN)  :: expr         ! [-] Compiled expression
-    REAL(WP)          , INTENT(IN)  :: t(:)         ! [-] Values of the variable t
-    REAL(WP)          , INTENT(OUT) :: values(:)    ! [-] Value of the expression at every t (same size as t)
+    REAL(WP)          , INTENT(IN)  :: x(:)         ! [-] Values of the variable (t [s], f [Hz], ...)
+    REAL(WP)          , INTENT(OUT) :: values(:)    ! [-] Value of the expression at every x (same size as x)
 
     ! Local variables
     REAL(WP), ALLOCATABLE :: stack(:,:)
     INTEGER(I32)          :: i, sp
 
 
-    ALLOCATE(stack(size(t), max(expr % depth, 1_I32)))
+    ALLOCATE(stack(size(x), max(expr % depth, 1_I32)))
 
     sp = 0_I32
     do i = 1, expr % n
@@ -178,9 +187,9 @@ SUBROUTINE evaluate_expression(expr, t, values)
         CASE (OP_NUMBER)
             sp = sp + 1_I32
             stack(:, sp) = expr % value(i)
-        CASE (OP_T)
+        CASE (OP_VAR)
             sp = sp + 1_I32
-            stack(:, sp) = t
+            stack(:, sp) = x
         CASE (OP_NEG)
             stack(:, sp) = -stack(:, sp)
         CASE (OP_ADD)
@@ -497,8 +506,8 @@ END SUBROUTINE parse_number
 
 RECURSIVE SUBROUTINE parse_name(p)
     ! -------------------------------------------------------------------------
-    ! Reads a name: the variable t, the constant pi, or a function followed by
-    ! its arguments between parentheses.
+    ! Reads a name: the variable of the expression, the constant pi, or a
+    ! function followed by its arguments between parentheses.
     ! -------------------------------------------------------------------------
 
     TYPE(Parser_t), INTENT(INOUT) :: p    ! [-] Parser state
@@ -553,12 +562,12 @@ RECURSIVE SUBROUTINE parse_name(p)
         else
             CALL emit(p, FUNCTION_BASE + k, 0.0_WP)
         end if
-    else if (name == 't') then
-        CALL emit(p, OP_T, 0.0_WP)
+    else if (name == p % variable) then
+        CALL emit(p, OP_VAR, 0.0_WP)
     else if (name == 'pi') then
         CALL emit(p, OP_NUMBER, PI)
     else
-        CALL set_error(p, "unknown name '" // name // "' (use t, pi or a function)")
+        CALL set_error(p, "unknown name '" // name // "' (use " // p % variable // ", pi or a function)")
     end if
 
 END SUBROUTINE parse_name
@@ -567,8 +576,8 @@ END SUBROUTINE parse_name
 SUBROUTINE emit(p, code, val)
     ! -------------------------------------------------------------------------
     ! Appends an operation to the expression and follows the depth of the
-    ! stack: numbers and t push one value, binary operations and functions of
-    ! two arguments pop one, and the rest leave it as it is.
+    ! stack: numbers and the variable push one value, binary operations and
+    ! functions of two arguments pop one, and the rest leave it as it is.
     ! -------------------------------------------------------------------------
 
     TYPE(Parser_t), INTENT(INOUT) :: p       ! [-] Parser state
@@ -582,7 +591,7 @@ SUBROUTINE emit(p, code, val)
     end if
 
     SELECT CASE (code)
-    CASE (OP_NUMBER, OP_T)
+    CASE (OP_NUMBER, OP_VAR)
         p % sp = p % sp + 1_I32
     CASE (OP_ADD:OP_POW)
         p % sp = p % sp - 1_I32

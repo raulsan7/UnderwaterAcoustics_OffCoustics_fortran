@@ -3,9 +3,11 @@
 ! ===============================================================================
 ! Defines the consistency checks shared by the namelist readers: the
 ! OpenFAST reading window and decimation factors (check_time_window), the
-! length of a string against its Config_t component (check_fits), vectors
-! given in full or not at all (check_all_or_none), and observer counts
-! (check_count). Each one stops the run when its check fails.
+! length of a string against its Config_t component (check_fits), the
+! existence of a file named in a namelist (check_file_exists), vectors given
+! in full or not at all (check_all_or_none), observer counts (check_count)
+! and the positions of the point sources (check_source_positions). Each one
+! stops the run when its check fails.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -20,7 +22,7 @@ USE Kinds, ONLY: I32, WP, DEFAULT_R, DEFAULT_I
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: check_time_window, check_fits, check_all_or_none, check_count, check_source_positions
+PUBLIC :: check_time_window, check_fits, check_file_exists, check_all_or_none, check_count, check_source_positions
 
 
 CONTAINS
@@ -78,6 +80,29 @@ SUBROUTINE check_fits(value, component, name)
     end if
 
 END SUBROUTINE check_fits
+
+
+SUBROUTINE check_file_exists(file_name, name, block_name)
+    ! -------------------------------------------------------------------------
+    ! Stops the run when the file named by a namelist variable does not
+    ! exist, before any work is done with the rest of the input.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN) :: file_name     ! [-] Path to the file, relative to the working directory
+    CHARACTER(len=*), INTENT(IN) :: name          ! [-] Namelist variable shown in the error message
+    CHARACTER(len=*), INTENT(IN) :: block_name    ! [-] Namelist group shown in the error message
+
+    ! Local variables
+    LOGICAL :: file_exists
+
+
+    inquire(file=trim(file_name), exist=file_exists)
+    if (.not. file_exists) then
+        write(*,*) "ERROR: &" // block_name // ": " // name // " not found: ", trim(file_name)
+        error stop
+    end if
+
+END SUBROUTINE check_file_exists
 
 
 SUBROUTINE check_all_or_none(values, name)

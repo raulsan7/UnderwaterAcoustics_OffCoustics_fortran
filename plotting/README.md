@@ -64,7 +64,7 @@ the same names and arguments for every emitter:
 | `plot_line` | magnitude along the line P1 -> P2 |
 | `plot_sliceXY`, `plot_sliceXZ`, `plot_sliceVertical` | maps of the slices, with the nodes of the emitter drawn as points (`structure`) |
 | `plot_structure` | members and wind direction of a turbine or of every turbine of a farm (`mode='3D'`, `'xy'`, `'xz'`) |
-| `plot_sources` | positions of point sources and the amplitude of their force at every tone; a TimeSource also has its force series in time and the amplitude of its spectrum |
+| `plot_sources` | positions of point sources and the amplitude of their force at every tone (bars up to 20 tones, lines above); a TimeSource also has its force series in time and the amplitude of its spectrum |
 | `compute_sphere_metrics` | free-field radiation metrics of the sphere (Image Method) |
 | `compute_cylinder_metrics` | power flow through the cylinder |
 | `compute_point_source` | equivalent point source (free field and in situ), with its figures |
@@ -120,9 +120,14 @@ script, except `--ws` and the turbine-only ones (`plot_structure`, `turbine_data
 `Emitter` dataset; a file of another emitter is rejected with the script that reads it.
 
 - **FrequencySource** (forces given per frequency): the frequencies are tones, not the bins of an FFT. They have a
-  bin width only when they are uniformly spaced (their spacing); otherwise the PSD, the 1/3 octave bands and
-  `compute_point_source` are not applicable and are skipped with a message. SPL per tone, OASPL and the band sums
-  of the polar plot remain valid. A comparison labels the file `<N> sources, <Nf> tones, <method>`.
+  bin width only when they are uniformly spaced (their spacing, e.g. a `'linear'` grid of `fmin`, `fmax`, `Nfreqs`);
+  otherwise (a `'log'` grid, a hand-made list, a file of unevenly spaced frequencies) the PSD, the 1/3 octave bands
+  and `compute_point_source` are not applicable and are skipped with a message. SPL per tone, OASPL and the band
+  sums of the polar plot remain valid. With a bin width each tone stands for the power of a band `df` wide: that is
+  what a sampled continuous force spectrum S_F means (|F_k| = sqrt(2 S_F(f_k) df)), while for isolated tones the PSD
+  depends on `df` and has no physical meaning (use the SPL). The way the input was given (list, grid, files,
+  expressions of `f`) is not in the file and does not matter to the plotting: the same input gives the same
+  datasets in every mode. A comparison labels the file `<N> sources, <Nf> tones, <method>`.
 - **TimeSource** (forces given as real series in time): `Source_Force` is the Hann-windowed FFT of the series
   `Source_Force_time` (Nt, Nsources, 3) on the times `Source_time`, so its frequencies are FFT bins: the bin width is
   the frequency resolution `1 / (Nt * Time_step)` (whatever frequencies were kept with `skipf`, `fmin` and `fmax`),
@@ -130,9 +135,10 @@ script, except `--ws` and the turbine-only ones (`plot_structure`, `turbine_data
   labels the file `<N> sources, <Nt> samples, <method>`.
 - A single source is the origin of the distances (absorption); several sources have none (absorption off, with a
   message, as for a farm).
-- `plot_sources` draws their positions (XZ plane) and the amplitude of their force at every tone (bars); for a
-  TimeSource, the force series in time and the amplitude of its spectrum (lines). The maps draw the sources as
-  points (monopoles as squares).
+- `plot_sources` draws their positions (XZ plane) and the amplitude of their force at every tone (bars, or one line
+  per source above 20 tones, on a logarithmic axis if they span two decades or more); for a TimeSource, the force
+  series in time and the amplitude of its spectrum (lines). With more than 10 sources (e.g. read from a
+  `source_file`) the legends only give their number. The maps draw the sources as points (monopoles as squares).
 - Files written before the `Emitter` dataset (06/10/2026) are not supported: regenerate them.
 
 ## Layout
