@@ -13,8 +13,8 @@
 
     ! --- Attenuation and numerical tolerance --- !
     attenuation_surface = 1.0      ! [-] Attenuation coefficient applied to surface-reflected images
-    attenuation_bottom = 0.5       ! [-] Attenuation coefficient applied to bottom-reflected images
-    epsilon = 1.0e-6               ! [m] Minimum source-observer distance, avoids singularities near a dipole
+    attenuation_bottom = 1.0       ! [-] Attenuation coefficient applied to bottom-reflected images
+    epsilon = 1.0e-6               ! [m] Minimum source-observer distance, avoids singularities near a source
 
 /
 

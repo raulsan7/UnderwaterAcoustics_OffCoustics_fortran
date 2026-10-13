@@ -5,11 +5,12 @@
 ! abstract AcousticSolver_t. It models the shallow-water column as an ideal
 ! waveguide bounded by a pressure-release surface (p = 0) above and a rigid
 ! seabed (dp/dz = 0) below, and expands the field radiated by each real
-! dipole source as a superposition of analytical normal modes: a vertical
-! modal shape Psi_m(z) times a horizontal cylindrical wave given by Hankel
-! functions of the first kind, either propagating (real k_rm) or evanescent
-! (imaginary k_rm). The pressure is computed at each observer point with the
-! same chunked/parallel evaluation scheme used by the Image Method.
+! source, monopole or dipole, as a superposition of analytical normal modes:
+! a vertical modal shape Psi_m(z) times a horizontal cylindrical wave given by
+! Hankel functions of the first kind, either propagating (real k_rm) or
+! evanescent (imaginary k_rm), with one kernel per multipole order. The
+! pressure is computed at each observer point with the same chunked/parallel
+! evaluation scheme used by the Image Method.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -26,8 +27,8 @@ USE HDF5Utils, ONLY: save_variable
 USE FileUtils, ONLY: swap_extension
 USE AcousticSolver, ONLY: AcousticSolver_t
 USE SpecialFunctions, ONLY: compute_hankel_complex
-USE SourceTypes, ONLY: AcousticSource_t, SOURCE_DIPOLE
 USE ConfigTypes, ONLY: Config_AnalyticalNormalModes_t, Config_t
+USE SourceTypes, ONLY: AcousticSource_t, SOURCE_DIPOLE, SOURCE_MONOPOLE
 
 IMPLICIT NONE
 
@@ -38,7 +39,7 @@ PUBLIC :: AnalyticalNormalModes_t
 TYPE, EXTENDS(AcousticSolver_t) :: AnalyticalNormalModes_t
     ! -------------------------------------------------------------------------
     ! Concrete acoustic solver implementing the analytical normal-mode expansion
-    ! of the dipole field in an ideal waveguide of depth H = - Lower_HBC
+    ! of the monopole and dipole fields in an ideal waveguide of depth H = - Lower_HBC
     ! (pressure-release top, rigid bottom). Each mode m has a fixed vertical
     ! wavenumber k_zm = (2m-1)*pi/(2H) and a frequency-dependent horizontal
     ! wavenumber k_rm = sqrt(k^2 - k_zm^2).
@@ -57,6 +58,7 @@ TYPE, EXTENDS(AcousticSolver_t) :: AnalyticalNormalModes_t
     PROCEDURE :: dPsi_kzm_dz
     PROCEDURE :: print_mode_summary
     PROCEDURE :: dipolar_pressure_NM
+    PROCEDURE :: monopolar_pressure_NM
 
     ! --- Deferred (abstract) procedures --- !
     PROCEDURE :: init              => init_AnalyticalNormalModes
@@ -101,9 +103,9 @@ SUBROUTINE init_AnalyticalNormalModes(self, sources, config)
     CALL MOVE_ALLOC(sources % Freqs, self % sources % Freqs)
     CALL MOVE_ALLOC(sources % order, self % sources % order)
 
-    ! Only the dipole kernel is implemented
-    if (any(self % sources % order /= SOURCE_DIPOLE)) &
-        error stop "AnalyticalNormalModes % init(): only dipole sources (order 1) are implemented"
+    ! Only the monopole and dipole kernels are implemented
+    if (any(self % sources % order /= SOURCE_DIPOLE .and. self % sources % order /= SOURCE_MONOPOLE)) &
+        error stop "AnalyticalNormalModes % init(): only monopoles (order 0) and dipoles (order 1) are implemented"
 
     self % sources % geometry = sources % geometry
     self % env                = config % env
@@ -178,9 +180,13 @@ SUBROUTINE compute_pressure_AnalyticalNormalModes(self, observers, block_size, t
     ! Evaluates the total radiated pressure field at an arbitrary set of
     ! observer points, for every source frequency. Observers are processed
     ! either one-by-one (serial) or split into chunks distributed over OpenMP
-    ! threads (in_cluster = .true.), each chunk being handed to
-    ! dipolar_pressure_NM together with the real dipole sources, which are
-    ! passed directly (no local copies).
+    ! threads (in_cluster = .true.); the chunks split the observers, never the
+    ! sources. Each chunk is handed to one kernel per multipole order present
+    ! (dipolar_pressure_NM, monopolar_pressure_NM) together with every real
+    ! source, passed directly (no local copies): each kernel skips the sources
+    ! of the other orders, so they can be in any order, and the contributions
+    ! are summed. With dipoles only, the operations are those of the dipole
+    ! kernel alone.
     ! -------------------------------------------------------------------------
 
     CLASS(AnalyticalNormalModes_t), INTENT(INOUT)            :: self                   ! [-] Solver instance
@@ -191,6 +197,7 @@ SUBROUTINE compute_pressure_AnalyticalNormalModes(self, observers, block_size, t
     ! Local variables
     INTEGER(I32)              :: nobs, nf, bs, n_chunks, ichunk
     INTEGER(I32)              :: istart, iend, nb, i
+    LOGICAL                   :: has_dipoles, has_monopoles
     COMPLEX(WP) , ALLOCATABLE :: p_block(:,:)
 
 
@@ -226,6 +233,11 @@ SUBROUTINE compute_pressure_AnalyticalNormalModes(self, observers, block_size, t
     total_pressure = (0.0_WP, 0.0_WP)
 
     if (.not. self % in_cluster) bs = 1_I32
+
+    ! Multipole orders present in the sources: only their kernels are called
+    has_dipoles   = any(self % sources % order == SOURCE_DIPOLE)
+    has_monopoles = any(self % sources % order == SOURCE_MONOPOLE)
+
     if (self % in_cluster) then
         n_chunks = (nobs + bs - 1_I32) / bs
 
@@ -237,14 +249,23 @@ SUBROUTINE compute_pressure_AnalyticalNormalModes(self, observers, block_size, t
             iend   = min(istart + bs - 1_I32, nobs)
             nb     = iend - istart + 1_I32
 
-            ! Call kernel for this chunk (p_block will be allocated in the routine)
-            CALL self % dipolar_pressure_NM(observers(istart:iend, :), self % sources % Freqs, &
-                                            self % sources % xyz, self % sources % Force, p_block)
+            ! Each kernel is called for this chunk only if there are sources of its order, and its
+            ! result is accumulated before the next call reuses p_block (non-overlapping slices)
+            if (has_dipoles) then
+                CALL self % dipolar_pressure_NM(observers(istart:iend, :), self % sources % Freqs, &
+                                                self % sources % xyz, self % sources % Force, &
+                                                self % sources % order, p_block)
+                total_pressure(:, istart:iend) = total_pressure(:, istart:iend) + p_block(:, 1:nb)
+                if (ALLOCATED(p_block)) DEALLOCATE(p_block)
+            end if
 
-            ! Accumulate results into the global array (non-overlapping slices)
-            total_pressure(:, istart:iend) = total_pressure(:, istart:iend) + p_block(:, 1:nb)
-
-            if (ALLOCATED(p_block)) DEALLOCATE(p_block)
+            if (has_monopoles) then
+                CALL self % monopolar_pressure_NM(observers(istart:iend, :), self % sources % Freqs, &
+                                                  self % sources % xyz, self % sources % Force, &
+                                                  self % sources % order, p_block)
+                total_pressure(:, istart:iend) = total_pressure(:, istart:iend) + p_block(:, 1:nb)
+                if (ALLOCATED(p_block)) DEALLOCATE(p_block)
+            end if
         end do
         !$OMP END PARALLEL DO
 
@@ -252,12 +273,21 @@ SUBROUTINE compute_pressure_AnalyticalNormalModes(self, observers, block_size, t
 
         ! Serial: loop observers (keep 2D slice for compatibility)
         do i = 1, nobs
-            CALL self % dipolar_pressure_NM(observers(i:i, :), self % sources % Freqs, &
-                                            self % sources % xyz, self % sources % Force, p_block)
+            if (has_dipoles) then
+                CALL self % dipolar_pressure_NM(observers(i:i, :), self % sources % Freqs, &
+                                                self % sources % xyz, self % sources % Force, &
+                                                self % sources % order, p_block)
+                total_pressure(:, i) = total_pressure(:, i) + p_block(:, 1)
+                if (ALLOCATED(p_block)) DEALLOCATE(p_block)
+            end if
 
-            total_pressure(:, i) = total_pressure(:, i) + p_block(:, 1)
-
-            if (ALLOCATED(p_block)) DEALLOCATE(p_block)
+            if (has_monopoles) then
+                CALL self % monopolar_pressure_NM(observers(i:i, :), self % sources % Freqs, &
+                                                  self % sources % xyz, self % sources % Force, &
+                                                  self % sources % order, p_block)
+                total_pressure(:, i) = total_pressure(:, i) + p_block(:, 1)
+                if (ALLOCATED(p_block)) DEALLOCATE(p_block)
+            end if
 
             ! Print progress every 100 observers
             if (mod(i, 100_I32) == 0_I32) then
@@ -539,11 +569,12 @@ FUNCTION dPsi_kzm_dz(self, z, m, kzm) RESULT(dpsi)
 END FUNCTION dPsi_kzm_dz
 
 
-SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
+SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, order, p_out)
     ! -------------------------------------------------------------------------
     ! Evaluates the normal-mode dipole Green's function for a block of
-    ! observers, summed over every real source and every retained mode, at
-    ! every frequency. The vertical modal shapes
+    ! observers, summed over every dipole and every retained mode, at every
+    ! frequency; the sources of another multipole order are skipped. The
+    ! vertical modal shapes
     !     Psi_m(z)   = sqrt(2*rho/H) * sin(k_zm*(z - Upper_HBC))
     !     dPsi_m/dz  = sqrt(2*rho/H) * k_zm * cos(k_zm*(z - Upper_HBC))
     ! (Psi_m(Upper_HBC) = 0, dPsi_m/dz(Lower_HBC) = 0) are frequency
@@ -558,7 +589,9 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
     ! stops at the first evanescent mode whose decay exp(-kappa*r) is more
     ! than exp(-EVAN_CUTOFF) below the dominant term of that frequency (a
     ! propagating mode, or else the first evanescent mode): kappa grows with
-    ! m, so every later mode is smaller still. The global i/4 coefficient is
+    ! m, so every later mode is smaller still. The 1/rho of both terms is
+    ! frequency independent, so it is applied once to the tabulated source
+    ! shapes, not inside the sum over the modes. The global i/4 coefficient is
     ! applied at the end.
     ! -------------------------------------------------------------------------
 
@@ -567,6 +600,7 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
     REAL(WP)                      , INTENT(IN)               :: Freqs(:)          ! [Hz] Frequency vector (NFreqs)
     REAL(WP)                      , INTENT(IN)               :: nodes_pos(:,:)    ! [m] Source coords (Nnodes, 3)
     COMPLEX(WP)                   , INTENT(IN)               :: Force(:,:,:)      ! [N] Forces (NFreqs, Nnodes, 3)
+    INTEGER(I32)                  , INTENT(IN)               :: order(:)          ! [-] Multipole order (Nnodes)
     COMPLEX(WP)                   , INTENT(OUT), ALLOCATABLE :: p_out(:,:)        ! [Pa] Pressure (NFreqs, Nob)
 
     ! Local variables
@@ -594,13 +628,13 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
     p_out  = (0.0_WP, 0.0_WP)
     k_wave = 2.0_WP * PI * Freqs / self % env % speed_sound_base
 
-    ! Vertical modal shapes (frequency independent)
+    ! Vertical modal shapes (frequency independent); those of the sources already divided by rho
     ALLOCATE(k_zm(Nm), psi_z(Nob, Nm), psi_zs(Nnodes, Nm), dpsi_zs(Nnodes, Nm))
     do im = 1, Nm
         k_zm(im)       = (2.0_WP * real(im, WP) - 1.0_WP) * PI / (2.0_WP * self % H)
         psi_z(:, im)   = self % Psi_kzm(z=obs_pos(:, 3), kzm=k_zm(im))
-        psi_zs(:, im)  = self % Psi_kzm(z=nodes_pos(:, 3), kzm=k_zm(im))
-        dpsi_zs(:, im) = self % dPsi_kzm_dz(z=nodes_pos(:, 3), kzm=k_zm(im))
+        psi_zs(:, im)  = self % Psi_kzm(z=nodes_pos(:, 3), kzm=k_zm(im)) / rho
+        dpsi_zs(:, im) = self % dPsi_kzm_dz(z=nodes_pos(:, 3), kzm=k_zm(im)) / rho
     end do
 
     ! Horizontal wavenumbers: real (propagating) or pure imaginary (evanescent), and the
@@ -627,6 +661,8 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
     ! Loop over observers and sources, then frequencies, modes innermost
     do k = 1, Nob
         do j = 1, Nnodes
+            if (order(j) /= SOURCE_DIPOLE) cycle    ! Monopoles: monopolar_pressure_NM
+
             ! Horizontal source-observer geometry (floored at eps)
             dx = obs_pos(k, 1) - nodes_pos(j, 1)
             dy = obs_pos(k, 2) - nodes_pos(j, 2)
@@ -649,8 +685,8 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
                     ! Evanescent tail: this and every later mode are negligible
                     if ((aimag(k_rm) - kappa_ref(f)) * r > EVAN_CUTOFF) exit
 
-                    coef_z  = fz * dpsi_zs(j, im) / rho     ! Vertical component (dipolar depth effect)
-                    coef_xy = psi_zs(j, im) * k_rm / rho    ! Horizontal component (dipolar directivity)
+                    coef_z  = fz * dpsi_zs(j, im)     ! Vertical component (dipolar depth effect)
+                    coef_xy = psi_zs(j, im) * k_rm    ! Horizontal component (dipolar directivity)
 
                     CALL compute_hankel_complex(k_rm, r, H0, H1)
 
@@ -667,5 +703,122 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, p_out)
     DEALLOCATE(k_zm, psi_z, psi_zs, dpsi_zs, k_rm_tab, kappa_ref)
 
 END SUBROUTINE dipolar_pressure_NM
+
+
+SUBROUTINE monopolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, order, p_out)
+    ! -------------------------------------------------------------------------
+    ! Evaluates the normal-mode monopole Green's function for a block of
+    ! observers, summed over every monopole and every retained mode, at every
+    ! frequency; the sources of another multipole order are skipped. A
+    ! monopole of volume velocity Q (first component of Force, see
+    ! SourceTypes) at depth zs radiates p = -i*w*rho*Q * G, with the
+    ! normal-mode Green's function G = i/(4*rho) * sum_m Psi_m(zs) * Psi_m(z)
+    ! * H0(k_rm*r) (the one whose free-field limit is exp(i*k*R)/(4*pi*R),
+    ! from which dipolar_pressure_NM also derives), so that
+    !     p = (w/4) * Q * sum_m Psi_m(z) * Psi_m(zs) * H0(k_rm*r)
+    ! rho cancels with the 1/rho of G and stays only in the normalisation of
+    ! Psi_m, so neither is applied. The modal shapes, the horizontal
+    ! wavenumbers and the evanescent cutoff are those of dipolar_pressure_NM;
+    ! only H0 is evaluated. The factor w/4 is applied once per source,
+    ! observer and frequency, after the sum over the modes.
+    ! -------------------------------------------------------------------------
+
+    CLASS(AnalyticalNormalModes_t), INTENT(IN)               :: self              ! [-] Solver instance
+    REAL(WP)                      , INTENT(IN)               :: obs_pos(:,:)      ! [m] Observers coords (Nob, 3)
+    REAL(WP)                      , INTENT(IN)               :: Freqs(:)          ! [Hz] Frequency vector (NFreqs)
+    REAL(WP)                      , INTENT(IN)               :: nodes_pos(:,:)    ! [m] Source coords (Nnodes, 3)
+    COMPLEX(WP)                   , INTENT(IN)               :: Force(:,:,:)      ! [m^3/s] Q in 1 (NFreqs, Nnodes, 3)
+    INTEGER(I32)                  , INTENT(IN)               :: order(:)          ! [-] Multipole order (Nnodes)
+    COMPLEX(WP)                   , INTENT(OUT), ALLOCATABLE :: p_out(:,:)        ! [Pa] Pressure (NFreqs, Nob)
+
+    ! Local variables
+    REAL(WP)    , PARAMETER   :: EVAN_CUTOFF = 40.0_WP    ! [-] Skip modes decaying exp(-40) below the dominant one
+    REAL(WP)    , PARAMETER   :: CUTOFF_GAP  = 2.0e-6_WP  ! [-] Minimum |k^2 - k_zm^2| / k_zm^2 (|k/k_zm - 1| >= 1e-6)
+    INTEGER(I32)              :: NFreqs, Nnodes, Nob, Nm
+    INTEGER(I32)              :: j, f, k, im
+    REAL(WP)                  :: epsv, dx, dy, r, kr_sq
+    COMPLEX(WP)               :: k_rm, H0, p_acc
+    REAL(WP)    , ALLOCATABLE :: k_wave(:), w_4(:), k_zm(:), kappa_ref(:)
+    REAL(WP)    , ALLOCATABLE :: psi_z(:,:), psi_zs(:,:)
+    COMPLEX(WP) , ALLOCATABLE :: k_rm_tab(:,:)
+
+
+    ! Dimensions
+    NFreqs = size(Freqs)
+    Nnodes = size(nodes_pos, 1)
+    Nob    = size(obs_pos, 1)
+    Nm     = self % Nmodes
+
+    epsv   = self % eps
+
+    ALLOCATE(p_out(NFreqs, Nob))
+    p_out  = (0.0_WP, 0.0_WP)
+    k_wave = 2.0_WP * PI * Freqs / self % env % speed_sound_base
+    w_4    = 0.5_WP * PI * Freqs    ! [rad/s] w/4: -i*w*rho times the i/(4*rho) of G
+
+    ! Vertical modal shapes (frequency independent)
+    ALLOCATE(k_zm(Nm), psi_z(Nob, Nm), psi_zs(Nnodes, Nm))
+    do im = 1, Nm
+        k_zm(im)       = (2.0_WP * real(im, WP) - 1.0_WP) * PI / (2.0_WP * self % H)
+        psi_z(:, im)   = self % Psi_kzm(z=obs_pos(:, 3), kzm=k_zm(im))
+        psi_zs(:, im)  = self % Psi_kzm(z=nodes_pos(:, 3), kzm=k_zm(im))
+    end do
+
+    ! Horizontal wavenumbers: real (propagating) or pure imaginary (evanescent), and the
+    ! decay rate of the dominant term of each frequency (0 when a mode propagates). At an
+    ! exact modal cutoff (k = k_zm) the Hankel functions would get a zero argument (Y0 and
+    ! Y1 are singular there and k_rm * H1 gives 0 * Inf = NaN): k^2 - k_zm^2 is kept at
+    ! least CUTOFF_GAP * k_zm^2 away from zero, i.e. the mode is evaluated a relative
+    ! distance 1e-6 in k from its cutoff (FFT bins of usual records lie farther away)
+    ALLOCATE(k_rm_tab(Nm, NFreqs), kappa_ref(NFreqs))
+    do f = 1, NFreqs
+        do im = 1, Nm
+            kr_sq = k_wave(f)**2 - k_zm(im)**2
+            if (abs(kr_sq) < CUTOFF_GAP * k_zm(im)**2) kr_sq = sign(CUTOFF_GAP * k_zm(im)**2, kr_sq)
+
+            if (kr_sq >= 0.0_WP) then
+                k_rm_tab(im, f) = cmplx(sqrt(kr_sq), 0.0_WP, kind=WP)
+            else
+                k_rm_tab(im, f) = I1 * sqrt(-kr_sq)
+            end if
+        end do
+        kappa_ref(f) = aimag(k_rm_tab(1, f))
+    end do
+
+    ! Loop over observers and sources, then frequencies, modes innermost
+    do k = 1, Nob
+        do j = 1, Nnodes
+            if (order(j) /= SOURCE_MONOPOLE) cycle    ! Dipoles: dipolar_pressure_NM
+
+            ! Horizontal source-observer distance (floored at eps)
+            dx = obs_pos(k, 1) - nodes_pos(j, 1)
+            dy = obs_pos(k, 2) - nodes_pos(j, 2)
+            r  = sqrt(dx * dx + dy * dy)
+            if (r < epsv) r = epsv
+
+            do f = 1, NFreqs
+                p_acc = (0.0_WP, 0.0_WP)
+
+                ! Normal modes superposition: Psi_m(z) * Psi_m(zs) * H0(k_rm*r)
+                do im = 1, Nm
+                    k_rm = k_rm_tab(im, f)
+
+                    ! Evanescent tail: this and every later mode are negligible
+                    if ((aimag(k_rm) - kappa_ref(f)) * r > EVAN_CUTOFF) exit
+
+                    CALL compute_hankel_complex(k_rm, r, H0=H0)
+
+                    p_acc = p_acc + psi_z(k, im) * psi_zs(j, im) * H0
+                end do
+
+                ! Volume velocity Q times w/4
+                p_out(f, k) = p_out(f, k) + w_4(f) * Force(f, j, 1) * p_acc
+            end do
+        end do
+    end do
+
+    DEALLOCATE(k_zm, psi_z, psi_zs, k_rm_tab, kappa_ref)
+
+END SUBROUTINE monopolar_pressure_NM
 
 END MODULE AnalyticalNormalModes

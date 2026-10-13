@@ -64,7 +64,7 @@ the same names and arguments for every emitter:
 | `plot_line` | magnitude along the line P1 -> P2 |
 | `plot_sliceXY`, `plot_sliceXZ`, `plot_sliceVertical` | maps of the slices, with the nodes of the emitter drawn as points (`structure`) |
 | `plot_structure` | members and wind direction of a turbine or of every turbine of a farm (`mode='3D'`, `'xy'`, `'xz'`) |
-| `plot_sources` | positions of point sources and the amplitude of their force at every tone (bars up to 20 tones, lines above); a TimeSource also has its force series in time and the amplitude of its spectrum |
+| `plot_sources` | positions of point sources (dipoles as circles, monopoles as squares) and their amplitude at every tone, \|F\| [N] of a dipole or \|Q\| [m^3/s] of a monopole (bars up to 20 tones, lines above; with both kinds the monopoles go to a second axis on the right, hatched or dashed); a TimeSource also has its series in time and the amplitude of its spectrum |
 | `compute_sphere_metrics` | free-field radiation metrics of the sphere (Image Method) |
 | `compute_cylinder_metrics` | power flow through the cylinder |
 | `compute_point_source` | equivalent point source (free field and in situ), with its figures |
@@ -115,7 +115,8 @@ as the turbine script, except `--ws`, with the same titles and layout (the label
 ## Point sources
 
 `source.py` plots the files of the emitters `FrequencySource` and `TimeSource`: monopoles or dipoles at the positions of
-`Source_xyz`, with the complex force of `Source_Force` at every frequency. Same plots and options as the turbine
+`Source_xyz` (`Source_order`: 0 monopole, 1 dipole), with the complex amplitude of `Source_Force` at every frequency:
+the force [N] of a dipole, or the volume velocity Q [m^3/s] of a monopole in its first component (the other two 0). Same plots and options as the turbine
 script, except `--ws` and the turbine-only ones (`plot_structure`, `turbine_data`). The emitter of a file is its
 `Emitter` dataset; a file of another emitter is rejected with the script that reads it.
 

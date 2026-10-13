@@ -1,14 +1,17 @@
 ! ===============================================================================
 ! MODULE: FrequencySource
 ! ===============================================================================
-! Defines FrequencySource_t, an extension of ManualSources_t whose forces are
-! given directly in the frequency domain (FrequencySource.nml): a complex
-! force per frequency, source and component. The frequency axis is a list, a
-! grid (linear or logarithmic) or the rows of a file, and the forces are
-! written in the namelist, read from files or evaluated from text expressions
-! of the frequency f [Hz]; init builds both. There is no FFT window (get_enbw
-! keeps -1, so no ENBW dataset is written) and no radiation-impedance
-! correction, so the forces handed to the solver are the ones of the input.
+! Defines FrequencySource_t, an extension of ManualSources_t whose sources
+! are given directly in the frequency domain (FrequencySource.nml): a complex
+! amplitude per frequency, source and component, the force of a dipole or the
+! volume velocity Q of a monopole (first component only). The frequency axis
+! is a list, a grid (linear or logarithmic) or the rows of a file, and the
+! amplitudes are written in the namelist, read from files or evaluated from
+! text expressions of the frequency f [Hz]; init builds both and takes the
+! multipole order of every source from the reader. There is no FFT window
+! (get_enbw keeps -1, so no ENBW dataset is written) and no
+! radiation-impedance correction, so the amplitudes handed to the solver are
+! the ones of the input.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -21,7 +24,7 @@ MODULE FrequencySource
 USE CSVReader, ONLY: read_table
 USE ConfigTypes, ONLY: Config_t
 USE StringUtils, ONLY: to_upper
-USE SourceTypes, ONLY: SOURCE_DIPOLE
+USE SourceTypes, ONLY: SOURCE_MONOPOLE
 USE ManualSources, ONLY: ManualSources_t
 USE Kinds, ONLY: I32, WP, DEFAULT_I, MAX_PARSE_FREQ, MAX_PARSE_SRC
 USE ExpressionParser, ONLY: Expression_t, compile_expression, evaluate_expression
@@ -37,9 +40,10 @@ CHARACTER(len=2), PARAMETER :: COMPONENT(3) = ['Fx', 'Fy', 'Fz']    ! [-] Names 
 
 TYPE, EXTENDS(ManualSources_t) :: FrequencySource_t
     ! -------------------------------------------------------------------------
-    ! Point dipoles with a complex force per frequency. What the solver
-    ! receives is in ManualSources_t; this type builds it and keeps how the
-    ! input was given, to list it in the .dat summary with the forces.
+    ! Point monopoles and dipoles with a complex amplitude per frequency. What
+    ! the solver receives is in ManualSources_t; this type builds it and keeps
+    ! how the input was given, to list it in the .dat summary with the
+    ! amplitudes.
     ! -------------------------------------------------------------------------
 
     LOGICAL                         :: source_from_file      ! [-] Whether the positions were read from source_file
@@ -69,8 +73,10 @@ CONTAINS
 
 SUBROUTINE init_FrequencySource(self, config)
     ! -------------------------------------------------------------------------
-    ! Builds the emitter from the configuration: the positions, the frequency
-    ! axis and the forces, each one from the mode in which it was given.
+    ! Builds the emitter from the configuration: the positions and multipole
+    ! orders, the frequency axis and the forces (volume velocities for the
+    ! monopoles), each one from the mode in which it was given, and stops the
+    ! run if a monopole has something in its second or third component.
     ! -------------------------------------------------------------------------
 
     CLASS(FrequencySource_t), INTENT(INOUT) :: self      ! [-] Emitter instance
@@ -87,6 +93,7 @@ SUBROUTINE init_FrequencySource(self, config)
     self % xyz              = config % freq_source % source_xyz
     self % source_from_file = config % freq_source % source_from_file
     self % source_file      = config % freq_source % source_file
+    self % order            = config % freq_source % source_order
     self % freq_mode        = config % freq_source % freq_mode
     self % fmin             = config % freq_source % fmin
     self % fmax             = config % freq_source % fmax
@@ -100,9 +107,7 @@ SUBROUTINE init_FrequencySource(self, config)
 
     CALL build_frequency_axis(self, config)
     CALL build_forces(self, config)
-
-    ! Every source radiates as a point dipole
-    ALLOCATE(self % order(self % Nsources), source=SOURCE_DIPOLE)
+    CALL self % check_monopole_components(any(self % Force /= (0.0_WP, 0.0_WP), dim=1), 'force')
 
     write(nf_str, '(I0)') size(self % Freqs)
     self % name_suffix = '_Nf' // trim(nf_str)
@@ -349,10 +354,13 @@ END SUBROUTINE check_finite_force
 
 SUBROUTINE write_txt_FrequencySource(self, unit)
     ! -------------------------------------------------------------------------
-    ! Writes the sources block of the .dat summary: the title and positions of
-    ! ManualSources_t, how the input was given when it was not written in the
-    ! namelist (files, grid, expressions), and the forces, so that a change in
-    ! any of them is seen by check_update:
+    ! Writes the sources block of the .dat summary: the title, orders and
+    ! positions of ManualSources_t, how the input was given when it was not
+    ! written in the namelist (files, grid, expressions), and the forces, so
+    ! that a change in any of them is seen by check_update. If there is a
+    ! monopole, a line after the title of the force table says that its
+    ! volume velocity Q [m^3/s] is in the Fx columns (a set of dipoles keeps
+    ! the block it always had):
     ! - the complex force of every source at every frequency, with nine
     !   significant digits, if the table fits in what the namelist can hold
     !   by hand (MAX_PARSE_FREQ frequencies and MAX_PARSE_SRC sources). When
@@ -422,6 +430,8 @@ SUBROUTINE write_txt_FrequencySource(self, unit)
     by_hand = trim(self % freq_mode) == 'list' .and. trim(self % force_mode) == 'inline'
 
     write(unit, '(A)') 'Force [N]: peak complex amplitude, time factor exp(-i*w*t)'
+    if (any(self % order == SOURCE_MONOPOLE)) &
+        write(unit, '(A)') 'Monopoles   : volume velocity Q [m^3/s] in the Fx columns (Fy and Fz are 0)'
     if (fits) then
         write(unit, '(A)') '   f   s   Freq [Hz]          Re(Fx)          Im(Fx)          Re(Fy)' // &
                            '          Im(Fy)          Re(Fz)          Im(Fz)'

@@ -2,17 +2,22 @@
 ! Time-domain point sources configuration file
 ! =====================================================================
 ! Used when simulation_type = 'TimeSource' in Solver.nml: a few
-! hand-made point dipoles whose force is given as a real function of
-! time. The solver works in the frequency domain, so every series is
-! taken there with the FFT of the turbines (mean removed, Hann window),
-! and the forces keep that window (an ENBW of 1.5 bins is saved).
-! There is no radiation-impedance correction.
+! hand-made point sources, dipoles or monopoles, whose force (or volume
+! velocity) is given as a real function of time. The solver works in
+! the frequency domain, so every series is taken there with the FFT of
+! the turbines (mean removed, Hann window), and the sources keep that
+! window (an ENBW of 1.5 bins is saved). There is no
+! radiation-impedance correction.
 !
 ! Conventions
-!   - Frame, positions and force: as in FrequencySource.nml (x, y
-!     horizontal, z upwards with the free surface at z = 0; the force
-!     [N] is the one the source applies on the fluid, in the global
-!     frame). Sources are dipoles.
+!   - Frame, positions, orders and amplitudes: as in FrequencySource.nml
+!     (x, y horizontal, z upwards with the free surface at z = 0).
+!     source_order(i_s) = 1 (or left out) for a dipole, whose force [N]
+!     is the one the source applies on the fluid, in the global frame;
+!     0 for a monopole, whose volume velocity Q [m^3/s] goes in the
+!     first component, with '0' in the other two (any other value stops
+!     the run). The mean of every series is removed: a constant force
+!     or a constant volume flow does not radiate.
 !   - Time axis: Nt samples of [t_start, t_end), so
 !         dt = (t_end - t_start) / Nt      (printed when the run starts)
 !         record length T = t_end - t_start
@@ -36,17 +41,21 @@
 ! with # or ! are comments): time_file has one time per row, uniformly
 ! spaced; force_file has Nt rows and 3*Nsources columns,
 !     Fx1 Fy1 Fz1 Fx2 Fy2 Fz2 ...
-! The positions can also be read from source_file, one row x y z per
-! source, instead of source_xyz (Nsources is then -999 or the number of
-! rows). Written in this file there are at most 20 sources (source_xyz,
-! force_expr); read from files, any number (with force_file).
-! Paths are relative to the working directory.
+! (a monopole: Q in its first column, 0 in the other two). The positions
+! can also be read from source_file, one row x y z per source, with an
+! optional fourth column for the order (0 or 1; with three columns every
+! source is a dipole), instead of source_xyz and source_order (Nsources
+! is then -999 or the number of rows; source_order cannot be given with
+! source_file). Written in this file there are at most 20 sources
+! (source_xyz, source_order, force_expr); read from files, any number
+! (with force_file). Paths are relative to the working directory.
 ! =====================================================================
 
 &time_source_config
     Nsources = 1                                ! [-] Number of sources (-999 with source_file: its rows)
     source_xyz(1, 1:3) = 0.0, 0.0, -15.0        ! [m] Source 1
-    source_file = 'None'                        ! [-] Text file with the positions, instead of source_xyz
+    source_order(1) = 0                         ! [-] Source 1: 1 dipole, 0 monopole (1 if left out)
+    source_file = 'None'                        ! [-] Text file, rows x y z [order], instead of the two above
 
     ! --- Time axis: Nt samples of [t_start, t_end) --- !
     t_start = 0.0                               ! [s] First time
@@ -54,8 +63,9 @@
     Nt      = 2000                              ! [-] Number of samples: dt = 1 ms, Nyquist frequency = 500 Hz
     time_file = 'None'                          ! [-] Text file with the times, instead of the three values above
 
-    ! --- Force of every source: Fx, Fy, Fz [N] --- !
-    force_expr(1, 1:3) = '0', '0', '1000*sin(2*pi*50*t)'    ! Source 1: 50 Hz vertical force, amplitude 1000 N
+    ! --- Every source: Fx, Fy, Fz [N] (dipole) or Q [m^3/s], '0', '0' (monopole) --- !
+    !force_expr(1, 1:3) = '0', '0', '1000*sin(2*pi*50*t)'        ! Source 1: 50 Hz vertical force, amplitude 1000 N
+    force_expr(1, 1:3) = '2.0e-3*sin(2*pi*50*t)', '0', '0'    ! Source 1 as a monopole (source_order(1) = 0): Q of 2.0e-3 m^3/s at 50 Hz
     force_file = 'None'                         ! [-] Text file with the forces, instead of the expressions
 
     ! --- Frequencies passed to the solver --- !

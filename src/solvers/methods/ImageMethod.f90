@@ -4,11 +4,12 @@
 ! Defines ImageMethod_t, the concrete acoustic solver extending abstract
 ! AcousticSolver_t. It implements the Method of Images for a fluid layer
 ! bounded by two horizontal reflecting planes (e.g. free surface above,
-! seabed below): each real dipole source is mirrored into an infinite chain
-! of image dipoles above and below, with reflection coefficients and boundary
-! conditions applied per bounce, then the pressure field is computed as the
-! superposition of all real+image dipole contributions at each observer point
-! (with optional multi-observer chunked/parallel evaluation).
+! seabed below): each real source, monopole or dipole, is mirrored into a
+! chain of image sources above and below, with reflection coefficients and
+! boundary conditions applied per bounce, then the pressure field is
+! computed as the superposition of all real+image contributions at each
+! observer point, with one free-field kernel per multipole order (with
+! optional multi-observer chunked/parallel evaluation).
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -24,8 +25,8 @@ USE Emitter, ONLY: Emitter_t
 USE HDF5Utils, ONLY: save_variable
 USE FileUtils, ONLY: swap_extension
 USE ConfigTypes, ONLY: Config_ImageMethod_t, Config_t
-USE SourceTypes, ONLY: AcousticSource_t, SOURCE_DIPOLE
 USE AcousticSolver, ONLY: AcousticSolver_t, pressure_norm
+USE SourceTypes, ONLY: AcousticSource_t, SOURCE_DIPOLE, SOURCE_MONOPOLE
 
 IMPLICIT NONE
 
@@ -36,26 +37,29 @@ PUBLIC :: ImageMethod_t
 TYPE :: ImageSystem_t
     ! -------------------------------------------------------------------------
     ! Helper type used internally by the Method of Images to hold the full set
-    ! of real and image sources built from the original AcousticSource_t: their
-    ! coordinates, complex forces (vertical component flipped and attenuation
-    ! applied once per reflection) and the accumulated boundary-condition sign
-    ! of each image (product of the BC signs of every plane it was reflected
-    ! across; +1 for the real sources).
+    ! of real and image sources (the nodes) built from the original
+    ! AcousticSource_t: their coordinates, complex strengths (vertical
+    ! component flipped and attenuation applied once per reflection), the
+    ! accumulated boundary-condition sign of each image (product of the BC
+    ! signs of every plane it was reflected across; +1 for the real sources)
+    ! and the multipole order of each node, that of its real source.
     ! -------------------------------------------------------------------------
 
-    REAL(WP)    , ALLOCATABLE :: xyz(:,:)        ! [m] Nodes coordinates (Nnodes, 3)
-    COMPLEX(WP) , ALLOCATABLE :: Force(:,:,:)    ! [N] Force array (Nfreqs, Nnodes, 3)
-    INTEGER(I32), ALLOCATABLE :: BC_all(:)       ! [-] Accumulated boundary-condition sign of each node
+    REAL(WP)    , ALLOCATABLE :: xyz(:,:)       ! [m] Nodes coordinates (Nnodes, 3)
+    COMPLEX(WP) , ALLOCATABLE :: Force(:,:,:)   ! [N] Forces, or Q [m^3/s] in component 1 (Nfreqs, Nnodes, 3)
+    INTEGER(I32), ALLOCATABLE :: BC_all(:)      ! [-] Accumulated boundary-condition sign of each node (Nnodes)
+    INTEGER(I32), ALLOCATABLE :: order(:)       ! [-] Multipole order of each node, that of its real source (Nnodes)
 
 END TYPE ImageSystem_t
 
 
 TYPE, EXTENDS(AcousticSolver_t) :: ImageMethod_t
     ! -------------------------------------------------------------------------
-    ! Concrete acoustic solver implementing the Method of Images: real dipole
-    ! sources are reflected across an upper and a lower horizontal plane to build
-    ! an equivalent free-space system (image_system) whose superposed dipole
-    ! fields reproduce the effect of the bounded fluid layer on the pressure.
+    ! Concrete acoustic solver implementing the Method of Images: real
+    ! sources (monopoles and dipoles) are reflected across an upper and a
+    ! lower horizontal plane to build an equivalent free-space system
+    ! (image_system) whose superposed monopole and dipole fields reproduce
+    ! the effect of the bounded fluid layer on the pressure.
     ! -------------------------------------------------------------------------
 
     INTEGER(I32) :: N_images         = 30_I32       ! [-] Number of image levels to compute
@@ -64,10 +68,10 @@ TYPE, EXTENDS(AcousticSolver_t) :: ImageMethod_t
     INTEGER(I32) :: Lower_BC         = +1_I32       ! [-] Lower boundary condition, +1 for dp = 0
     REAL(WP)     :: Lower_HBC        = -30.0_WP     ! [m] z-coordinate of the lower plane, - depth_base
     REAL(WP)     :: up_R             = 1.0_WP       ! [-] Attenuation coefficient for upper boundary reflections
-    REAL(WP)     :: lw_R             = 0.5_WP       ! [-] Attenuation coefficient for lower boundary reflections
+    REAL(WP)     :: lw_R             = 1.0_WP       ! [-] Attenuation coefficient for lower boundary reflections
     REAL(WP)     :: eps              = 1.0e-6_WP    ! [m] Minimum source-observer distance used to floor r
 
-    TYPE(ImageSystem_t) :: image_system             ! [-] Full real+image dipole system (coords, forces, boundary tags)
+    TYPE(ImageSystem_t) :: image_system             ! [-] Full real+image system (coords, forces, boundary tags, orders)
 
     CONTAINS
 
@@ -77,6 +81,7 @@ TYPE, EXTENDS(AcousticSolver_t) :: ImageMethod_t
     PROCEDURE :: restore_default_images
     PROCEDURE :: method_of_images
     PROCEDURE :: dipole_pressure_images
+    PROCEDURE :: monopole_pressure_images
     PROCEDURE :: run_sphere
 
     ! --- Deferred (abstract) procedures --- !
@@ -116,9 +121,9 @@ SUBROUTINE init_ImageMethod(self, sources, config)
     CALL MOVE_ALLOC(sources % Freqs, self % sources % Freqs)
     CALL MOVE_ALLOC(sources % order, self % sources % order)
 
-    ! Only the dipole kernel is implemented
-    if (any(self % sources % order /= SOURCE_DIPOLE)) &
-        error stop "ImageMethod % init(): only dipole sources (order 1) are implemented"
+    ! Only the monopole and dipole kernels are implemented
+    if (any(self % sources % order /= SOURCE_DIPOLE .and. self % sources % order /= SOURCE_MONOPOLE)) &
+        error stop "ImageMethod % init(): only monopoles (order 0) and dipoles (order 1) are implemented"
 
     self % sources % geometry = sources % geometry
     self % env                = config % env
@@ -184,8 +189,13 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
     ! Evaluates the total radiated pressure field at an arbitrary set of
     ! observer points, for every source frequency. Observers are processed
     ! either one-by-one (serial) or split into chunks distributed over OpenMP
-    ! threads (in_cluster = .true.), each chunk being handed to
-    ! dipole_pressure_images together with the full real+image dipole system.
+    ! threads (in_cluster = .true.); the chunks split the observers, never the
+    ! sources. Each chunk is handed to one kernel per multipole order present
+    ! (dipole_pressure_images, monopole_pressure_images) together with the
+    ! full real+image system: every kernel skips the nodes of the other
+    ! orders, so the sources can be in any order, and the contributions are
+    ! summed. With dipoles only, the operations are those of the dipole
+    ! kernel alone.
     ! -------------------------------------------------------------------------
 
     CLASS(ImageMethod_t), INTENT(INOUT)            :: self                   ! [-] Solver instance
@@ -196,6 +206,7 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
     ! Local variables
     INTEGER(I32)              :: nobs, nf, bs, n_chunks, ichunk
     INTEGER(I32)              :: istart, iend, nb, i
+    LOGICAL                   :: has_dipoles, has_monopoles
     COMPLEX(WP) , ALLOCATABLE :: p_block(:,:)
 
 
@@ -226,6 +237,10 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
 
     if (.not. self % in_cluster) bs = 1_I32
 
+    ! Multipole orders present in the image system: only their kernels are called
+    has_dipoles   = any(self % image_system % order == SOURCE_DIPOLE)
+    has_monopoles = any(self % image_system % order == SOURCE_MONOPOLE)
+
     if (self % in_cluster) then
         n_chunks = (nobs + bs - 1_I32) / bs
 
@@ -237,15 +252,23 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
             iend   = min(istart + bs - 1_I32, nobs)
             nb     = iend - istart + 1_I32
 
-            ! Call kernel for this chunk (p_block will be allocated by the routine)
-            CALL self % dipole_pressure_images(observers(istart:iend, :), self % sources % Freqs, &
-                                               self % image_system % xyz, self % image_system % Force, &
-                                               self % image_system % BC_all, p_block)
+            ! Each kernel is called for this chunk only if there are sources of its order, and its
+            ! result is accumulated before the next call reuses p_block (non-overlapping slices -> no race)
+            if (has_dipoles) then
+                CALL self % dipole_pressure_images(observers(istart:iend, :), self % sources % Freqs, &
+                                                   self % image_system % xyz, self % image_system % Force, &
+                                                   self % image_system % BC_all, self % image_system % order, p_block)
+                total_pressure(:, istart:iend) = total_pressure(:, istart:iend) + p_block(:, 1:nb)
+                if (ALLOCATED(p_block)) DEALLOCATE(p_block)
+            end if
 
-            ! Accumulate results into the global array (non-overlapping slices -> no race)
-            total_pressure(:, istart:iend) = total_pressure(:, istart:iend) + p_block(:, 1:nb)
-
-            if (ALLOCATED(p_block)) DEALLOCATE(p_block)
+            if (has_monopoles) then
+                CALL self % monopole_pressure_images(observers(istart:iend, :), self % sources % Freqs, &
+                                                     self % image_system % xyz, self % image_system % Force, &
+                                                     self % image_system % BC_all, self % image_system % order, p_block)
+                total_pressure(:, istart:iend) = total_pressure(:, istart:iend) + p_block(:, 1:nb)
+                if (ALLOCATED(p_block)) DEALLOCATE(p_block)
+            end if
         end do
         !$OMP END PARALLEL DO
 
@@ -253,11 +276,21 @@ SUBROUTINE compute_pressure_ImageMethod(self, observers, block_size, total_press
 
         ! Serial: loop observers (keep 2D slice for compatibility)
         do i = 1, nobs
-            CALL self % dipole_pressure_images(observers(i:i, :), self % sources % Freqs, self % image_system % xyz, &
-                                               self % image_system % Force, self % image_system % BC_all, p_block)
-            total_pressure(:, i) = total_pressure(:, i) + p_block(:, 1)
+            if (has_dipoles) then
+                CALL self % dipole_pressure_images(observers(i:i, :), self % sources % Freqs, &
+                                                   self % image_system % xyz, self % image_system % Force, &
+                                                   self % image_system % BC_all, self % image_system % order, p_block)
+                total_pressure(:, i) = total_pressure(:, i) + p_block(:, 1)
+                if (ALLOCATED(p_block)) DEALLOCATE(p_block)
+            end if
 
-            if (ALLOCATED(p_block)) DEALLOCATE(p_block)
+            if (has_monopoles) then
+                CALL self % monopole_pressure_images(observers(i:i, :), self % sources % Freqs, &
+                                                     self % image_system % xyz, self % image_system % Force, &
+                                                     self % image_system % BC_all, self % image_system % order, p_block)
+                total_pressure(:, i) = total_pressure(:, i) + p_block(:, 1)
+                if (ALLOCATED(p_block)) DEALLOCATE(p_block)
+            end if
 
             ! Print progress every 100 observers
             if (mod(i, 100_I32) == 0_I32) then
@@ -387,9 +420,11 @@ SUBROUTINE build_image_system(self)
     ! method_of_images directly on the source arrays to generate the full
     ! chain of image z-positions, forces and boundary-condition tags, and
     ! assembles the resulting (x,y,z) coordinates by pairing each image with
-    ! its parent source's horizontal position. The image forces and tags are
-    ! moved (not copied) into the image system, and any previous image system
-    ! is freed first, so that old and new never coexist in memory.
+    ! its parent source's horizontal position. Every node takes the multipole
+    ! order of its parent source, which tells the kernels whether it is a
+    ! monopole or a dipole. The image forces and tags are moved (not copied)
+    ! into the image system, and any previous image system is freed first, so
+    ! that old and new never coexist in memory.
     ! -------------------------------------------------------------------------
 
     CLASS(ImageMethod_t), INTENT(INOUT) :: self    ! [-] Solver instance
@@ -398,7 +433,7 @@ SUBROUTINE build_image_system(self)
     REAL(WP)    , ALLOCATABLE :: z_all(:)
     COMPLEX(WP) , ALLOCATABLE :: Force_out(:,:,:)
     INTEGER(I32), ALLOCATABLE :: parent(:), BC_all(:)
-    INTEGER(I32)              :: total_nodes, j
+    INTEGER(I32)              :: Nnodes, j
 
 
     ! Sources are always stored as (NFreqs, Nsources, 3)
@@ -409,19 +444,23 @@ SUBROUTINE build_image_system(self)
     if (ALLOCATED(self % image_system % xyz))    DEALLOCATE(self % image_system % xyz)
     if (ALLOCATED(self % image_system % Force))  DEALLOCATE(self % image_system % Force)
     if (ALLOCATED(self % image_system % BC_all)) DEALLOCATE(self % image_system % BC_all)
+    if (ALLOCATED(self % image_system % order))  DEALLOCATE(self % image_system % order)
 
     ! Source arrays passed directly (INTENT(IN) dummies), no local copies
     CALL self % method_of_images(self % sources % xyz(:, 3), self % sources % Force, &
                                  z_all, Force_out, parent, BC_all)
 
     ! Image coordinates: horizontal position of the parent source, reflected z
-    total_nodes = size(z_all)
-    ALLOCATE(self % image_system % xyz(total_nodes, 3))
-    do j = 1, total_nodes
+    Nnodes = size(z_all)
+    ALLOCATE(self % image_system % xyz(Nnodes, 3))
+    do j = 1, Nnodes
         self % image_system % xyz(j, 1) = self % sources % xyz(parent(j), 1)
         self % image_system % xyz(j, 2) = self % sources % xyz(parent(j), 2)
         self % image_system % xyz(j, 3) = z_all(j)
     end do
+
+    ! Multipole order of every node: that of its parent source
+    self % image_system % order = self % sources % order(parent)
 
     ! Image forces and boundary-condition tags are moved in, not copied
     CALL MOVE_ALLOC(Force_out, self % image_system % Force)
@@ -469,7 +508,7 @@ END SUBROUTINE restore_default_images
 ! ===============================================================================
 SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
     ! -------------------------------------------------------------------------
-    ! Builds the full chain of image dipoles for each real source by repeated
+    ! Builds the full chain of images for each real source by repeated
     ! reflection across the upper and lower horizontal planes, N_images times
     ! in each direction. Starting from the real source, the upper chain
     ! alternately reflects across the lower then upper plane (and vice versa
@@ -480,50 +519,54 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
     ! along the chain, so an image reached after n_up upper and n_lw lower
     ! reflections carries (Upper_BC*up_R)**n_up * (Lower_BC*lw_R)**n_lw: the
     ! accumulated sign is stored in BC_all and the accumulated attenuation in
-    ! the image force. The result is a flat list of z-positions, forces and BC
-    ! signs (real source + all images) later consumed by dipole_pressure_images.
+    ! the image force. The same chain serves monopoles: their volume velocity
+    ! Q is in the first component (SourceTypes), which is only scaled by the
+    ! attenuation, and with the BC sign this is the image of a monopole; the
+    ! flip of the third component does not touch it (it is 0). The result is a
+    ! flat list of z-positions, forces and BC signs (real source + all images)
+    ! later consumed by dipole_pressure_images and monopole_pressure_images.
     ! -------------------------------------------------------------------------
 
     CLASS(ImageMethod_t), INTENT(IN)               :: self                ! [-] Solver instance
-    REAL(WP)            , INTENT(IN)               :: zi(:)               ! [m] z of the real sources (Nnodes)
-    COMPLEX(WP)         , INTENT(IN)               :: Force(:,:,:)        ! [N] Real source forces (NFreqs, Nnodes, 3)
-    REAL(WP)            , INTENT(OUT), ALLOCATABLE :: z_all(:)            ! [m] z of the real + image sources (Ntotal)
-    COMPLEX(WP)         , INTENT(OUT), ALLOCATABLE :: Force_out(:,:,:)    ! [N] Real + image forces (NFreqs, Ntotal, 3)
-    INTEGER(I32)        , INTENT(OUT), ALLOCATABLE :: parent(:)           ! [-] Parent source of each entry (Ntotal)
-    INTEGER(I32)        , INTENT(OUT), ALLOCATABLE :: BC_all(:)           ! [-] Cumulative BC sign per entry (Ntotal)
+    REAL(WP)            , INTENT(IN)               :: zi(:)               ! [m] z of the real sources (Nsources)
+    COMPLEX(WP)         , INTENT(IN)               :: Force(:,:,:)        ! [N] Real source forces (NFreqs, Nsources, 3)
+    REAL(WP)            , INTENT(OUT), ALLOCATABLE :: z_all(:)            ! [m] z of the real + image sources (Nnodes)
+    COMPLEX(WP)         , INTENT(OUT), ALLOCATABLE :: Force_out(:,:,:)    ! [N] Real + image forces (NFreqs, Nnodes, 3)
+    INTEGER(I32)        , INTENT(OUT), ALLOCATABLE :: parent(:)           ! [-] Parent source of each node (Nnodes)
+    INTEGER(I32)        , INTENT(OUT), ALLOCATABLE :: BC_all(:)           ! [-] Cumulative BC sign per node (Nnodes)
 
     ! Local variables
-    INTEGER(I32)                  :: Nnodes, NFreqs, total_nodes, idx, i_node, img_lvl
+    INTEGER(I32)                  :: Nsources, NFreqs, Nnodes, idx, i_s, img_lvl
     REAL(WP)                      :: z_upper, z_lower, att_u, att_l, Upper_HBC
     COMPLEX(WP)     , ALLOCATABLE :: F_upper(:,:), F_lower(:,:)
     CHARACTER(len=5)              :: last_plane_upper, last_plane_lower
     INTEGER(I32)                  :: BC_u, BC_l
 
-    Upper_HBC   = 0.0_WP
-    Nnodes      = size(zi)
-    NFreqs      = size(Force, 1)
-    total_nodes = Nnodes * (1_I32 + 2_I32 * self % N_images)
+    Upper_HBC = 0.0_WP
+    Nsources  = size(zi)
+    NFreqs    = size(Force, 1)
+    Nnodes    = Nsources * (1_I32 + 2_I32 * self % N_images)
 
-    ALLOCATE(z_all(total_nodes))
-    ALLOCATE(Force_out(NFreqs, total_nodes, 3))
-    ALLOCATE(parent(total_nodes))
-    ALLOCATE(BC_all(total_nodes))
+    ALLOCATE(z_all(Nnodes))
+    ALLOCATE(Force_out(NFreqs, Nnodes, 3))
+    ALLOCATE(parent(Nnodes))
+    ALLOCATE(BC_all(Nnodes))
     ALLOCATE(F_upper(NFreqs, 3))
     ALLOCATE(F_lower(NFreqs, 3))
 
     idx = 1_I32
-    do i_node = 1, Nnodes
-        ! Real dipole nodes
-        z_all(idx)           = zi(i_node)
-        Force_out(:, idx, :) = Force(:, i_node, :)
+    do i_s = 1, Nsources
+        ! Real source node
+        z_all(idx)           = zi(i_s)
+        Force_out(:, idx, :) = Force(:, i_s, :)
         BC_all(idx)          = 1_I32
-        parent(idx)          = i_node
+        parent(idx)          = i_s
         idx                  = idx + 1_I32
 
-        z_upper = zi(i_node)
-        z_lower = zi(i_node)
-        F_upper = Force(:, i_node, :)
-        F_lower = Force(:, i_node, :)
+        z_upper = zi(i_s)
+        z_lower = zi(i_s)
+        F_upper = Force(:, i_s, :)
+        F_lower = Force(:, i_s, :)
         BC_u    = 1_I32
         BC_l    = 1_I32
 
@@ -550,7 +593,7 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
             z_all(idx)           = z_upper
             Force_out(:, idx, :) = F_upper
             BC_all(idx)          = BC_u
-            parent(idx)          = i_node
+            parent(idx)          = i_s
             idx                  = idx + 1_I32
 
             ! --- 2. Lower reflection chain ---
@@ -572,7 +615,7 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
             z_all(idx)           = z_lower
             Force_out(:, idx, :) = F_lower
             BC_all(idx)          = BC_l
-            parent(idx)          = i_node
+            parent(idx)          = i_s
             idx                  = idx + 1_I32
         end do
     end do
@@ -580,32 +623,33 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
 END SUBROUTINE method_of_images
 
 
-SUBROUTINE dipole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_all, p_out)
+SUBROUTINE dipole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_all, order, p_out)
     ! -------------------------------------------------------------------------
     ! Evaluates the acoustic dipole Green's function for a block of observers,
-    ! summed over every real and image source, at every frequency. For each
-    ! source-observer pair it computes the separation vector and distance
-    ! (floored at eps to avoid the 1/r singularity), then the far/near-field
-    ! dipole pressure term F.r_hat * (1/r - i*k) * exp(i*k*r) / (4*pi*r),
-    ! weighted by the source's boundary-condition sign (BC_all), and
-    ! accumulates it into p_out. The frequency loop is the innermost one:
-    ! p_out(:, k), Force(:, j, :) and the wavenumbers are accessed with unit
-    ! stride, the frequency-independent factors of each pair are computed
-    ! once, and exp(i*k*r) is evaluated as cmplx(cos(k*r), sin(k*r)), so the
-    ! loop is vectorized with SIMD sin/cos. The sources are accumulated in the
-    ! same order as before (j ascending).
+    ! summed over every real and image dipole, at every frequency; the nodes
+    ! of another multipole order are skipped. For each source-observer pair
+    ! it computes the separation vector and distance (floored at eps to avoid
+    ! the 1/r singularity), then the far/near-field dipole pressure term
+    ! F.r_hat * (1/r - i*k) * exp(i*k*r) / (4*pi*r), weighted by the source's
+    ! boundary-condition sign (BC_all), and accumulates it into p_out. The
+    ! frequency loop is the innermost one: p_out(:, k), Force(:, j, :) and the
+    ! wavenumbers are accessed with unit stride, the frequency-independent
+    ! factors of each pair are computed once, and exp(i*k*r) is evaluated as
+    ! cmplx(cos(k*r), sin(k*r)), so the loop is vectorized with SIMD sin/cos.
+    ! The sources are accumulated in the same order as before (j ascending).
     ! -------------------------------------------------------------------------
 
     CLASS(ImageMethod_t), INTENT(IN)               :: self              ! [-] Solver instance
     REAL(WP)            , INTENT(IN)               :: obs_pos(:,:)      ! [m] Observers coords (Nob, 3)
     REAL(WP)            , INTENT(IN)               :: Freqs(:)          ! [Hz] Frequency vector (NFreqs)
-    REAL(WP)            , INTENT(IN)               :: nodes_pos(:,:)    ! [m] Real + image coords (Ntotal, 3)
-    COMPLEX(WP)         , INTENT(IN)               :: Force(:,:,:)      ! [N] Real + image forces (NFreqs, Ntotal, 3)
-    INTEGER(I32)        , INTENT(IN)               :: BC_all(:)         ! [-] BC sign of each source (Ntotal)
+    REAL(WP)            , INTENT(IN)               :: nodes_pos(:,:)    ! [m] Real + image coords (Nnodes, 3)
+    COMPLEX(WP)         , INTENT(IN)               :: Force(:,:,:)      ! [N] Real + image forces (NFreqs, Nnodes, 3)
+    INTEGER(I32)        , INTENT(IN)               :: BC_all(:)         ! [-] BC sign of each node (Nnodes)
+    INTEGER(I32)        , INTENT(IN)               :: order(:)          ! [-] Multipole order of each node (Nnodes)
     COMPLEX(WP)         , INTENT(OUT), ALLOCATABLE :: p_out(:,:)        ! [Pa] Pressure (NFreqs, Nob)
 
     ! Local variables
-    INTEGER(I32)              :: NFreqs, Ntotal, Nob
+    INTEGER(I32)              :: NFreqs, Nnodes, Nob
     INTEGER(I32)              :: j, f, k
     REAL(WP)    , ALLOCATABLE :: k_wave(:)
     REAL(WP)                  :: dx, dy, dz, r, r_inv, scal, kr, epsv
@@ -614,7 +658,7 @@ SUBROUTINE dipole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_all
 
     ! Dimensions
     NFreqs = size(Freqs)
-    Ntotal = size(nodes_pos, 1)
+    Nnodes = size(nodes_pos, 1)
     Nob    = size(obs_pos, 1)
 
     epsv   = self % eps
@@ -623,7 +667,9 @@ SUBROUTINE dipole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_all
     p_out  = (0.0_WP, 0.0_WP)
     k_wave = 2.0_WP * PI * Freqs / self % env % speed_sound_base
 
-    do j = 1, Ntotal
+    do j = 1, Nnodes
+        if (order(j) /= SOURCE_DIPOLE) cycle    ! Monopoles: monopole_pressure_images
+
         do k = 1, Nob
             ! Separation, distance (floored at eps) and frequency-independent factors of this pair
             dx = obs_pos(k, 1) - nodes_pos(j, 1)
@@ -646,6 +692,73 @@ SUBROUTINE dipole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_all
     end do
 
 END SUBROUTINE dipole_pressure_images
+
+
+SUBROUTINE monopole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_all, order, p_out)
+    ! -------------------------------------------------------------------------
+    ! Evaluates the acoustic monopole Green's function for a block of
+    ! observers, summed over every real and image monopole, at every
+    ! frequency; the nodes of another multipole order are skipped. A monopole
+    ! of volume velocity Q (first component of Force, see SourceTypes)
+    ! radiates p = -i*w*rho*Q * exp(i*k*r) / (4*pi*r), weighted by its
+    ! boundary-condition sign (BC_all); the attenuation of the reflections is
+    ! already in Force. The frequency factor -i*w*rho/(4*pi) = -i*f*rho/2 is
+    ! computed once per frequency and the distance factor BC/r once per pair
+    ! (r floored at eps). Same loop structure as dipole_pressure_images:
+    ! frequencies innermost, with unit stride and SIMD sin/cos.
+    ! -------------------------------------------------------------------------
+
+    CLASS(ImageMethod_t), INTENT(IN)               :: self              ! [-] Solver instance
+    REAL(WP)            , INTENT(IN)               :: obs_pos(:,:)      ! [m] Observers coords (Nob, 3)
+    REAL(WP)            , INTENT(IN)               :: Freqs(:)          ! [Hz] Frequency vector (NFreqs)
+    REAL(WP)            , INTENT(IN)               :: nodes_pos(:,:)    ! [m] Real + image coords (Nnodes, 3)
+    COMPLEX(WP)         , INTENT(IN)               :: Force(:,:,:)      ! [m^3/s] Q in component 1 (NFreqs, Nnodes, 3)
+    INTEGER(I32)        , INTENT(IN)               :: BC_all(:)         ! [-] BC sign of each node (Nnodes)
+    INTEGER(I32)        , INTENT(IN)               :: order(:)          ! [-] Multipole order of each node (Nnodes)
+    COMPLEX(WP)         , INTENT(OUT), ALLOCATABLE :: p_out(:,:)        ! [Pa] Pressure (NFreqs, Nob)
+
+    ! Local variables
+    INTEGER(I32)              :: NFreqs, Nnodes, Nob
+    INTEGER(I32)              :: j, f, k
+    REAL(WP)    , ALLOCATABLE :: k_wave(:)
+    COMPLEX(WP) , ALLOCATABLE :: src_fac(:)
+    REAL(WP)                  :: dx, dy, dz, r, scal, kr, epsv
+
+
+    ! Dimensions
+    NFreqs = size(Freqs)
+    Nnodes = size(nodes_pos, 1)
+    Nob    = size(obs_pos, 1)
+
+    epsv   = self % eps
+
+    ALLOCATE(p_out(NFreqs, Nob))
+    p_out   = (0.0_WP, 0.0_WP)
+    k_wave  = 2.0_WP * PI * Freqs / self % env % speed_sound_base
+    src_fac = cmplx(0.0_WP, -0.5_WP * Freqs * self % env % density_base, kind=WP)    ! -i*w*rho/(4*pi)
+
+    do j = 1, Nnodes
+        if (order(j) /= SOURCE_MONOPOLE) cycle    ! Dipoles: dipole_pressure_images
+
+        do k = 1, Nob
+            ! Distance (floored at eps) and frequency-independent factor of this pair
+            dx = obs_pos(k, 1) - nodes_pos(j, 1)
+            dy = obs_pos(k, 2) - nodes_pos(j, 2)
+            dz = obs_pos(k, 3) - nodes_pos(j, 3)
+            r  = sqrt(dx * dx + dy * dy + dz * dz)
+            if (r < epsv) r = epsv
+            scal = real(BC_all(j), WP) / r
+
+            ! Frequencies innermost: unit stride, vectorized (SIMD sin/cos)
+            !$OMP SIMD PRIVATE(kr)
+            do f = 1, NFreqs
+                kr          = k_wave(f) * r
+                p_out(f, k) = p_out(f, k) + Force(f, j, 1) * src_fac(f) * cmplx(cos(kr), sin(kr), kind=WP) * scal
+            end do
+        end do
+    end do
+
+END SUBROUTINE monopole_pressure_images
 
 
 ! ===============================================================================

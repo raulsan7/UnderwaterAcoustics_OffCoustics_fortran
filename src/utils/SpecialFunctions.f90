@@ -29,13 +29,16 @@ SUBROUTINE compute_hankel_complex(k_rm, r, H0, H1)
     ! Efficiently computes the Hankel functions of the first kind (H0 and H1)
     ! for a wavenumber that is either purely real (propagative mode, using the
     ! intrinsic Bessel functions) or purely imaginary (evanescent mode, using
-    ! the bessel_k0/bessel_k1 polynomial approximations below).
+    ! the bessel_k0/bessel_k1 polynomial approximations below). H0 and H1 are
+    ! optional and only the ones present are evaluated: the monopole kernel
+    ! asks for H0 alone and saves the Bessel functions of order 1, the dipole
+    ! kernel asks for both and gets the same values as before.
     ! -------------------------------------------------------------------------
 
-    COMPLEX(WP), INTENT(IN)  :: k_rm    ! [1/m] Horizontal wavenumber (purely real or purely imaginary)
-    REAL(WP)   , INTENT(IN)  :: r       ! [m] Horizontal distance
-    COMPLEX(WP), INTENT(OUT) :: H0      ! [-] Hankel function of the first kind, order 0, at k_rm * r
-    COMPLEX(WP), INTENT(OUT) :: H1      ! [-] Hankel function of the first kind, order 1, at k_rm * r
+    COMPLEX(WP), INTENT(IN)            :: k_rm    ! [1/m] Horizontal wavenumber (purely real or purely imaginary)
+    REAL(WP)   , INTENT(IN)            :: r       ! [m] Horizontal distance
+    COMPLEX(WP), INTENT(OUT), OPTIONAL :: H0      ! [-] Hankel function of the first kind, order 0, at k_rm * r
+    COMPLEX(WP), INTENT(OUT), OPTIONAL :: H1      ! [-] Hankel function of the first kind, order 1, at k_rm * r
 
     ! Local variables
     REAL(WP) :: Z_real, Y
@@ -44,13 +47,13 @@ SUBROUTINE compute_hankel_complex(k_rm, r, H0, H1)
     if (abs(aimag(k_rm)) <= 1.0e-12_WP) then
         ! Propagative mode: k_rm is real
         Z_real = real(k_rm, WP) * r
-        H0     = cmplx(bessel_jn(0, Z_real), bessel_yn(0, Z_real), kind=WP)
-        H1     = cmplx(bessel_jn(1, Z_real), bessel_yn(1, Z_real), kind=WP)
+        if (present(H0)) H0 = cmplx(bessel_jn(0, Z_real), bessel_yn(0, Z_real), kind=WP)
+        if (present(H1)) H1 = cmplx(bessel_jn(1, Z_real), bessel_yn(1, Z_real), kind=WP)
     else
         ! Evanescent mode: k_rm is purely imaginary
-        Y  = abs(aimag(k_rm)) * r
-        H0 = cmplx(0.0_WP, -2.0_WP / PI * bessel_k0(Y), kind=WP)
-        H1 = cmplx(-2.0_WP / PI * bessel_k1(Y), 0.0_WP, kind=WP)
+        Y = abs(aimag(k_rm)) * r
+        if (present(H0)) H0 = cmplx(0.0_WP, -2.0_WP / PI * bessel_k0(Y), kind=WP)
+        if (present(H1)) H1 = cmplx(-2.0_WP / PI * bessel_k1(Y), 0.0_WP, kind=WP)
     end if
 
 END SUBROUTINE compute_hankel_complex

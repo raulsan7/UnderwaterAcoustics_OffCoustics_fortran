@@ -76,11 +76,12 @@ END TYPE Config_WindFarm_t
 TYPE :: Config_FrequencySource_t
     ! -------------------------------------------------------------------------
     ! Holds the frequency-domain point sources read from FrequencySource.nml:
-    ! their positions (written in the namelist or read from a file), the way
-    ! the frequency axis is given (a list, a grid or a file) and the way the
-    ! complex forces are given (written in the namelist, text expressions of f
-    ! or files). The axis and the forces of the grid, file and expression
-    ! modes are built by FrequencySource % init.
+    ! their positions and multipole orders (written in the namelist or read
+    ! from a file), the way the frequency axis is given (a list, a grid or a
+    ! file) and the way the complex forces, or the volume velocities of the
+    ! monopoles, are given (written in the namelist, text expressions of f or
+    ! files). The axis and the forces of the grid, file and expression modes
+    ! are built by FrequencySource % init.
     ! -------------------------------------------------------------------------
 
     ! --- Input parameters --- !
@@ -88,9 +89,10 @@ TYPE :: Config_FrequencySource_t
     INTEGER(I32)                    :: Nfreqs                ! [-] Number of frequencies (DEFAULT_I: rows of freq_file)
     REAL(WP)          , ALLOCATABLE :: Freqs(:)              ! [Hz] Frequency vector of the list mode (Nfreqs)
     REAL(WP)          , ALLOCATABLE :: source_xyz(:,:)       ! [m] Source coordinates (Nsources, 3)
-    COMPLEX(WP)       , ALLOCATABLE :: Force(:,:,:)          ! [N] Complex force written inline (Nfreqs, Nsources, 3)
+    INTEGER(I32)      , ALLOCATABLE :: source_order(:)       ! [-] Multipole order of every source (Nsources)
+    COMPLEX(WP)       , ALLOCATABLE :: Force(:,:,:)          ! [N] Force or Q, written inline (Nfreqs, Nsources, 3)
     LOGICAL                         :: source_from_file      ! [-] Whether the positions are read from source_file
-    CHARACTER(len=200)              :: source_file           ! [-] File with one row x, y, z per source
+    CHARACTER(len=200)              :: source_file           ! [-] File with one row x, y, z [, order] per source
     CHARACTER(len=10)               :: freq_mode             ! [-] Frequency axis: 'list', 'grid' or 'file'
     REAL(WP)                        :: fmin                  ! [Hz] First frequency of the grid
     REAL(WP)                        :: fmax                  ! [Hz] Last frequency of the grid
@@ -108,17 +110,19 @@ END TYPE Config_FrequencySource_t
 TYPE :: Config_TimeSource_t
     ! -------------------------------------------------------------------------
     ! Holds the time-domain point sources read from TimeSource.nml: their
-    ! positions (written in the namelist or read from a file), the time axis
-    ! (a uniform axis or a file), the force of every source and component (a
-    ! text expression of t, or a file) and the frequencies that are kept after
-    ! the FFT.
+    ! positions and multipole orders (written in the namelist or read from a
+    ! file), the time axis (a uniform axis or a file), the force of every
+    ! source and component, or the volume velocity of a monopole (a text
+    ! expression of t, or a file) and the frequencies that are kept after the
+    ! FFT.
     ! -------------------------------------------------------------------------
 
     ! --- Input parameters --- !
     INTEGER(I32)                    :: Nsources           ! [-] Number of sources
     REAL(WP)          , ALLOCATABLE :: source_xyz(:,:)    ! [m] Source coordinates (Nsources, 3)
+    INTEGER(I32)      , ALLOCATABLE :: source_order(:)    ! [-] Multipole order of every source (Nsources)
     LOGICAL                         :: source_from_file   ! [-] Whether the positions are read from source_file
-    CHARACTER(len=200)              :: source_file        ! [-] File with one row x, y, z per source
+    CHARACTER(len=200)              :: source_file        ! [-] File with one row x, y, z [, order] per source
     LOGICAL                         :: time_from_file     ! [-] Whether the time axis is read from time_file
     CHARACTER(len=200)              :: time_file          ! [-] File with one time per row
     REAL(WP)                        :: t_start            ! [s] First time of the uniform axis

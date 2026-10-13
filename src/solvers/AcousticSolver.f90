@@ -107,7 +107,7 @@ ABSTRACT INTERFACE
         IMPORT :: AcousticSolver_t, AcousticSource_t, Config_t
 
         CLASS(AcousticSolver_t), INTENT(INOUT)              :: self       ! [-] Solver instance
-        TYPE(AcousticSource_t) , INTENT(INOUT), ALLOCATABLE :: sources    ! [-] Acoustic point-dipole sources
+        TYPE(AcousticSource_t) , INTENT(INOUT), ALLOCATABLE :: sources    ! [-] Acoustic point sources
         TYPE(Config_t)         , INTENT(INOUT), ALLOCATABLE :: config     ! [-] Global configuration
 
     END SUBROUTINE init_i
@@ -438,7 +438,7 @@ FUNCTION check_observers_distances(self, observers) RESULT(valid)
     ! -------------------------------------------------------------------------
     ! Flags the observers lying closer than mask_distance to any source node.
     ! At such distances the observer sits inside (or right on) the structure,
-    ! where the point-dipole field is meaningless and nearly singular. Returns
+    ! where the point-source field is meaningless and nearly singular. Returns
     ! .true. for every valid observer; the run continues either way.
     ! -------------------------------------------------------------------------
 

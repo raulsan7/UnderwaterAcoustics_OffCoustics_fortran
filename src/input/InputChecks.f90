@@ -5,9 +5,10 @@
 ! OpenFAST reading window and decimation factors (check_time_window), the
 ! length of a string against its Config_t component (check_fits), the
 ! existence of a file named in a namelist (check_file_exists), vectors given
-! in full or not at all (check_all_or_none), observer counts (check_count)
-! and the positions of the point sources (check_source_positions). Each one
-! stops the run when its check fails.
+! in full or not at all (check_all_or_none), observer counts (check_count),
+! the positions (check_source_positions) and multipole orders
+! (check_source_orders) of the point sources. Each one stops the run when its
+! check fails.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -18,11 +19,13 @@
 MODULE InputChecks
 
 USE Kinds, ONLY: I32, WP, DEFAULT_R, DEFAULT_I
+USE SourceTypes, ONLY: SOURCE_MONOPOLE, SOURCE_DIPOLE
 
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: check_time_window, check_fits, check_file_exists, check_all_or_none, check_count, check_source_positions
+PUBLIC :: check_time_window, check_fits, check_file_exists, check_all_or_none, check_count, &
+          check_source_positions, check_source_orders
 
 
 CONTAINS
@@ -185,5 +188,28 @@ SUBROUTINE check_source_positions(source_xyz, Nsources, block_name)
     end do
 
 END SUBROUTINE check_source_positions
+
+
+SUBROUTINE check_source_orders(order, block_name)
+    ! -------------------------------------------------------------------------
+    ! Stops the run when a point source has an unsupported multipole order.
+    ! -------------------------------------------------------------------------
+
+    INTEGER(I32)    , INTENT(IN) :: order(:)       ! [-] Multipole order of each source
+    CHARACTER(len=*), INTENT(IN) :: block_name     ! [-] Namelist group shown in the error message
+
+    ! Local variables
+    INTEGER(I32) :: i_s
+
+
+    do i_s = 1, size(order, kind=I32)
+        if (order(i_s) /= SOURCE_MONOPOLE .and. order(i_s) /= SOURCE_DIPOLE) then
+            write(*, '(A,I0,A,I0,A)') " ERROR: &" // block_name // ": source ", i_s, " has invalid order = ", &
+                                      order(i_s), " (must be 0 [SOURCE_MONOPOLE] or 1 [SOURCE_DIPOLE])"
+            error stop
+        end if
+    end do
+
+END SUBROUTINE check_source_orders
 
 END MODULE InputChecks

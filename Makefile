@@ -161,10 +161,10 @@ $(BUILD)/SignalProcessing.o: $(SRC_DIR)/utils/SignalProcessing.f90 $(BUILD)/Kind
 $(BUILD)/SpecialFunctions.o: $(SRC_DIR)/utils/SpecialFunctions.f90 $(BUILD)/Kinds.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/InputChecks.o: $(SRC_DIR)/input/InputChecks.f90 $(BUILD)/Kinds.o | $(BUILD)
+$(BUILD)/InputChecks.o: $(SRC_DIR)/input/InputChecks.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/InputEmitters.o: $(SRC_DIR)/input/InputEmitters.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/StringUtils.o $(BUILD)/CSVReader.o $(BUILD)/ExpressionParser.o $(BUILD)/InputChecks.o | $(BUILD)
+$(BUILD)/InputEmitters.o: $(SRC_DIR)/input/InputEmitters.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/StringUtils.o $(BUILD)/CSVReader.o $(BUILD)/ExpressionParser.o $(BUILD)/InputChecks.o $(BUILD)/SourceTypes.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/InputSolver.o: $(SRC_DIR)/input/InputSolver.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/InputChecks.o | $(BUILD)

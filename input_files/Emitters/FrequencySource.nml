@@ -2,28 +2,41 @@
 ! Frequency-domain point sources configuration file
 ! =====================================================================
 ! Used when simulation_type = 'FrequencySource' in Solver.nml: hand-made
-! point dipoles, each one radiating at every frequency of the axis with
-! a complex force given directly in the frequency domain (no OpenFAST,
-! no FFT window, no radiation-impedance correction).
+! point sources, dipoles or monopoles, each one radiating at every
+! frequency of the axis with a complex amplitude given directly in the
+! frequency domain (no OpenFAST, no FFT window, no radiation-impedance
+! correction).
 !
 ! Conventions
 !   - Frame: x, y horizontal, z positive upwards, free surface at z = 0
 !     (sources must be in the water: z between the seabed and 0).
-!   - Force: force applied by the source on the fluid [N], components
-!     (Fx, Fy, Fz) in the global frame. The pressure of every dipole is
+!   - Multipole order of every source: source_order(i_s) = 1 for a
+!     dipole, 0 for a monopole; a source left out is a dipole.
+!   - Dipole: force applied by the source on the fluid [N], components
+!     (Fx, Fy, Fz) in the global frame. Its pressure is
 !         p = (F.r_hat) * (1/r - i*k) * exp(i*k*r) / (4*pi*r)
+!   - Monopole: volume velocity Q [m^3/s] (volume of fluid displaced
+!     per second by the source), given in the FIRST component of the
+!     force inputs; the second and third are left out or 0 (any other
+!     value stops the run). Its pressure is
+!         p = -i*w*rho*Q * exp(i*k*r) / (4*pi*r),   w = 2*pi*f
+!     with rho the density of Environment.nml. Its free-field pressure
+!     amplitude at 1 m is f*rho*|Q|/2, so a source level SL [dB re
+!     1 uPa @ 1 m, RMS] is obtained with
+!         |Q| = 2*sqrt(2)*1.0e-6 * 10**(SL/20) / (f*rho)
 !   - Time factor exp(-i*2*pi*f*t), the one of the acoustic solvers:
 !         F(t) = Re{ (Re F + i*Im F) * exp(-i*2*pi*f*t) }
 !     so Re F + i*Im F is the PEAK complex amplitude (not RMS) of a
 !     sinusoidal force: A*cos(2*pi*f*t) is Re F = A, and A*sin(2*pi*f*t)
-!     is Im F = +A. The relative phase between sources and between
-!     components is kept.
+!     is Im F = +A. The same holds for Q. The relative phase between
+!     sources and between components is kept.
 !   - Every frequency is a tone. If the frequencies are uniformly spaced
 !     (step df), the plots also give the PSD and the 1/3 octave bands,
 !     taking each tone as the power of a band df wide. To represent a
 !     continuous force spectrum S_F(f) [N^2/Hz], give
 !         |F_k| = sqrt(2 * S_F(f_k) * df)
-!     For isolated tones the PSD has no physical meaning (it depends on
+!     (and |Q_k| = sqrt(2 * S_Q(f_k) * df) for a monopole). For
+!     isolated tones the PSD has no physical meaning (it depends on
 !     df): use the SPL.
 !
 ! Every item is given in ONE of these ways: the one that has values is
@@ -32,6 +45,11 @@
 !   Positions   (a) source_xyz(i_s, 1:3) = x, y, z: at most 20 sources
 !               (b) source_file: one row x y z per source, any number;
 !                   Nsources is then -999 or the number of rows
+!   Orders      (a) source_order(i_s) = 0 or 1, with source_xyz (1 if
+!                   left out)
+!               (b) a fourth column of source_file, x y z order (with
+!                   three columns every source is a dipole);
+!                   source_order cannot be given with source_file
 !   Frequencies (a) freqs = f1, f2, ... (Nfreqs values): at most 200
 !               (b) a grid of Nfreqs frequencies from fmin (> 0) to fmax:
 !                   freq_spacing = 'linear' (constant step) or 'log'
@@ -40,15 +58,18 @@
 !                   is then -999 or the number of rows
 !               The frequencies must be positive and strictly increasing.
 !   Forces      (a) force_re(i_f, i_s, 1:3) = Fx, Fy, Fz, one line per
-!                   frequency and source (every entry mandatory), and
+!                   frequency and source (every entry mandatory; for a
+!                   monopole only force_re(i_f, i_s, 1) = Re Q), and
 !                   force_im (optional, 0 if left out): at most 200
 !                   frequencies and 20 sources
 !               (b) force_re_expr(i_s, 1:3) and force_im_expr(i_s, 1:3):
 !                   text expressions of the frequency f [Hz], '0' if left
-!                   out, evaluated at every frequency of the axis: at most
-!                   20 sources. The language is the one of TimeSource.nml
-!                   (with f instead of t): numbers (12, 0.5, 1.0e-3), the
-!                   constant pi, the operators + - * / **, parentheses and
+!                   out, evaluated at every frequency of the axis (for a
+!                   monopole only force_re_expr(i_s, 1) and
+!                   force_im_expr(i_s, 1)): at most 20 sources. The
+!                   language is the one of TimeSource.nml (with f instead
+!                   of t): numbers (12, 0.5, 1.0e-3), the constant pi,
+!                   the operators + - * / **, parentheses and
 !                       sin cos tan asin acos atan sinh cosh tanh exp log
 !                       log10 sqrt abs floor atan2 min max mod modulo
 !                       step(x)  1 if x >= 0, else 0
@@ -56,10 +77,13 @@
 !                   Examples:  '100/(1+(f/50)**2)'
 !                              '500*exp(-((f-80)/10)**2)'
 !                              '200*step(f-40)*step(60-f)'
+!                              '2*sqrt(2)*1.0e-6*10**(150/20)/(f*1025)'
+!                              (Q of a monopole of SL = 150 dB, rho = 1025)
 !               (c) force_re_file and force_im_file: one row per frequency
 !                   of the axis and 3*Nsources columns,
 !                       Fx1 Fy1 Fz1 Fx2 Fy2 Fz2 ...
-!                   force_im_file = 'None' means an imaginary part 0.
+!                   (a monopole: Q in its first column, 0 in the other
+!                   two); force_im_file = 'None' means an imaginary part 0.
 ! Text files: blanks, tabs or commas separate the values; lines starting
 ! with # or ! are comments. Paths are relative to the working directory.
 ! In this file comments start with ! (a / ends the namelist group).
@@ -69,7 +93,8 @@
     ! --- Sources --- !
     Nsources = 1                                ! [-] Number of sources (-999 with source_file: its rows)
     source_xyz(1, 1:3) = 0.0, 0.0, -10.0        ! [m] (a) Source 1: x, y, z
-    source_file = 'None'                        ! [-] (b) Text file with the positions, instead of source_xyz
+    source_order(1) = 1                         ! [-] (a) Source 1: 1 dipole, 0 monopole (1 if left out)
+    source_file = 'None'                        ! [-] (b) Text file, rows x y z [order], instead of (a)
 
     ! --- Frequency axis --- !
     Nfreqs = 3                                  ! [-] Number of frequencies (-999 with freq_file: its rows)
@@ -79,13 +104,17 @@
     freq_spacing = 'linear'                     ! [-] (b) Spacing of the grid: 'linear' or 'log'
     freq_file = 'None'                          ! [-] (c) Text file with the frequencies
 
-    ! --- Force of every source: Fx, Fy, Fz [N] --- !
+    ! --- Every source: Fx, Fy, Fz [N] (dipole) or Q [m^3/s] in the first component (monopole) --- !
     force_re(1, 1, 1:3) =  10.0, 0.0, 0.0       ! [N] (a) f1 =  15 Hz, source 1: force along x
     force_re(2, 1, 1:3) = 300.0, 0.0, 0.0       ! [N] (a) f2 =  50 Hz, source 1
     force_re(3, 1, 1:3) = 100.0, 0.0, 0.0       ! [N] (a) f3 = 100 Hz, source 1
+    ! force_re(1, 1, 1) = 1.0e-3                ! [m^3/s] (a) Source 1 as a monopole: source_order(1) = 0,
+    ! force_re(2, 1, 1) = 3.0e-2                ! [m^3/s] (a) the three lines above commented out, and
+    ! force_re(3, 1, 1) = 1.0e-2                ! [m^3/s] (a) Re Q at f1, f2, f3 (Fy and Fz left out)
     ! force_im(2, 1, 1:3) = 0.0, 0.0, 50.0                      ! [N] (a) Imaginary part (optional)
     ! force_re_expr(1, 1:3) = '0', '0', '100/(1+(f/50)**2)'     ! [N] (b) Real part as a function of f [Hz]
     ! force_im_expr(1, 1:3) = '0', '0', '0'                     ! [N] (b) Imaginary part ('0' if left out)
+    ! force_re_expr(1, 1) = '2*sqrt(2)*1.0e-6*10**(150/20)/(f*1025)'    ! [m^3/s] (b) Monopole of SL = 150 dB
     force_re_file = 'None'                      ! [-] (c) Text file with the real part
     force_im_file = 'None'                      ! [-] (c) Text file with the imaginary part ('None' = 0)
 /

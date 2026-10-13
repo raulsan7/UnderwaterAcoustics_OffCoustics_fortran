@@ -26,7 +26,12 @@ PUBLIC :: GeometricData_t, AcousticSource_t, SOURCE_MONOPOLE, SOURCE_DIPOLE
 
 ! ===============================================================================
 ! MULTIPOLE ORDER LABELS
-! A label per source, so that higher orders can be added later without new arrays
+! A label per source, so that higher orders can be added later without new arrays.
+! The strength of a source is in Force(:, s, :) of AcousticSource_t:
+! - dipole: the force applied on the fluid, components (Fx, Fy, Fz) [N];
+! - monopole: the volume velocity Q [m^3/s] in component 1, components 2 and 3
+!   are 0. Its pressure is p = -i*w*rho*Q * exp(i*k*r) / (4*pi*r).
+! All of them are peak complex amplitudes with time factor exp(-i*w*t).
 ! ===============================================================================
 INTEGER(I32), PARAMETER :: SOURCE_MONOPOLE = 0_I32    ! [-] Monopole source (order 0)
 INTEGER(I32), PARAMETER :: SOURCE_DIPOLE   = 1_I32    ! [-] Dipole source (order 1)
@@ -52,15 +57,17 @@ END TYPE GeometricData_t
 
 TYPE :: AcousticSource_t
     ! -------------------------------------------------------------------------
-    ! Abstract representation of the acoustic excitation produced by a wind
-    ! turbine: a set of point sources with their coordinates, complex nodal
-    ! forces per frequency, the associated frequency vector and the multipole
-    ! order of every source. This is the hand-off object between
+    ! Abstract representation of the acoustic excitation produced by an
+    ! emitter (a wind turbine, a wind farm or hand-made sources): a set of
+    ! point sources with their coordinates, complex strengths per frequency
+    ! (forces of the dipoles, volume velocities of the monopoles; see the
+    ! labels above), the associated frequency vector and the multipole order
+    ! of every source. This is the hand-off object between
     ! Emitter_t % to_source and the acoustic solvers.
     ! -------------------------------------------------------------------------
 
     REAL(WP)    , ALLOCATABLE :: xyz(:,:)        ! [m] Acoustic source coordinates (Nsources, 3)
-    COMPLEX(WP) , ALLOCATABLE :: Force(:,:,:)    ! [N] Complex source forces (Nfreqs, Nsources, 3)
+    COMPLEX(WP) , ALLOCATABLE :: Force(:,:,:)    ! [N] Forces; monopole: Q [m^3/s] in 1 (Nfreqs, Nsources, 3)
     REAL(WP)    , ALLOCATABLE :: Freqs(:)        ! [Hz] Frequency vector (Nfreqs)
     INTEGER(I32), ALLOCATABLE :: order(:)        ! [-] Multipole order per source (SOURCE_MONOPOLE, SOURCE_DIPOLE, ...)
     TYPE(GeometricData_t)     :: geometry        ! [-] Reference geometry and labels of the emitter

@@ -230,7 +230,7 @@ SUBROUTINE read_ImageMethod_config(path, config)
     UpperBC             = -1_I32
     LowerBC             = 1_I32
     attenuation_surface = 1.0_WP
-    attenuation_bottom  = 0.5_WP
+    attenuation_bottom  = 1.0_WP
     epsilon             = 1.0e-6_WP
 
     ! --- 3. Open and read namelist file --- !

@@ -1,9 +1,12 @@
 ! ===============================================================================
 ! MODULE: CSVReader
 ! ===============================================================================
-! Defines the reader of comma-separated lookup tables: the linear
-! interpolation of one column of a CSV table at a given wind speed
-! (read_curve), and the parser of one of its rows (parse_csv_row).
+! Defines the readers of numeric text tables: the linear interpolation of
+! one column of a CSV lookup table at a given wind speed (read_curve) and the
+! parser of one of its rows (parse_csv_row); the reader of the tables of the
+! manual sources, blanks, tabs or commas between values (read_table); and
+! the count of the values of the first data row of such a table
+! (count_table_columns), to read tables with an optional column.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -20,10 +23,61 @@ USE StringUtils, ONLY: split_tokens
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: read_curve, read_table
+PUBLIC :: read_curve, read_table, count_table_columns
 
 
 CONTAINS
+
+
+FUNCTION count_table_columns(path) RESULT(ncols)
+    ! -------------------------------------------------------------------------
+    ! Counts the values in the first data row of a text table. Commas and TABs
+    ! are treated as blanks, and blank lines and lines starting with '#' or
+    ! '!' are skipped, as in read_table. Used by read_source_file to tell a
+    ! file of positions (x y z) from one with the multipole orders
+    ! (x y z order); read_table then stops the run if a later row has another
+    ! number of values.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN) :: path       ! [-] Path to the text file
+    INTEGER(I32)                 :: ncols      ! [-] Number of values in the first data row
+
+    ! Local variables
+    INTEGER(I32)                   :: unit_num, ios, i
+    CHARACTER(len=:) , ALLOCATABLE :: line
+    CHARACTER(len=32), ALLOCATABLE :: tokens(:)
+
+
+    open(newunit=unit_num, file=path, status='old', action='read', iostat=ios)
+    if (ios /= 0_I32) then
+        write(*,*) "ERROR: Could not open the table file: ", path
+        error stop
+    end if
+
+    do
+        CALL read_full_line(unit_num, line, ios)
+        if (ios /= 0_I32) then
+            write(*,*) "ERROR: No data rows in the table file: ", path
+            close(unit_num)
+            error stop
+        end if
+
+        do i = 1, len(line)
+            if (line(i:i) == ',' .or. line(i:i) == achar(9)) line(i:i) = ' '
+        end do
+
+        line = adjustl(line)
+        if (len_trim(line) == 0_I32) cycle
+        if (line(1:1) == '#' .or. line(1:1) == '!') cycle
+
+        CALL split_tokens(line, tokens)
+        ncols = size(tokens, kind=I32)
+        exit
+    end do
+
+    close(unit_num)
+
+END FUNCTION count_table_columns
 
 
 FUNCTION read_curve(filename, ws, col_idx) RESULT(val)

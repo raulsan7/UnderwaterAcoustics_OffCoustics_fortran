@@ -1,15 +1,16 @@
 ! ===============================================================================
 ! MODULE: TimeSource
 ! ===============================================================================
-! Defines TimeSource_t, an extension of ManualSources_t whose forces are given
-! in the time domain (TimeSource.nml): a real series of the force of every
-! source and component, read from a file or evaluated from a text expression
-! of t. The solver works in the frequency domain, so init takes the series
-! there with compute_rfft, the same routine that does it for the accelerations
-! of a turbine: mean removed, Hann window, one-sided spectrum. The forces are
-! therefore windowed and get_enbw returns HANN_ENBW, and a tone is read with
-! its full amplitude only if its frequency is a multiple of the frequency
-! resolution 1 / (record length).
+! Defines TimeSource_t, an extension of ManualSources_t whose sources are
+! given in the time domain (TimeSource.nml): a real series of every source
+! and component, the force of a dipole or the volume velocity Q of a
+! monopole (first component only), read from a file or evaluated from a text
+! expression of t. The solver works in the frequency domain, so init takes
+! the series there with compute_rfft, the same routine that does it for the
+! accelerations of a turbine: mean removed, Hann window, one-sided spectrum.
+! The amplitudes are therefore windowed and get_enbw returns HANN_ENBW, and a
+! tone is read with its full amplitude only if its frequency is a multiple of
+! the frequency resolution 1 / (record length).
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -23,7 +24,7 @@ USE Kinds, ONLY: I32, WP, DEFAULT_R
 USE CSVReader, ONLY: read_table
 USE ConfigTypes, ONLY: Config_t
 USE HDF5Utils, ONLY: save_variable
-USE SourceTypes, ONLY: SOURCE_DIPOLE
+USE SourceTypes, ONLY: SOURCE_MONOPOLE
 USE ManualSources, ONLY: ManualSources_t
 USE SignalProcessing, ONLY: compute_rfft, HANN_ENBW
 USE ExpressionParser, ONLY: Expression_t, compile_expression, evaluate_expression
@@ -36,9 +37,10 @@ PUBLIC :: TimeSource_t
 
 TYPE, EXTENDS(ManualSources_t) :: TimeSource_t
     ! -------------------------------------------------------------------------
-    ! Point dipoles with a force series in time. The series and the input that
-    ! produced them are kept, besides the spectrum of ManualSources_t, to be
-    ! saved and listed in the .dat summary.
+    ! Point monopoles and dipoles with a series in time (force, or volume
+    ! velocity Q of a monopole). The series and the input that produced them
+    ! are kept, besides the spectrum of ManualSources_t, to be saved and
+    ! listed in the .dat summary.
     ! -------------------------------------------------------------------------
 
     INTEGER(I32)                    :: Nt                 ! [-] Number of time samples
@@ -72,9 +74,11 @@ CONTAINS
 
 SUBROUTINE init_TimeSource(self, config)
     ! -------------------------------------------------------------------------
-    ! Builds the emitter from the configuration: the time axis (printing its
-    ! time step), the force series and their spectrum, which is what the
-    ! solver receives.
+    ! Builds the emitter from the configuration: the multipole orders, the
+    ! time axis (printing its time step), the series and their spectrum, which
+    ! is what the solver receives. A monopole with something in the second or
+    ! third component of its series stops the run; this is checked on the
+    ! series, before the FFT removes their mean.
     ! -------------------------------------------------------------------------
 
     CLASS(TimeSource_t), INTENT(INOUT) :: self      ! [-] Emitter instance
@@ -88,6 +92,7 @@ SUBROUTINE init_TimeSource(self, config)
     self % title     = 'TIME-DOMAIN SOURCES'
 
     self % Nsources         = config % time_source % Nsources
+    self % order            = config % time_source % source_order
     self % xyz              = config % time_source % source_xyz
     self % skipf            = config % time_source % skipf
     self % fmin             = config % time_source % fmin
@@ -100,11 +105,9 @@ SUBROUTINE init_TimeSource(self, config)
     self % force_file       = config % time_source % force_file
     self % force_expr       = config % time_source % force_expr
 
-    ! Every source radiates as a point dipole
-    ALLOCATE(self % order(self % Nsources), source=SOURCE_DIPOLE)
-
     CALL build_time_axis(self, config)
     CALL build_force_series(self)
+    CALL self % check_monopole_components(any(self % Ft /= 0.0_WP, dim=1), 'force series')
     CALL take_to_frequency_domain(self)
 
     write(nt_str, '(I0)') self % Nt
@@ -309,13 +312,14 @@ END SUBROUTINE save_params_TimeSource
 
 SUBROUTINE write_txt_TimeSource(self, unit)
     ! -------------------------------------------------------------------------
-    ! Writes the sources block of the .dat summary: the title and positions of
-    ! ManualSources_t, the file of the positions if they were read from one,
-    ! the time axis, the frequencies kept and the origin of the forces (their
-    ! expressions, or the file). A series is too long to be
-    ! listed, so for every force it writes the sum of its values, of their
-    ! squares and of the values weighted by the sample index: any change in the
-    ! series changes them, and check_update sees it.
+    ! Writes the sources block of the .dat summary: the title, orders and
+    ! positions of ManualSources_t, the file of the positions if they were read
+    ! from one, the time axis, the frequencies kept and the origin of the
+    ! forces (their expressions, or the file), with a line saying that the Fx
+    ! series of a monopole is its volume velocity Q [m^3/s] if there is one. A
+    ! series is too long to be listed, so for every force it writes the sum of
+    ! its values, of their squares and of the values weighted by the sample
+    ! index: any change in the series changes them, and check_update sees it.
     ! -------------------------------------------------------------------------
 
     CLASS(TimeSource_t), INTENT(IN) :: self    ! [-] Emitter instance
@@ -345,6 +349,8 @@ SUBROUTINE write_txt_TimeSource(self, unit)
     write(unit, *)
 
     write(unit, '(A)') 'Force [N] as a function of time (the Hann-windowed FFT of every series goes to the solver)'
+    if (any(self % order == SOURCE_MONOPOLE)) &
+        write(unit, '(A)') 'Monopoles   : volume velocity Q [m^3/s] in the Fx columns (Fy and Fz are 0)'
     if (self % force_from_file) then
         write(unit, '(A)') 'Force file  : ' // trim(self % force_file)
     else

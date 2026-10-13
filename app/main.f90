@@ -5,9 +5,9 @@
 ! simulation pipeline: load the .nml configuration, build the emitter (a single
 ! wind turbine, a whole wind farm, or point sources with forces given in the
 ! frequency or in the time domain) and solve its structural dynamics when it
-! has any, translate the physical forces into acoustic point-dipole sources,
-! then instantiate and run the requested acoustic propagation solver over all
-! post-processing outputs.
+! has any, translate the physical forces into acoustic point sources (dipoles,
+! and the monopoles of the manual sources), then instantiate and run the
+! requested acoustic propagation solver over all post-processing outputs.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es

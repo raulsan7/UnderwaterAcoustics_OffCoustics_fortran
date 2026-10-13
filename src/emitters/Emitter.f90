@@ -63,7 +63,7 @@ ABSTRACT INTERFACE
 
         CLASS(Emitter_t)      , INTENT(INOUT)            :: self       ! [-] Emitter instance
         TYPE(Config_t)        , INTENT(IN)               :: config     ! [-] Global configuration
-        TYPE(AcousticSource_t), INTENT(OUT), ALLOCATABLE :: sources    ! [-] Acoustic point-dipole sources
+        TYPE(AcousticSource_t), INTENT(OUT), ALLOCATABLE :: sources    ! [-] Acoustic point sources
 
     END SUBROUTINE to_source_i
 

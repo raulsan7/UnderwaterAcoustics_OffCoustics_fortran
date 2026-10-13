@@ -18,11 +18,12 @@
 MODULE InputEmitters
 
 USE Kinds
-USE CSVReader, ONLY: read_table
 USE ConfigTypes, ONLY: Config_t
 USE StringUtils, ONLY: to_upper
+USE CSVReader, ONLY: read_table, count_table_columns
+USE SourceTypes, ONLY: SOURCE_MONOPOLE, SOURCE_DIPOLE
 USE ExpressionParser, ONLY: Expression_t, compile_expression
-USE InputChecks, ONLY: check_time_window, check_fits, check_source_positions, check_file_exists
+USE InputChecks, ONLY: check_time_window, check_fits, check_source_positions, check_file_exists, check_source_orders
 
 IMPLICIT NONE
 
@@ -357,6 +358,10 @@ SUBROUTINE read_frequency_source_config(path, config)
     ! one of these ways:
     ! - positions: source_xyz written in the namelist (at most MAX_PARSE_SRC
     !   sources), or source_file, one row x, y, z per source (any number);
+    ! - multipole orders (SOURCE_MONOPOLE = 0, SOURCE_DIPOLE = 1): with the
+    !   positions, source_order written in the namelist (an entry left out is
+    !   a dipole) or a fourth column of source_file (with three columns every
+    !   source is a dipole); source_order cannot be given with source_file;
     ! - frequency axis: the list freqs (at most MAX_PARSE_FREQ), a grid of
     !   Nfreqs frequencies from fmin to fmax (freq_spacing 'linear' or 'log'),
     !   or freq_file, one frequency per row (any number);
@@ -366,13 +371,19 @@ SUBROUTINE read_frequency_source_config(path, config)
     !   (force_re_expr and force_im_expr, '0' by default, one per source and
     !   component), or the files force_re_file and force_im_file (Nfreqs rows,
     !   3 * Nsources columns; no force_im_file means an imaginary part 0).
+    !   A monopole takes its volume velocity Q [m^3/s] from the first
+    !   component only: written in the namelist, its second and third
+    !   components can be left out (they become 0); any value other than 0
+    !   there stops the run in FrequencySource % init.
     ! A way is chosen by giving its values (an entry of a list, a value other
     ! than -999.0, a file name other than 'None' or an expression other than
     ! '0'). Two ways of the same item stop the run; with none, the written
     ! list and forces are taken, as before. The values written in the
     ! namelist are read into buffers of fixed size initialised to NaN, so that
     ! a missing entry, or one given beyond Nsources or Nfreqs, stops the run
-    ! instead of being used as zero. The expressions are compiled here to
+    ! instead of being used as zero; source_order starts at DEFAULT_I, so an
+    ! order given beyond Nsources stops the run too. The orders are resolved
+    ! before the forces, which need them. The expressions are compiled here to
     ! report a syntax error before any work is done. The grid, the files and
     ! the expressions are turned into the frequency vector and the forces by
     ! FrequencySource % init. The result is packed into config % freq_source.
@@ -393,10 +404,12 @@ SUBROUTINE read_frequency_source_config(path, config)
     REAL(WP)                      :: nan
     REAL(WP)        , ALLOCATABLE :: xyz(:,:)
     TYPE(Expression_t)            :: expr
+    INTEGER(I32)    , ALLOCATABLE :: order(:)
 
     ! Input variables
     INTEGER(I32)        :: Nsources
     INTEGER(I32)        :: NFreqs
+    INTEGER(I32)        :: source_order(MAX_PARSE_SRC)
     REAL(WP)            :: Freqs(MAX_PARSE_FREQ)
     REAL(WP)            :: source_xyz(MAX_PARSE_SRC, 3)
     REAL(WP)            :: force_re(MAX_PARSE_FREQ, MAX_PARSE_SRC, 3)
@@ -412,21 +425,22 @@ SUBROUTINE read_frequency_source_config(path, config)
     CHARACTER(len=256)  :: force_im_expr(MAX_PARSE_SRC, 3)
 
     ! --- 1. Configuration namelist --- !
-    NAMELIST /frequency_source_config/ &
-        Nsources,                      &
-        source_xyz,                    &
-        source_file,                   &
-        NFreqs,                        &
-        Freqs,                         &
-        fmin,                          &
-        fmax,                          &
-        freq_spacing,                  &
-        freq_file,                     &
-        force_re,                      &
-        force_im,                      &
-        force_re_expr,                 &
-        force_im_expr,                 &
-        force_re_file,                 &
+    NAMELIST /frequency_source_config/  &
+        Nsources,                       &
+        source_xyz,                     &
+        source_order,                   &
+        source_file,                    &
+        NFreqs,                         &
+        Freqs,                          &
+        fmin,                           &
+        fmax,                           &
+        freq_spacing,                   &
+        freq_file,                      &
+        force_re,                       &
+        force_im,                       &
+        force_re_expr,                  &
+        force_im_expr,                  &
+        force_re_file,                  &
         force_im_file
 
 
@@ -437,6 +451,7 @@ SUBROUTINE read_frequency_source_config(path, config)
     Nfreqs        = DEFAULT_I
     Freqs         = nan
     source_xyz    = nan
+    source_order  = DEFAULT_I
     force_re      = nan
     force_im      = 0.0_WP
     fmin          = DEFAULT_R
@@ -471,7 +486,7 @@ SUBROUTINE read_frequency_source_config(path, config)
     source_from_file = to_upper(trim(source_file)) /= 'NONE'
 
     if (source_from_file) then
-        CALL read_source_file(source_file, source_xyz, Nsources, 'frequency_source_config', xyz)
+        CALL read_source_file(source_file, source_xyz, Nsources, source_order, 'frequency_source_config', xyz, order)
     else if (Nsources < 1_I32 .or. Nsources > MAX_PARSE_SRC) then
         write(*, '(A,I0,A,I0,A)') "ERROR: &frequency_source_config: Nsources = ", Nsources, &
                                   " is out of bounds [1, ", MAX_PARSE_SRC, "]"
@@ -570,7 +585,16 @@ SUBROUTINE read_frequency_source_config(path, config)
     else
         CALL check_source_positions(source_xyz, Nsources, 'frequency_source_config')
         xyz = source_xyz(1:Nsources, :)
+
+        if (any(source_order(Nsources+1:) /= DEFAULT_I)) then
+            write(*, '(A,I0)') " ERROR: &frequency_source_config: source_order has entries beyond Nsources = ", &
+                               Nsources
+            error stop
+        end if
+        order = merge(SOURCE_DIPOLE, source_order(1:Nsources), source_order(1:Nsources) == DEFAULT_I)
     end if
+
+    CALL check_source_orders(order, 'frequency_source_config')
 
     ! --- 7. Forces: written in the namelist, expressions of f, or files --- !
     CALL check_fits(force_re_file, config % freq_source % force_re_file, 'force_re_file')
@@ -623,6 +647,11 @@ SUBROUTINE read_frequency_source_config(path, config)
 
         do i_s = 1, Nsources
             do i_f = 1, Nfreqs
+                ! A monopole has only its first component (Q): the other two, left out, are 0
+                if (order(i_s) == SOURCE_MONOPOLE) then
+                    WHERE (.not. ieee_is_finite(force_re(i_f, i_s, 2:3))) force_re(i_f, i_s, 2:3) = 0.0_WP
+                end if
+
                 if (.not. all(ieee_is_finite(force_re(i_f, i_s, :)))) then
                     write(*, '(A,I0,A,I0,A)') " ERROR: &frequency_source_config: force_re(", i_f, ", ", i_s, &
                                               ", 1:3) is missing or not finite"
@@ -689,6 +718,7 @@ SUBROUTINE read_frequency_source_config(path, config)
         fs % Nsources         = Nsources
         fs % Nfreqs           = Nfreqs
         fs % source_xyz       = xyz
+        fs % source_order     = order
         fs % source_from_file = source_from_file
         fs % source_file      = trim(source_file)
         fs % freq_mode        = freq_mode
@@ -715,14 +745,18 @@ SUBROUTINE read_time_source_config(path, config)
     ! -------------------------------------------------------------------------
     ! Reads TimeSource.nml: the &time_source_config block with the source
     ! positions (source_xyz written in the namelist, at most MAX_PARSE_SRC
-    ! sources, or source_file, one row x, y, z per source, any number), the
-    ! time axis (Nt samples of [t_start, t_end), or the times of a file), the
+    ! sources, or source_file, one row x, y, z per source, any number) and
+    ! multipole orders (source_order written in the namelist, an entry left
+    ! out being a dipole, or a fourth column of source_file; as in
+    ! read_frequency_source_config), the time axis (Nt samples of [t_start, t_end), or the times of a file), the
     ! force of every source and component (a text expression of t, default
     ! '0', at most MAX_PARSE_SRC sources, or a file with Nt rows and
     ! 3 * Nsources columns) and the frequencies kept after the FFT (skipf, fmin,
-    ! fmax). The values written in the namelist are read into buffers of fixed
-    ! size initialised to NaN, so that a position that is missing, or given
-    ! beyond Nsources, stops the run. Every expression is compiled here to
+    ! fmax). A monopole takes its volume velocity Q [m^3/s] from the first
+    ! component (force_expr(i_s, 1) or its first column of force_file). The
+    ! values written in the namelist are read into buffers of fixed size
+    ! initialised to NaN (DEFAULT_I for the orders), so that a position that
+    ! is missing, or a position or order given beyond Nsources, stops the run. Every expression is compiled here to
     ! report a syntax error before any work is done; the series themselves are
     ! built by TimeSource % init. The result is packed into config % time_source.
     ! -------------------------------------------------------------------------
@@ -740,12 +774,14 @@ SUBROUTINE read_time_source_config(path, config)
     LOGICAL                       :: source_from_file
     REAL(WP)                      :: nan
     REAL(WP)        , ALLOCATABLE :: xyz(:,:)
+    INTEGER(I32)    , ALLOCATABLE :: order(:)
     TYPE(Expression_t)            :: expr
 
     ! Input variables
     INTEGER(I32)        :: Nsources
     INTEGER(I32)        :: Nt
     INTEGER(I32)        :: skipf
+    INTEGER(I32)        :: source_order(MAX_PARSE_SRC)
     REAL(WP)            :: source_xyz(MAX_PARSE_SRC, 3)
     REAL(WP)            :: t_start
     REAL(WP)            :: t_end
@@ -757,36 +793,38 @@ SUBROUTINE read_time_source_config(path, config)
     CHARACTER(len=256)  :: force_expr(MAX_PARSE_SRC, 3)
 
     ! --- 1. Configuration namelist --- !
-    NAMELIST /time_source_config/ &
-        Nsources,                 &
-        source_xyz,               &
-        source_file,              &
-        time_file,                &
-        t_start,                  &
-        t_end,                    &
-        Nt,                       &
-        force_file,               &
-        force_expr,               &
-        skipf,                    &
-        fmin,                     &
+    NAMELIST /time_source_config/   &
+        Nsources,                   &
+        source_xyz,                 &
+        source_order,               &
+        source_file,                &
+        time_file,                  &
+        t_start,                    &
+        t_end,                      &
+        Nt,                         &
+        force_file,                 &
+        force_expr,                 &
+        skipf,                      &
+        fmin,                       &
         fmax
 
 
     ! --- 2. Defaults: NaN marks a position that was not given --- !
     nan = ieee_value(0.0_WP, IEEE_QUIET_NAN)
 
-    Nsources    = DEFAULT_I
-    source_xyz  = nan
-    source_file = 'None'
-    time_file   = 'None'
-    t_start    = DEFAULT_R
-    t_end      = DEFAULT_R
-    Nt         = DEFAULT_I
-    force_file = 'None'
-    force_expr = '0'
-    skipf      = 1_I32
-    fmin       = DEFAULT_R
-    fmax       = DEFAULT_R
+    Nsources     = DEFAULT_I
+    source_xyz   = nan
+    source_order = DEFAULT_I
+    source_file  = 'None'
+    time_file    = 'None'
+    t_start      = DEFAULT_R
+    t_end        = DEFAULT_R
+    Nt           = DEFAULT_I
+    force_file   = 'None'
+    force_expr   = '0'
+    skipf        = 1_I32
+    fmin         = DEFAULT_R
+    fmax         = DEFAULT_R
 
     ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
@@ -810,7 +848,7 @@ SUBROUTINE read_time_source_config(path, config)
     source_from_file = to_upper(trim(source_file)) /= 'NONE'
 
     if (source_from_file) then
-        CALL read_source_file(source_file, source_xyz, Nsources, 'time_source_config', xyz)
+        CALL read_source_file(source_file, source_xyz, Nsources, source_order, 'time_source_config', xyz, order)
         CALL check_source_positions(xyz, Nsources, 'time_source_config')
     else
         if (Nsources < 1_I32 .or. Nsources > MAX_PARSE_SRC) then
@@ -821,7 +859,16 @@ SUBROUTINE read_time_source_config(path, config)
 
         CALL check_source_positions(source_xyz, Nsources, 'time_source_config')
         xyz = source_xyz(1:Nsources, :)
+
+        if (any(source_order(Nsources+1:) /= DEFAULT_I)) then
+            write(*, '(A,I0)') " ERROR: &time_source_config: source_order has entries beyond Nsources = ", &
+                               Nsources
+            error stop
+        end if
+        order = merge(SOURCE_DIPOLE, source_order(1:Nsources), source_order(1:Nsources) == DEFAULT_I)
     end if
+
+    CALL check_source_orders(order, 'time_source_config')
 
     ! --- 5. Time axis: a uniform one, or the times of a file --- !
     CALL check_fits(time_file, config % time_source % time_file, 'time_file')
@@ -914,6 +961,7 @@ SUBROUTINE read_time_source_config(path, config)
     associate(ts => config % time_source)
         ts % Nsources         = Nsources
         ts % source_from_file = source_from_file
+        ts % source_order     = order
         ts % source_file      = trim(source_file)
         ts % time_file        = trim(time_file)
         ts % t_start          = t_start
@@ -930,27 +978,35 @@ SUBROUTINE read_time_source_config(path, config)
 END SUBROUTINE read_time_source_config
 
 
-SUBROUTINE read_source_file(source_file, source_xyz, Nsources, block_name, xyz)
+SUBROUTINE read_source_file(source_file, source_xyz, Nsources, source_order, block_name, xyz, order)
     ! -------------------------------------------------------------------------
     ! Reads the positions of the sources from source_file, one row x, y, z per
-    ! source (blanks, tabs or commas; lines starting with # or ! are
-    ! comments), with no limit on their number. Nsources becomes the number of
-    ! rows; if it was also given in the namelist, it must be that number. The
-    ! positions cannot be written in the namelist (source_xyz) as well. A
-    ! coordinate that is not finite stops the run; the rest of the checks are
-    ! those of check_source_positions.
+    ! source, and optionally their multipole orders in a fourth column (0
+    ! monopole, 1 dipole; with three columns every source is a dipole), with
+    ! blanks, tabs or commas as separators and lines starting with # or ! as
+    ! comments, and no limit on their number. The number of columns is the one
+    ! of the first data row (count_table_columns), and read_table stops the
+    ! run if another row differs. Nsources becomes the number of rows; if it
+    ! was also given in the namelist, it must be that number. Neither the
+    ! positions (source_xyz) nor the orders (source_order) can be written in
+    ! the namelist as well. A coordinate that is not finite, or an order that
+    ! is not exactly 0 or 1, stops the run; the rest of the checks are those
+    ! of check_source_positions.
     ! -------------------------------------------------------------------------
 
     USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_is_finite
 
-    CHARACTER(len=*), INTENT(IN)               :: source_file        ! [-] Path to the file of positions
-    REAL(WP)        , INTENT(IN)               :: source_xyz(:,:)    ! [m] Positions of the namelist (NaN: not given)
-    INTEGER(I32)    , INTENT(INOUT)            :: Nsources           ! [-] Number of sources: as read, then the rows
-    CHARACTER(len=*), INTENT(IN)               :: block_name         ! [-] Namelist group shown in the error messages
-    REAL(WP)        , INTENT(OUT), ALLOCATABLE :: xyz(:,:)           ! [m] Positions of the file (Nsources, 3)
+    CHARACTER(len=*), INTENT(IN)               :: source_file       ! [-] Path to the file of positions
+    REAL(WP)        , INTENT(IN)               :: source_xyz(:,:)   ! [m] Positions of the namelist (NaN: not given)
+    INTEGER(I32)    , INTENT(INOUT)            :: Nsources          ! [-] Number of sources: as read, then the rows
+    INTEGER(I32)    , INTENT(IN)               :: source_order(:)   ! [-] Orders of the namelist (DEFAULT_I: not given)
+    CHARACTER(len=*), INTENT(IN)               :: block_name        ! [-] Namelist group shown in the error messages
+    REAL(WP)        , INTENT(OUT), ALLOCATABLE :: xyz(:,:)          ! [m] Positions of the file (Nsources, 3)
+    INTEGER(I32)    , INTENT(OUT), ALLOCATABLE :: order(:)          ! [-] Orders of the file, 0 or 1 (Nsources)
 
     ! Local variables
-    INTEGER(I32) :: i_s
+    REAL(WP)    , ALLOCATABLE :: table(:,:)
+    INTEGER(I32)              :: i_s, n_cols
 
 
     CALL check_file_exists(source_file, 'source_file', block_name)
@@ -960,7 +1016,21 @@ SUBROUTINE read_source_file(source_file, source_xyz, Nsources, block_name, xyz)
         error stop
     end if
 
-    CALL read_table(trim(source_file), 3_I32, xyz)
+    if (any(source_order /= DEFAULT_I)) then
+        write(*, '(A)') " ERROR: &" // block_name // ": source_order cannot be given with source_file " // &
+                        "(the orders go in its fourth column)"
+        error stop
+    end if
+
+    n_cols = count_table_columns(trim(source_file))
+    if (n_cols /= 3_I32 .and. n_cols /= 4_I32) then
+        write(*, '(A,I0,A)') " ERROR: &" // block_name // ": source_file has ", n_cols, &
+                             " columns (x y z, or x y z order)"
+        error stop
+    end if
+
+    CALL read_table(trim(source_file), n_cols, table)
+    xyz = table(:, 1:3)
 
     if (Nsources /= DEFAULT_I .and. Nsources /= size(xyz, 1)) then
         write(*, '(A,I0,A,I0,A)') " ERROR: &" // block_name // ": Nsources = ", Nsources, " and source_file has ", &
@@ -977,6 +1047,19 @@ SUBROUTINE read_source_file(source_file, source_xyz, Nsources, block_name, xyz)
             error stop
         end if
     end do
+
+    if (n_cols == 4_I32) then
+        do i_s = 1, Nsources
+            if (table(i_s, 4) /= real(SOURCE_MONOPOLE, WP) .and. table(i_s, 4) /= real(SOURCE_DIPOLE, WP)) then
+                write(*, '(A,I0,A)') " ERROR: &" // block_name // ": the order of source ", i_s, &
+                                     " in source_file must be 0 (monopole) or 1 (dipole)"
+                error stop
+            end if
+        end do
+        order = nint(table(:, 4), kind=I32)
+    else
+        ALLOCATE(order(Nsources), source=SOURCE_DIPOLE)
+    end if
 
 END SUBROUTINE read_source_file
 
