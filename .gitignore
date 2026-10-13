@@ -20,6 +20,7 @@ docs/
 .vscode/
 .claude/
 DOCS*
+Deng*
 
 # 2. Permite explorar dentro de las carpetas (necesario para que
 #    Git entre en subdirectorios y aplique las reglas siguientes)

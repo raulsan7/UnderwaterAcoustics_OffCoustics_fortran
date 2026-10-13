@@ -446,7 +446,7 @@ MODULE SUBROUTINE run_line(self)
         end do
     end if
 
-    write(*, '(A,I0,A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,F8.2,A,F8.2,A)') &
+    write(*, '(A,I0,A,F10.2,A,F10.2,A,F10.2,A,F10.2,A,F10.2,A,F10.2,A)') &
         '>> [Line]       points=', n_points, ' | p1=(', p1(1), ',', p1(2), ',', p1(3), &
         ') m | p2=(', p2(1), ',', p2(2), ',', p2(3), ') m'
 
