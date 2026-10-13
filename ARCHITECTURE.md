@@ -1,6 +1,6 @@
 # Architecture of the off-coustics Fortran solver
 
-This document describes how the solver in `FORTRAN/src` and `FORTRAN/app` is organised after the refactor of 10/2026 and the manual sources added since (`FrequencySource`, `TimeSource`): the data flow, the modules and their layers, the contracts between them, the output interface, and the decisions taken for future work. The code is the reference; this file tells where things are and why they are there. It describes the code with `frequency_source_inputs.patch` applied (08/10/2026).
+This document describes how the solver in `FORTRAN/src` and `FORTRAN/app` is organised after the refactor of 10/2026 and the manual sources added since (`FrequencySource`, `TimeSource`): the data flow, the modules and their layers, the contracts between them, the output interface, and the decisions taken for future work. The code is the reference; this file tells where things are and why they are there. It describes the code with `frequency_source_inputs.patch` applied (08/10/2026) and the monopoles of the manual sources (13/10/2026).
 
 All Fortran code follows `Programming_style_guidelines.txt`.
 
@@ -47,8 +47,8 @@ In `main.f90`:
 2. Depending on `simulation_type`, one emitter is built:
    - `'WindTurbine'`: `new_turbine`, then `init`, `read_input`, `compute_force`;
    - `'WindFarm'`: `WindFarm_t % init`, `compute_forces`;
-   - `'FrequencySource'`: `FrequencySource_t % init` (point dipoles with forces given per frequency);
-   - `'TimeSource'`: `TimeSource_t % init` (point dipoles with forces given in time, taken to the frequency domain with `compute_rfft`).
+   - `'FrequencySource'`: `FrequencySource_t % init` (point monopoles and dipoles with forces (volume velocities) given per frequency);
+   - `'TimeSource'`: `TimeSource_t % init` (point monopoles and dipoles with forces (volume velocities) given in time, taken to the frequency domain with `compute_rfft`).
    Any other value stops the run (`CASE DEFAULT` of `read_input_files`, and again in `main.f90`).
 3. `to_source` translates the emitter into an `AcousticSource_t`.
 4. `new_solver` allocates the solver named by `method`; `init` moves the sources into it, checks that they lie in the water column (`check_sources_in_water`) and frees `config`.
@@ -71,19 +71,24 @@ The values of `simulation_type` are `'WindTurbine'`, `'WindFarm'`, `'FrequencySo
 
 A namelist ends at the first `/` that is not inside a quoted string or a `!` comment, so comments in the `.nml` files start with `!` (a `//` "comment" silently ends the group: what follows is never read). The `/` must be followed by a newline: without it gfortran reads the values and then reports `End of file`, which stops the run; the shipped files keep a blank line and a comment after the group.
 
+The shipped files (13/10/2026) run the `TimeSource` case, a monopole, with `method = 'AnalyticalNormalModes'` and `extra_label = 'None'` in `Solver.nml`, and `ImageMethod.nml` has `attenuation_bottom = 1.0`. The readers keep their own defaults: `attenuation_bottom` is also 1.0 when it is left out (`read_ImageMethod_config`, and the initial `lw_R` of `ImageMethod_t`), while `method` stays `'ImageMethod'` (`read_solver_config`).
+
 ### 1.2 Input modes of the manual sources
 
 The two manual emitters accept their data written in the namelist or read from text files (`read_table`: blanks, tabs or commas; `#` and `!` lines are comments; a bad row stops the run with its line number). A way is chosen by giving its values (an entry of a list, a value other than `-999.0`, a file name other than `'None'`, an expression other than `'0'`); two ways of the same item stop the run with a message that names both, and with none the written list is taken, so an incomplete input of the old format gives the same error as before.
 
 | Item | Written in the namelist | Read from files or generated |
 |---|---|---|
-| Positions (both emitters) | `source_xyz(i_s, 1:3)`, at most `MAX_PARSE_SRC` = 20 sources | `source_file`: one row `x y z` per source, any number; `Nsources` is `-999` or the number of rows |
+| Positions (both emitters) | `source_xyz(i_s, 1:3)`, at most `MAX_PARSE_SRC` = 20 sources | `source_file`: one row `x y z` (or `x y z order`) per source, any number; `Nsources` is `-999` or the number of rows |
+| Multipole orders (both emitters) | `source_order(i_s)`: 0 monopole, 1 dipole (an entry not given is 1), at most 20 sources | the fourth column of `source_file` (`x y z order`); with three columns every source is a dipole |
 | Frequencies (`FrequencySource`) | `freqs` (`Nfreqs` values), at most `MAX_PARSE_FREQ` = 200 | a grid of `Nfreqs` (>= 2) frequencies from `fmin` (> 0) to `fmax`, `freq_spacing = 'linear'` (`fmin + (i-1) df`) or `'log'` (`10**(log10 fmin + (i-1) d)`, as `run_decay`); or `freq_file`, one frequency per row, any number |
-| Forces (`FrequencySource`) | `force_re(i_f, i_s, 1:3)` (mandatory) and `force_im` (0 by default), at most 200 frequencies and 20 sources | `force_re_expr(i_s, 1:3)` and `force_im_expr`, text expressions of `f` [Hz] ('0' by default, at most 20 sources); or `force_re_file` and `force_im_file` (`'None'`: imaginary part 0), one row per frequency and `3*Nsources` columns `Fx1 Fy1 Fz1 Fx2 ...` |
+| Forces (`FrequencySource`) | `force_re(i_f, i_s, 1:3)` (mandatory) and `force_im` (0 by default), at most 200 frequencies and 20 sources; a monopole uses only `force_re(i_f, i_s, 1)` and `force_im(i_f, i_s, 1)`, its components 2-3 may be left out (they become 0) | `force_re_expr(i_s, 1:3)` and `force_im_expr`, text expressions of `f` [Hz] ('0' by default, at most 20 sources); or `force_re_file` and `force_im_file` (`'None'`: imaginary part 0), one row per frequency and `3*Nsources` columns `Fx1 Fy1 Fz1 Fx2 ...`. A monopole uses only the first component (`force_re_expr(i_s, 1)`, `force_im_expr(i_s, 1)`; in the files its first column, 0 in the other two) |
 | Time axis (`TimeSource`) | `t_start`, `t_end`, `Nt`: `Nt` samples of `[t_start, t_end)` | `time_file`, uniformly spaced times |
-| Forces (`TimeSource`) | `force_expr(i_s, 1:3)`, text expressions of `t` [s], at most 20 sources | `force_file`, `Nt` rows and `3*Nsources` columns |
+| Forces (`TimeSource`) | `force_expr(i_s, 1:3)`, text expressions of `t` [s], at most 20 sources; a monopole has `force_expr(i_s, 1)` = Q(t) and '0' in the other two | `force_file`, `Nt` rows and `3*Nsources` columns; a monopole has Q(t) in the first column of its three |
 
 The 20/200 limits are the sizes of the parse buffers (`Kinds`), so they bind only what is written by hand. Frequencies must be positive and strictly increasing in every mode: the reader checks the list and the limits of the grid, `FrequencySource % init` checks the vector it builds (rounding, values of a file). Expressions are compiled by the reader (syntax errors and unknown names, e.g. `t` in an expression of `f`, before any work) and evaluated by `init` on the final axis, with a finite check that names the input, source, component and the first bad frequency or time. Positions of a file go through the same checks as the written ones (`check_source_positions`: finite, `z <= 0`; the solver then checks the seabed).
+
+A monopole takes its volume velocity Q [m^3/s] from the first component of the force inputs (the convention of `SourceTypes`, §4.3). `source_order` given together with `source_file` stops the run (the orders go in its fourth column), and so do entries of `source_order` beyond `Nsources`, an order other than 0 or 1 (`check_source_orders`), a fourth column that is not exactly 0 or 1, and a `source_file` with a number of columns other than 3 or 4 (counted on its first data row by `count_table_columns`; `read_table` then stops at a row with another number). A monopole with a second or third component other than 0 stops the run in `init` (`check_monopole_components`); `TimeSource` checks it on the series, before the FFT, whose mean removal would hide a constant.
 
 ---
 
@@ -143,29 +148,29 @@ What every module contains, and what must not go there:
 | Module | Contains | Must not contain |
 |---|---|---|
 | `Kinds` | Kind parameters (`I32`, `WP`, ...), `PI`, `I1`, the parser sentinels `DEFAULT_R`, `DEFAULT_I` and the parser buffer sizes `MAX_PARSE_OBS`, `MAX_PARSE_SRC`, `MAX_PARSE_FREQ` | Types or procedures |
-| `SourceTypes` | `AcousticSource_t`, `GeometricData_t`, the multipole labels `SOURCE_MONOPOLE`, `SOURCE_DIPOLE` | Procedures, configuration |
+| `SourceTypes` | `AcousticSource_t`, `GeometricData_t`, the multipole labels `SOURCE_MONOPOLE`, `SOURCE_DIPOLE` and the strength convention of each order (force of a dipole, volume velocity of a monopole) | Procedures, configuration |
 | `ConfigTypes` | Every `Config_*_t` filled in by the parser, including `Config_Method_t` and its extensions | Procedures, run-time state |
 | `FFTW3` | C bindings of FFTW3 | Anything else |
 | `StringUtils` | `to_upper`, `split_tokens`, `is_data_line` | File or HDF5 I/O |
 | `FileUtils` | `read_full_line`, `swap_extension`, `ensure_parent_dir`, `move_text_file`, `delete_file` | HDF5, format-specific parsers |
 | `HDF5Utils` | `save_variable` (dispatcher over the generic `save_to_hdf5`), `read_hdf5_real_1d`. The only module that does `USE HDF5` | Dataset names or knowledge of what is saved |
-| `CSVReader` | `read_curve` (wind-speed lookup tables, with the private row parser `parse_csv_row`), `read_table` (numeric text tables of the manual sources) | Turbine-specific files |
+| `CSVReader` | `read_curve` (wind-speed lookup tables, with the private row parser `parse_csv_row`), `read_table` (numeric text tables of the manual sources), `count_table_columns` (values of the first data row, for a table with an optional column) | Turbine-specific files |
 | `ExpressionParser` | `Expression_t`, `compile_expression(text, expr, message, variable)` (recursive descent to postfix; the variable is `t` unless named), `evaluate_expression(expr, x, values)` (vectorised), `function_list` | Knowledge of what the expression means |
 | `Sorting` | `sort_real_c` (C `qsort`) | Anything else |
 | `Timing` | `format_elapsed` | Anything else |
 | `SignalProcessing` | `compute_rfft` (mean removal, Hann window, FFTW), `HANN_ENBW` | Turbine or solver knowledge |
-| `SpecialFunctions` | `compute_hankel_complex` (public), the private `bessel_k0`, `bessel_k1` | Method-specific kernels |
+| `SpecialFunctions` | `compute_hankel_complex` (public; `H0` and `H1` are optional and only the ones present are evaluated), the private `bessel_k0`, `bessel_k1` | Method-specific kernels |
 | `Args_parser` | `get_input_path` (command-line directory of the namelists), `read_input_files` (finds the files of §1.1 and calls one reader per file), the entry of the parser | Readers of individual namelists |
-| `InputEmitters` | `read_turbine_config`, `read_farm_config`, `read_frequency_source_config`, `read_time_source_config`, the private `read_source_file` (positions from a file, both manual readers) and `join_given` | Solver or step settings |
+| `InputEmitters` | `read_turbine_config`, `read_farm_config`, `read_frequency_source_config`, `read_time_source_config`, the private `read_source_file` (positions and orders from a file, both manual readers) and `join_given` | Solver or step settings |
 | `InputSolver` | `read_solver_config`, `read_environment_config`, one `read_X_config` per method | Emitter or step settings |
 | `InputPostProcessing` | `read_computation_config`, `read_do_config`, one reader per `run_*` step | Emitter or solver settings |
-| `InputChecks` | `check_time_window`, `check_fits`, `check_file_exists`, `check_all_or_none`, `check_count`, `check_source_positions` | Namelist reading |
+| `InputChecks` | `check_time_window`, `check_fits`, `check_file_exists`, `check_all_or_none`, `check_count`, `check_source_positions`, `check_source_orders` | Namelist reading |
 | `Emitter` | Abstract `Emitter_t` and its default `get_enbw` | Turbine or farm specifics |
 | `WindTurbine` | Abstract `WindTurbine_t`: shared parameters, OpenFAST reading, `filter_frequencies`, the `Emitter_t` procedures of a turbine, `save_turbine_params`, `write_turbine_txt` | Data of a concrete turbine |
 | `TurbineTypes/*` | One concrete turbine each: its geometry, `compute_force`, `compute_mass`, `excitation_spectrum`, its saved parameters and impedance correction | Generic routines (they go to `StructureModel`, `DrivetrainExcitation`, `OpenFASTReader`) |
 | `TurbineFactory` | `new_turbine`: one `CASE` per turbine type | Anything else |
 | `WindFarm` | `WindFarm_t`: a container of turbines (`TurbineSlot_t`) merged into one `AcousticSource_t` | Turbine-type specifics |
-| `ManualSources` | Abstract `ManualSources_t`: the sources as the solver receives them (`Nsources`, `order`, `Freqs`, `xyz`, `Force`), the labels set by the children, and the shared `to_source`, `save_params`, `write_txt` | How the forces are given |
+| `ManualSources` | Abstract `ManualSources_t`: the sources as the solver receives them (`Nsources`, `order`, `Freqs`, `xyz`, `Force`), the labels set by the children, and the shared `to_source`, `save_params`, `write_txt`, `check_monopole_components` | How the forces are given |
 | `FrequencySource` | `FrequencySource_t`: the frequency axis (list, grid, file) and the forces (written, expressions of `f`, files) of `FrequencySource.nml`, and its `.dat` block | Time-domain forces, turbine or farm specifics |
 | `TimeSource` | `TimeSource_t`: the time axis, the force series (expressions of `t` or a file), their spectrum with `compute_rfft`, its datasets and `.dat` block | Frequency-domain input, turbine or farm specifics |
 | `OpenFASTReader` | SubDyn summary and `.out`/`.outb` channel readers | Physics |
@@ -239,15 +244,15 @@ Emitter_t (ABSTRACT)                to_source, save_params, write_txt DEFERRED; 
 
 **`WindFarm_t`** implements it with `farm_to_source_WindFarm`, `save_params_WindFarm`, `write_txt_WindFarm` and `get_enbw_WindFarm`; turbine `i` owns the sources `src_offset(i)+1 : src_offset(i+1)` of the merged set. It is not abstract.
 
-**`ManualSources_t`** (`emitters/ManualSources.f90`, ABSTRACT) holds what both manual emitters share: whatever way their forces are given, they reach the solver as complex forces per frequency.
+**`ManualSources_t`** (`emitters/ManualSources.f90`, ABSTRACT) holds what both manual emitters share: point monopoles and dipoles that, whatever way their input is given, reach the solver as complex amplitudes per frequency (the force of a dipole, the volume velocity Q of a monopole in component 1; §4.3).
 - Components: the labels `kind_name` (the `Emitter` dataset), `title` (of the `.dat` block) and `name_suffix` (end of the default file name), set by every child; and `Nsources`, `order`, `Freqs`, `xyz`, `Force (Nfreqs, Nsources, 3)`.
-- Shared bindings: `to_source_ManualSources` (copies the arrays, because `save_params` and `write_txt` run after the solver has moved those of the `AcousticSource_t`; centre and origin = mean `(x, y)` of the sources, direction 0, folder `./source_acoustic_data/`, name `Source_Ns<N><name_suffix>`), `save_params_ManualSources`, `write_txt_ManualSources` (title, counts and positions).
+- Shared bindings: `to_source_ManualSources` (copies the arrays, because `save_params` and `write_txt` run after the solver has moved those of the `AcousticSource_t`; centre and origin = mean `(x, y)` of the sources, direction 0, folder `./source_acoustic_data/`, name `Source_Ns<N><name_suffix>`), `save_params_ManualSources`, `write_txt_ManualSources` (title, counts, the `Multipole` line and the positions, with an `order` column for a mixed set, §6.2), and `check_monopole_components` (stops the run if a monopole has something other than 0 in component 2 or 3; every child calls it in `init` on what it reads). The message of `to_source` names the orders handed over: point dipoles (as before), point monopoles, or point monopoles and dipoles.
 - `init(self, config)` is DEFERRED: every child builds its data there and sets the three labels.
 - **The `*_base` aliases.** A child that adds datasets or `.dat` lines overrides `save_params` or `write_txt` and calls the parent version through `save_params_base` and `write_txt_base`. The direct form `CALL self % ManualSources_t % write_txt(unit)` is rejected by gfortran 13 when the parent is ABSTRACT, so the alias (a second, never-overridden binding of the parent procedure, as `init_base` in `WindTurbine_t`) is the project's idiom.
 
-**`FrequencySource_t`** (`init`, `write_txt`): `init` copies the positions and builds the frequency vector (`build_frequency_axis`: list, grid or the rows of `freq_file`) and the forces (`build_forces`: written, expressions of `f` evaluated on the final vector, or the columns of `force_re_file`/`force_im_file`) of §1.2. `name_suffix = '_Nf<Nfreqs>'`.
+**`FrequencySource_t`** (`init`, `write_txt`): `init` copies the positions and the orders (`source_order` of the configuration) and builds the frequency vector (`build_frequency_axis`: list, grid or the rows of `freq_file`) and the forces (`build_forces`: written, expressions of `f` evaluated on the final vector, or the columns of `force_re_file`/`force_im_file`) of §1.2, then calls `check_monopole_components` on `Force`. `name_suffix = '_Nf<Nfreqs>'`.
 
-**`TimeSource_t`** (`init`, `save_params`, `write_txt`, `get_enbw`): `init` builds the time axis (printing `dt`, the record length, `df` and the Nyquist frequency), the series `Ft (Nt, Nsources, 3)` and takes them to the frequency domain with `compute_rfft` (mean removed, Hann window, zero frequency dropped), keeping the band `fmin`-`fmax` and one bin out of `skipf`. `name_suffix = '_Nt<Nt>'`; `get_enbw` returns `HANN_ENBW`.
+**`TimeSource_t`** (`init`, `save_params`, `write_txt`, `get_enbw`): `init` takes the orders from the configuration, builds the time axis (printing `dt`, the record length, `df` and the Nyquist frequency) and the series `Ft (Nt, Nsources, 3)`, calls `check_monopole_components` on `Ft` (before the FFT, whose mean removal would hide a constant component) and takes the series to the frequency domain with `compute_rfft` (mean removed, Hann window, zero frequency dropped), keeping the band `fmin`-`fmax` and one bin out of `skipf`. `name_suffix = '_Nt<Nt>'`; `get_enbw` returns `HANN_ENBW`.
 
 ### 4.2 `AcousticSolver_t` (`solvers/AcousticSolver.f90`)
 
@@ -255,9 +260,9 @@ Deferred procedures, implemented by every method:
 
 | Procedure | Contract |
 |---|---|
-| `init(self, sources, config)` | Moves `xyz`, `Force`, `Freqs` and `order` out of `sources` (`MOVE_ALLOC`), stops if a source is not a dipole, copies `env`, `run_inputs` and the solver settings (`save_path`, `extra_label`, `block_size`, `debug`, `in_cluster`, `update_existing`, `mask_distance`), reads its own `Config_X_t`, calls `check_sources_in_water` once its environment (seabed included) is set, calls `build_save_path`, prints `get_name()`, and frees `sources` and `config` |
+| `init(self, sources, config)` | Moves `xyz`, `Force`, `Freqs` and `order` out of `sources` (`MOVE_ALLOC`), stops if a source has an order without a kernel (both methods implement `SOURCE_MONOPOLE` and `SOURCE_DIPOLE`), copies `env`, `run_inputs` and the solver settings (`save_path`, `extra_label`, `block_size`, `debug`, `in_cluster`, `update_existing`, `mask_distance`), reads its own `Config_X_t`, calls `check_sources_in_water` once its environment (seabed included) is set, calls `build_save_path`, prints `get_name()`, and frees `sources` and `config` |
 | `get_name(self)` | Returns the human-readable name and stores it in `solver_name` (written as the `Method` dataset) |
-| `compute_pressure(self, observers, block_size, total_pressure)` | Pressure `(Nfreqs, Nobs)` at `observers (Nobs, 3)` for every source frequency. Called only through `compute_pressure_masked` |
+| `compute_pressure(self, observers, block_size, total_pressure)` | Pressure `(Nfreqs, Nobs)` at `observers (Nobs, 3)` for every source frequency. The parallel blocks split the observers, never the sources. One kernel per multipole order present is called (`has_dipoles`, `has_monopoles`); each one skips (`cycle`) the sources of the other orders, and its result is accumulated before the next kernel is called. With dipoles only, only the dipole kernel runs, so a set of dipoles is computed as before the monopoles (the effect on the bits is in §8). Called only through `compute_pressure_masked` |
 | `save_parameters(self, emitter)` | In this order: `check_update(emitter)`, its own datasets, `save_shared_parameters(emitter)`, `emitter % save_params`, `write_txt_summary(emitter)` |
 | `build_save_path(self)` | Calls `resolve_save_path(method_tag)` with its tag, e.g. `_IM30`, `_ANM24` |
 | `write_txt_summary(self, emitter)` | Writes the `.dat` header: title, `emitter % write_txt`, environment and solver blocks |
@@ -295,9 +300,9 @@ Other shared procedures:
 | Field | Shape | Meaning |
 |---|---|---|
 | `xyz` | `(Nsources, 3)` [m] | Source coordinates |
-| `Force` | `(Nfreqs, Nsources, 3)` [N] | Complex source forces (radiation-impedance corrected for turbines) |
+| `Force` | `(Nfreqs, Nsources, 3)` [N] | Complex source forces (radiation-impedance corrected for turbines); a monopole has its volume velocity Q [m^3/s] in component 1 and 0 in components 2-3. The convention of each order is in `SourceTypes`: peak complex amplitudes, time factor `exp(-i*w*t)` |
 | `Freqs` | `(Nfreqs)` [Hz] | Frequency vector |
-| `order` | `(Nsources)` [-] | Multipole order label (`SOURCE_MONOPOLE = 0`, `SOURCE_DIPOLE = 1`); saved as `Source_order` by the manual sources only |
+| `order` | `(Nsources)` [-] | Multipole order label: `SOURCE_MONOPOLE = 0`, `SOURCE_DIPOLE = 1` (1 for every source of a turbine or farm); saved as `Source_order` by the manual sources only |
 | `geometry % center` | `(2)` [m] | Reference centre: turbine barycentre, or mean of the farm or of the sources |
 | `geometry % origin` | `(2)` [m] | Reference origin: turbine axis, or mean of the farm or of the sources |
 | `geometry % direction` | [deg] | Reference direction: wind direction, circular mean of the farm, or 0 for point sources |
@@ -307,7 +312,7 @@ What each consumer takes from them:
 
 | Consumer | Uses |
 |---|---|
-| `compute_pressure` (methods) | `xyz`, `Force`, `Freqs` |
+| `compute_pressure` (methods) | `xyz`, `Force`, `Freqs`, `order` (one kernel per order) |
 | `check_observers_distances` | `xyz` |
 | `check_sources_in_water` | `xyz` |
 | `check_update` | `Freqs` |
@@ -336,11 +341,11 @@ What each consumer takes from them:
 
 **A manual source** (point sources whose forces are given by the user in a new way, e.g. an input HDF5): extend `ManualSources_t`.
 1. `src/emitters/X.f90`: `X_t EXTENDS(ManualSources_t)` with:
-   - `init(self, config)`: fills `Nsources`, `xyz`, `order`, `Freqs`, `Force` and sets `kind_name = 'X'`, `title` and `name_suffix`;
+   - `init(self, config)`: fills `Nsources`, `xyz`, `order` (from its configuration, e.g. `source_order`), `Freqs`, `Force` and sets `kind_name = 'X'`, `title` and `name_suffix`, and calls `check_monopole_components` on what it reads (on the series, before any FFT);
    - optionally `save_params` and `write_txt` overrides that call `save_params_base` / `write_txt_base` first and add what is its own. `write_txt` must list every input value that matters (or checksums of it at full precision): `check_update` compares this block, so an input missing from it would reuse an old output after being changed;
    - `get_enbw`, if its forces come from `compute_rfft`.
-   `to_source`, the common datasets and the positions in the `.dat` come from the parent.
-2. Its configuration type in `types/ConfigTypes.f90` and its field in `Config_t`; its reader in `input/InputEmitters.f90` (reuse `read_source_file`, `check_source_positions`, `check_file_exists`, `read_table`, `compile_expression`); its `CASE` in `read_input_files`; its files `Emitters/<X>.nml` and `ComputationSetups/<X>_CS.nml`, named exactly as its `simulation_type` (§1.1).
+   `to_source`, the common datasets and the orders and positions in the `.dat` come from the parent.
+2. Its configuration type in `types/ConfigTypes.f90` and its field in `Config_t`; its reader in `input/InputEmitters.f90` (reuse `read_source_file`, which also reads the orders of a fourth column, `check_source_positions`, `check_source_orders`, `check_file_exists`, `read_table`, `compile_expression`); its `CASE` in `read_input_files`; its files `Emitters/<X>.nml` and `ComputationSetups/<X>_CS.nml`, named exactly as its `simulation_type` (§1.1).
 3. Its construction branch in `app/main.f90`: a typed variable (the abstract `active_emitter` can neither be allocated nor give access to `init`), `init`, `to_source`, and `MOVE_ALLOC` into `active_emitter` at the end of the branch.
 4. Makefile: the object in `OBJS` and its rule, after `ManualSources`, with every module it uses among its prerequisites.
 5. Plotting: `readers/hdf5_io.EMITTERS` maps the `Emitter` marker to the script that reads it (`'source'` for the manual sources); add what is specific to it in `readers/source.py` and `wrappers/source.py` (see the plotting README).
@@ -351,6 +356,10 @@ The planned emitters are in §7.1.
 
 ### 5.3 An acoustic method
 1. `src/solvers/methods/X.f90`: `X_t EXTENDS(AcousticSolver_t)` with the deferred procedures (§4.2); `save_parameters` calls `save_shared_parameters`.
+   - One kernel per multipole order it supports (the convention of each order is in `SourceTypes`); each kernel skips (`cycle`) the sources of the other orders.
+   - The check of `init` lists the orders it supports and stops on any other.
+   - `compute_pressure` calls the kernel of each order present and accumulates its result before calling the next one.
+   - If it builds images, every node carries the order of its parent source (as `ImageSystem_t % order`).
 2. Its `init` calls `CALL self % check_sources_in_water()` once the environment of the method is set (its seabed included) and before anything is saved. The compiler cannot enforce it: without that line the sources are never checked, and one below the seabed gives finite but wrong pressures.
 3. `Config_X_t EXTENDS(Config_Method_t)` in `types/ConfigTypes.f90`.
 4. `read_X_config` in `input/InputSolver.f90`, and its `CASE` in `read_input_files` (`input/Args_parser.f90`), with its own `.nml` in `input_files/AcousticMethods/<method>.nml`.
@@ -386,8 +395,8 @@ Complex arrays are stored as `(2, N...)` in Fortran order, i.e. `(..., N, 2)` (r
 | turbine (`save_turbine_params`) | `case_type`, `WindSpeed`, `WindDir`, `Depth`, `AxisPos`, `BariPos` |
 | turbine (`save_specific_params`) | `Case_type`, `Structure_nodes` plus the type's geometry (`D`, `rho_mat`, `wet_area`; `col_D`, `XsecA`, `XsecB`, `t`, `col_members`, `pon_members`; `Diam_y`, `Diam_z`, `float_members`, `joint_members`) |
 | farm (`save_params_WindFarm`) | `Nturbines`, `Source_offset`, and every turbine dataset with the suffix `_i` (e.g. `WindSpeed_2`, `Structure_nodes_2`) |
-| manual sources (`save_params_ManualSources`) | `Emitter` (`"FrequencySource"` or `"TimeSource"`), `Nsources`, `NFreqs`, `Source_xyz` `(Nsources, 3)`, `Source_order` `(Nsources)`, `Source_Force` complex `(Nfreqs, Nsources, 3)` |
-| `TimeSource` (`save_params_TimeSource`) | the above plus `Nt`, `Time_step`, `Source_time` `(Nt)`, `Source_Force_time` `(Nt, Nsources, 3)` |
+| manual sources (`save_params_ManualSources`) | `Emitter` (`"FrequencySource"` or `"TimeSource"`), `Nsources`, `NFreqs`, `Source_xyz` `(Nsources, 3)`, `Source_order` `(Nsources)` (0 monopole, 1 dipole), `Source_Force` complex `(Nfreqs, Nsources, 3)` (the force [N] of a dipole; the volume velocity Q [m^3/s] of a monopole in component 1, 0 in 2-3) |
+| `TimeSource` (`save_params_TimeSource`) | the above plus `Nt`, `Time_step`, `Source_time` `(Nt)`, `Source_Force_time` `(Nt, Nsources, 3)` (Q(t) of a monopole in component 1) |
 | `run_spectrums` | `P_spectrums`, `Obs_spectrums` |
 | `run_polar` | `P_polar`, `R_polar`, `Z_polar`, `Theta_deg_polar`, `Obs_polar`, `Center_polar` |
 | `run_cylinder` | `P_cylinder`, `R_cylinder`, `Z_cylinder`, `Theta_deg_cylinder`, `Obs_cylinder`, `Center_cylinder`, `dA_cylinder` |
@@ -398,7 +407,7 @@ Complex arrays are stored as `(2, N...)` in Fortran order, i.e. `(..., N, 2)` (r
 | `run_sliceVertical` | `P_sliceVertical`, `Coords_sliceV`, `U_sliceV`, `Z_sliceV`, `Azimuth_sliceV`, `Center_sliceV` |
 | `run_sphere` (IM) | `P_sphere`, `Obs_sphere`, `Theta_sphere`, `Z_sphere`, `R_sphere`, `Center_sphere`, `dA_sphere` |
 
-Masked observers (closer than `mask_distance` to a source, or outside the water column) have NaN pressure; the grids keep their shape. The input mode of a manual source (list, grid, file, expressions) is not saved: the same physical input gives bit-identical datasets in every mode.
+Masked observers (closer than `mask_distance` to a source, or outside the water column) have NaN pressure; the grids keep their shape. The input mode of a manual source (list, grid, file, expressions) is not saved: the same physical input gives bit-identical datasets in every mode. The monopoles add no dataset: they are told apart by `Source_order`.
 
 `Emitter` identifies the emitter that wrote a file and is written only by the emitters added after the refactor (the manual sources); the plotting recognises the older turbine and farm files by their datasets (`Nturbines`, `case_type`, ...). The water depth is not an emitter dataset: both solvers write `Lower_HBC` (`-depth_base`) and the plotting derives the depth from it.
 
@@ -410,11 +419,13 @@ Written next to the HDF5 file (same name, `.dat`), with blocks between separator
 2. Emitter block (`emitter % write_txt`):
    - `TURBINE` and `TURBINE - SPECIFIC PARAMETERS`;
    - or `WIND FARM` (layout table) followed by `>>> Turbine i` and the blocks of every turbine;
-   - or `FREQUENCY-DOMAIN SOURCES`: counts, positions (`F14.6`), the lines `Source file`, `Freq. grid`, `Freq. file`, the expressions or `Force file` when the input was not written in the namelist, then the force table (`I4,I4,F12.4,6ES16.8`: index of frequency and source, frequency, Re and Im of Fx, Fy, Fz) if it has at most 200 frequencies and 20 sources, and checksums at full precision (`ES23.15`: sums of `f` and `f**2`; per source and component the sums of Re F, Im F, |F|^2, i Re F, i Im F, with `i` the frequency index) when it is larger or was not written by hand. An input written by hand keeps exactly the table it always had;
-   - or `TIME-DOMAIN SOURCES`: counts, positions, `Source file` if used, the time axis (`N samples`, `First time`, `Time step`, `Skipf`, `Fmin`, `Fmax`, `Time file` if used), the expressions or `Force file`, and per source and component `sum(F)`, `sum(F**2)` and `sum(i*F)` of the series.
+   - or `FREQUENCY-DOMAIN SOURCES`: counts, the line `Multipole   : dipole | monopole | mixed`, positions (`F14.6`; only for `mixed`, a last column `order [-]`), the lines `Source file`, `Freq. grid`, `Freq. file`, the expressions or `Force file` when the input was not written in the namelist, then the title of the forces (followed, if there is a monopole, by the line `Monopoles   : volume velocity Q [m^3/s] in the Fx columns (Fy and Fz are 0)`) and the force table (`I4,I4,F12.4,6ES16.8`: index of frequency and source, frequency, Re and Im of Fx, Fy, Fz) if it has at most 200 frequencies and 20 sources, and checksums at full precision (`ES23.15`: sums of `f` and `f**2`; per source and component the sums of Re F, Im F, |F|^2, i Re F, i Im F, with `i` the frequency index) when it is larger or was not written by hand. An input written by hand keeps exactly the table it always had;
+   - or `TIME-DOMAIN SOURCES`: counts, the `Multipole` line, positions (with the `order` column for `mixed`), `Source file` if used, the time axis (`N samples`, `First time`, `Time step`, `Skipf`, `Fmin`, `Fmax`, `Time file` if used), the title of the forces and, if there is a monopole, the same `Monopoles` line, the expressions or `Force file`, and per source and component `sum(F)`, `sum(F**2)` and `sum(i*F)` of the series.
 3. `ENVIRONMENT` and `SOLVER: <name>` blocks (`write_txt_summary`).
 4. `POST-PROCESSING STEPS EXECUTED` (`update_parameters`): one block per step (`Spectrums:`, `Polar:`, ...) with the parameters actually used, defaults resolved.
 5. A final `=` separator.
+
+With dipoles only, the block of a manual source is the one it always had (`Multipole   : dipole`, no `order` column, no `Monopoles` line). The orders are part of the header, so `check_update` sees a change of order of any source.
 
 Items 1-3 are the header compared by `check_update`.
 
@@ -446,10 +457,15 @@ Decided on 2026-10-02; the status of each item is given.
 - Input modes of §1.2 (08/10/2026): positions from `source_file` in both; frequencies as a list, a grid or a file, and forces written, as expressions of `f` or from files, in `FrequencySource`.
 - One multipole-order label per source (`order`, saved as `Source_order`).
 - The plotting reads both (`plotting/source.py`): `ENBW` (Hann correction only if present), `Method`, and the bin width of uniformly spaced tones.
+- Monopoles (13/10/2026):
+  - convention: the strength of a monopole is its volume velocity Q [m^3/s], a peak complex amplitude in `Force(:, s, 1)`, with 0 in components 2 and 3 (`SourceTypes`); its free-field pressure is `p = -i*w*rho*Q * exp(i*k*R) / (4*pi*R)`;
+  - kernels: `monopole_pressure_images` (IM; the images of a monopole come unchanged from `method_of_images`) and `monopolar_pressure_NM` (ANM), one kernel per order in each method, and a check of both orders in `init`;
+  - input: `source_order` in both namelists, or a fourth column of `source_file` (§1.2), and `check_monopole_components` in `init`;
+  - plotting: `plots/specific/sources.py` draws |F| [N] and |Q| [m^3/s] on separate axes.
 
 **Planned:**
-- Monopoles: one kernel per order in each method, and the convention for the monopole strength (which quantity, stored where). Each method drops its dipole-only check in `init` when it supports monopoles.
 - An input HDF5 file for many sources with their forces (`xyz`, `order`, `Freqs`, `Force`); `HDF5Utils` only has `read_hdf5_real_1d` today. The text files of §1.2 already remove the limit on the number of sources and frequencies.
+- Verification with the dipoles of a turbine, exported and read back as manual sources: they must reproduce its `P_*` datasets. The impedance-corrected forces handed to the solver are not saved in the turbine HDF5 today, so they must first be written out.
 
 ### 7.2 Acoustic methods
 - `Config_Environment_t` will grow optional arrays: c(z), ρ(z), attenuation, bathymetry H(x, y), sediment. It keeps the base scalars, so the simple methods keep working. Each method checks in `init` that the data it needs is present.
@@ -481,3 +497,13 @@ Any change that is meant not to change the results follows `Programming_style_gu
    The cases are M1 (DTU 10 MW monopile, IM, all steps), M2 (the same with ANM), M3 (`update_existing`: polar + line, then sphere only, then `N_images = 20`), and L1, L2, L3 (DTU floating, SAITEC, 2-monopile farm, spectrums only). They take about 75 s. The manual sources need no OpenFAST data: their shipped cases (`FrequencySource.nml`, `TimeSource.nml`) with IM and ANM are the quick regression of every change in the input, emitter or solver layers.
 5. Acceptance: every HDF5 dataset of the reference exists with the same dtype, shape and bytes; there is no extra dataset except the allowed ones; the `.dat` files are identical; stdout is identical except the `Total elapsed time` line. A difference is never accepted: its cause is found and fixed.
 6. After editing a module, rebuild before running (`make` follows the dependencies; a binary older than its sources was the cause of the "segfault" of 07/10/2026, when `main.f90` still had the old `simulation_type` labels).
+
+**Monopoles.** A change in the kernels, the image system or the input of the orders also repeats the monopole checks of 13/10/2026 (`OMP_NUM_THREADS=1`):
+- a free-field monopole (IM, `N_images = 0`) against the closed form, 15-250 Hz and 203 observers: 1.2e-15 (relative, maximum; the dipole `Fx` of the same check: 4.8e-16);
+- a pair of monopoles +-Q at +-d/2 (d = 0.02 m, `Q = i*F/(w*rho*d)`) against the dipole F, along x and along z, images included: 3e-7 to 1.4e-5 with IM and ANM;
+- IM against ANM in the ideal guide (p = 0 above, rigid below, attenuations 1; ANM with 400 modes): a monopole differs by at most 5.0e-2, 2.4e-3, 2.4e-4, 2.4e-5 with `N_images` = 30, 300, 3000, 30000, as 1/N like the dipole `Fz` (1.5e-1, 8.3e-3, 8.3e-4, 8.3e-5);
+- an unordered mixed set (dipole, monopole, dipole) against the sum of its sources run one by one: 1.4e-16 (IM) and 2.2e-16 (ANM);
+- with dipoles only, the shipped `FrequencySource` and `TimeSource` cases (with the `.nml` files of before) and the DTU 10 MW monopile (`decay`) against the binary of before: identical with IM; with ANM identical except the `P_*` datasets, by at most 2.3e-16 (see below);
+- the debug build (`-fcheck=all`) runs all of them without a runtime error, and `-Wall` gives only the 9 accepted warnings.
+
+**Normal-mode references before 13/10/2026.** The 1/rho of the two terms of `dipolar_pressure_NM` is applied once to the tabulated source shapes `Psi_m(z_s)` and `Psi_m'(z_s)`, instead of twice inside the sum over the modes (2.2 % less time: 175.9 s against 179.9 s for the DTU 10 MW monopile, `decay`, one thread). The `P_*` datasets of the normal modes with dipoles changed in the last bit (at most 2.3e-16, relative); every other dataset, the `.dat`, stdout and the positions of the NaN are identical, and the image method is unchanged. An ANM reference made before that date is no longer bitwise comparable and must be regenerated; the IM references remain valid. Moving the loop over the sources outside was also tried: identical results and the same time (180.6 s), so the loop order was kept.
