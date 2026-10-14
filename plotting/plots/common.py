@@ -1,7 +1,8 @@
 """
 Module: plots/common.py
 Description: Checks shared by the generic plots before they draw: absorption needs a single origin for the
-             observer distances (a wind farm has none), and the PSD and the 1/3 octave bands need a frequency
+             observer distances (a wind farm has none) and is not applied again when the solver already did it,
+             and the PSD and the 1/3 octave bands need a frequency
              bin width (frequencies that are not uniformly spaced, e.g. the tones of frequency-domain sources,
              have none).
 
@@ -16,12 +17,17 @@ def no_absorption(case      : dict = None,     # [-] Case
                   name      : str  = None):    # [-] Name of the calling plot, for the message
     """
     Absorption needs the distance travelled by the sound, measured from a single origin: without one (e.g. a
-    wind farm, several sources) it is switched off with a message.
+    wind farm, several sources) it is switched off with a message. It is also switched off, with a message,
+    when the solver already applied it to the pressures (Alpha_dBkm in the file).
 
     Returns
     -------
     absorption : bool
     """
+
+    if absorption and case["Alpha_dBkm"] is not None:
+        print(f"{name}(): the pressures of {case['Name']} already include the absorption (solver): absorption = False")
+        return False
 
     if absorption and case["origin"] is None:
         print(f"{name}(): no single origin for the distances of {case['Name']}: absorption = False")

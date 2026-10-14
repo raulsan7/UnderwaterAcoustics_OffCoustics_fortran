@@ -47,6 +47,8 @@ def read_solver_params(f,                   # [-] Open h5py.File
       initials (e.g. "Parabolic Equation" -> "ParabolicEquation", "PE").
     - ENBW: equivalent noise bandwidth of the FFT window of the forces, in bins (see read_enbw).
     - Water depth: - Lower_HBC.
+    - water: water of the seawater absorption (see read_water), and Alpha_dBkm: alpha(f) [dB/km] when the
+      solver already applied the absorption to the pressures, None otherwise.
     """
 
     method_name = read_ds(f, "Method")
@@ -75,6 +77,34 @@ def read_solver_params(f,                   # [-] Open h5py.File
     case["p_ref"]     = float(read_ds(f, "p_ref"))
     case["Lower_HBC"] = float(read_ds(f, "Lower_HBC"))
     case["Depth"]     = -case["Lower_HBC"]     # [m] Water depth
+
+    case["water"]      = read_water(f, case["Depth"])
+    case["Alpha_dBkm"] = read_array(f, "Alpha_dBkm")
+
+def read_water(f,                    # [-] Open h5py.File
+               depth: float = None): # [m] Water depth
+    """
+    Water of the seawater absorption (Ainslie and McColm, au.absorption_coefficient). The solver writes
+    T_wat [degC], S_wat [ppt] and pH_wat when Environment.nml gives them, and z_alpha [m], the depth of the
+    formula, only when it applies the absorption itself; whatever is missing takes au.WATER_DEFAULT, the depth
+    half the water depth, as in the solver.
+
+    Returns
+    -------
+    water : dict
+        T [degC], S [ppt], pH [-], z [m].
+    """
+
+    water = dict(au.WATER_DEFAULT)
+    for key, name in (("T", "T_wat"), ("S", "S_wat"), ("pH", "pH_wat")):
+        value = read_ds(f, name)
+        if value is not None:
+            water[key] = float(value)
+
+    z_alpha    = read_ds(f, "z_alpha")
+    water["z"] = float(z_alpha) if z_alpha is not None else 0.5 * depth
+
+    return water
 
 def read_enbw(f):     # [-] Open h5py.File
     """

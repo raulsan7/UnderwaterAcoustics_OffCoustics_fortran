@@ -59,12 +59,12 @@ def get_spectrum(case         : dict  = None,      # [-] Case
     mode = mode.upper()
 
     if mode == "SPL":
-        spl = au.pressure_to_SPL(p, p_ref, absorption, Freqs, distances)
+        spl = au.pressure_to_SPL(p, p_ref, absorption, Freqs, distances, water=case["water"])
         ylabel = r"SPL [dB re 1 $\mu$ Pa]"
     elif mode == "PSD":
         df = case["bin_width"]
         if df is None: raise ValueError("plot_spectrum(): mode 'PSD' needs at least two frequencies to get the bin width")
-        spl = au.pressure_to_PSD(p, df, p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
+        spl = au.pressure_to_PSD(p, df, p_ref, absorption, Freqs, distances, enbw=case["ENBW"], water=case["water"])
         ylabel = r"PSD [dB re 1 $\mu$Pa$^2$/Hz]"
     else:
         raise RuntimeError(f"plot_spectrum(): mode {mode} not implemented yet")
@@ -82,7 +82,7 @@ def get_spectrum(case         : dict  = None,      # [-] Case
 
     Freqs = Freqs[mask]
     spl   = spl[mask]
-    oaspl = au.pressure_to_OASPL(p[mask], p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
+    oaspl = au.pressure_to_OASPL(p[mask], p_ref, absorption, Freqs, distances, enbw=case["ENBW"], water=case["water"])
 
     if octave:
         Freqs, spl = au.to_third_octave(Freqs, spl, fmin=Freqs.min(), fmax=Freqs.max())

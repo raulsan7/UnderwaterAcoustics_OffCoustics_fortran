@@ -23,6 +23,12 @@ from plot_utils.style import AcademicStyle
 from plot_utils.saving import save_figures
 from wrappers.source import parse_source_args, load_sources
 
+# Single-frequency plots (line and XY slice) at the frequencies of Figs. 5 and 6 of Deng et al. (the nearest
+# frequency of the file is taken), with the colormap of its Fig. 5. 100 Hz, also in those figures, is left out:
+# it is not a line of its source spectrum.
+TARGET_FREQUENCIES = [36.0, 48.0, 72.0]     # [Hz]
+SLICE_CMAP         = 'jet'                  # [-] Colormap of the XY slices
+
 def main():
     # 1. Visual asthetics
     AcademicStyle.apply()
@@ -35,12 +41,13 @@ def main():
         p.plot_sources(case)
         p.plot_spectrum(case, do_thresholds=False, absorption=False,)
         p.plot_spectrum(case, do_thresholds=False, absorption=False, octave=False, smooth=True)
-        # p.plot_spectrum(case, do_thresholds=False, absorption=False, octave=False, mode='SPL')
+        p.plot_spectrum(case, do_thresholds=False, absorption=False, octave=False, smooth=False)
         p.plot_polar(case, bands = [])
         p.plot_cylinder(case)
         p.plot_distance_decay(case)
-        p.plot_line(case)
-        p.plot_sliceXY(case)
+        for f in TARGET_FREQUENCIES:
+            p.plot_line(case, mode='SPL', target_frequency=f)
+            p.plot_sliceXY(case, mode='SPL', target_frequency=f, cmap=SLICE_CMAP)
         p.plot_sliceXZ(case)
         p.plot_sliceVertical(case)
         p.compute_sphere_metrics(case)

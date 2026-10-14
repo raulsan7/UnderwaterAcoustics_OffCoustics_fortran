@@ -65,7 +65,7 @@ def get_curve(case            : dict  = None,     # [-] Case
     # Select mode
     title_extra = ""
     if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, r, enbw=case["ENBW"])
+        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, r, enbw=case["ENBW"], water=case["water"])
         unit_label = r"OASPL [dB re $\mu$ Pa]"
     else:
         idx = np.argmin(np.abs(Freqs - target_frequency))
@@ -73,7 +73,7 @@ def get_curve(case            : dict  = None,     # [-] Case
         title_extra = f"at {f:.2f} Hz"
 
         vals, unit_label = convert_to(p[idx, :], mode, df, enbw=case["ENBW"])
-        if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, r)
+        if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, r, water=case["water"])
 
     return r, vals, unit_label, title_extra
 

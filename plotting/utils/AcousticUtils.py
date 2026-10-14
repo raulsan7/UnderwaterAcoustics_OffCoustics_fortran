@@ -2,6 +2,8 @@
 Module: AcousticUtils.py
 Description: Acoustic conversions used by the plots (SPL, PSD, OASPL, band OASPL, seawater absorption and
              1/3 octave bands). Copy of PYTHON/utils/AcousticUtils.py, so the plots do not depend on it.
+             The seawater absorption is that of Ainslie and McColm (1998), as in the Fortran solver
+             (SeawaterAbsorption.f90), with the water of the case (readers.solver: T, S, pH, depth).
              Masked observers (NaN pressure at every frequency, see plot_utils.is_valid) stay NaN through
              every conversion: frequency sums use np.sum, never np.nansum (which would turn them into a
              fake -60 dB OASPL). Sums over bins (OASPL, PSD) are divided by the equivalent noise bandwidth
@@ -16,8 +18,11 @@ import numpy as np
 
 HANN_ENBW = 1.5    # [bins] Equivalent noise bandwidth of the Hann window of the Fortran compute_rfft
 
+# Water of the absorption when the file does not give it: T [degC], S [ppt], pH [-], depth z [m]
+WATER_DEFAULT = {"T": 10.0, "S": 35.0, "pH": 8.0, "z": 0.0}
 
-def pressure_to_SPL(p, p_ref=1e-6, absorption=False, freq=None, distance=None):
+
+def pressure_to_SPL(p, p_ref=1e-6, absorption=False, freq=None, distance=None, water=None):
     """
     Convert complex pressure amplitudes (Helmholtz) to SPL [dB re p_ref].
 
@@ -33,6 +38,9 @@ def pressure_to_SPL(p, p_ref=1e-6, absorption=False, freq=None, distance=None):
         Frequencies in Hz. Required if ``absorption=True``.
     distance : float, optional
         Wave travel distance in m. Required if ``absorption=True``.
+    water : dict, optional
+        Water of the absorption (keys T, S, pH, z, see :func:`absorption_coefficient`). Default
+        WATER_DEFAULT.
 
     Returns
     -------
@@ -48,7 +56,7 @@ def pressure_to_SPL(p, p_ref=1e-6, absorption=False, freq=None, distance=None):
     if absorption:
         if freq is None: raise ValueError("frequency array needed if absorption is enabled")
         if distance is None: raise ValueError("Distance is needed if absorption is enabled")
-        spl = add_absorption(freq, spl, distance)
+        spl = add_absorption(freq, spl, distance, water=water)
 
     return spl
 
@@ -76,7 +84,8 @@ def SPL_to_OASPL(spl, axis=0, enbw=HANN_ENBW):
 
     return 10.0 * np.log10(np.sum(10 ** (spl / 10), axis=axis)+1e-6) - 10.0 * np.log10(enbw)  # Window correction (ENBW)
 
-def pressure_to_OASPL(p, p_ref=1e-6, absorption=False, freq=None, distance=None, axis=0, enbw=HANN_ENBW):
+def pressure_to_OASPL(p, p_ref=1e-6, absorption=False, freq=None, distance=None, axis=0, enbw=HANN_ENBW,
+                      water=None):
     """
     Convert complex pressure amplitudes (Helmholtz) to OASPL [dB re p_ref].
 
@@ -98,6 +107,8 @@ def pressure_to_OASPL(p, p_ref=1e-6, absorption=False, freq=None, distance=None,
         Wave travel distance in m. Required if ``absorption=True``.
     enbw : float, optional
         Equivalent noise bandwidth of the FFT window, in bins (see :func:`SPL_to_OASPL`).
+    water : dict, optional
+        Water of the absorption (see :func:`pressure_to_SPL`).
 
     Returns
     -------
@@ -105,11 +116,11 @@ def pressure_to_OASPL(p, p_ref=1e-6, absorption=False, freq=None, distance=None,
         OASPL in dB, with the frequency axis removed.
     """
     p = np.asarray(p)
-    spl = pressure_to_SPL(p, p_ref=p_ref, absorption=absorption, freq=freq, distance=distance)
+    spl = pressure_to_SPL(p, p_ref=p_ref, absorption=absorption, freq=freq, distance=distance, water=water)
 
     return SPL_to_OASPL(spl, axis=axis, enbw=enbw)
 
-def OASPL_band(p, mask, p_ref=1e-6, absorption=False, freq=None, distance=None, axis=0, enbw=HANN_ENBW):
+def OASPL_band(p, mask, p_ref=1e-6, absorption=False, freq=None, distance=None, axis=0, enbw=HANN_ENBW, water=None):
     """
     OASPL restricted to a frequency-band boolean mask.
 
@@ -131,6 +142,8 @@ def OASPL_band(p, mask, p_ref=1e-6, absorption=False, freq=None, distance=None, 
         Wave travel distance in m. Required if ``absorption=True``.
     enbw : float, optional
         Equivalent noise bandwidth of the FFT window, in bins (see :func:`SPL_to_OASPL`).
+    water : dict, optional
+        Water of the absorption (see :func:`pressure_to_SPL`).
 
     Returns
     -------
@@ -145,15 +158,49 @@ def OASPL_band(p, mask, p_ref=1e-6, absorption=False, freq=None, distance=None, 
         freq = None
 
     return pressure_to_OASPL(p_band, p_ref=p_ref, axis=axis, absorption=absorption, freq=freq, distance=distance,
-                             enbw=enbw)
+                             enbw=enbw, water=water)
 
-def add_absorption(freq, SPL, distance):
+def absorption_coefficient(freq, T=10.0, S=35.0, pH=8.0, z=0.0):
+    """
+    Volume absorption coefficient of sea water [dB/km] from Ainslie and McColm (1998), "A simplified formula
+    for viscous and chemical absorption in sea water", J. Acoust. Soc. Am. 103, 1671-1672, Eqs. (1)-(3):
+    boric acid and magnesium sulphate relaxations and pure water viscosity, within 10 % of the
+    Francois-Garrison (1982) equation between 100 Hz and 1 MHz (extrapolated below 100 Hz). The same formula
+    as the Fortran absorption_ainslie_mccolm (SeawaterAbsorption.f90).
+
+    Parameters
+    ----------
+    freq : array_like
+        Frequencies in Hz.
+    T : float, optional
+        Water temperature in degC. Default 10.
+    S : float, optional
+        Salinity in ppt. Default 35.
+    pH : float, optional
+        Acidity. Default 8.
+    z : float, optional
+        Depth in m (positive downwards). Default 0.
+
+    Returns
+    -------
+    alpha : ndarray
+        Absorption coefficient in dB/km, same shape as ``freq``.
+    """
+    f_sq   = (np.asarray(freq, dtype=float) / 1000.0)**2      # [kHz^2] Squared frequency
+    z_km   = z / 1000.0                                       # [km]
+    f1     = 0.78 * np.sqrt(S / 35.0) * np.exp(T / 26.0)      # [kHz] Boric acid relaxation frequency
+    f2     = 42.0 * np.exp(T / 17.0)                          # [kHz] Magnesium sulphate relaxation frequency
+
+    return (0.106 * f1 * f_sq / (f_sq + f1**2) * np.exp((pH - 8.0) / 0.56)
+            + 0.52 * (1.0 + T / 43.0) * (S / 35.0) * f2 * f_sq / (f_sq + f2**2) * np.exp(-z_km / 6.0)
+            + 0.00049 * f_sq * np.exp(-(T / 27.0 + z_km / 17.0)))
+
+def add_absorption(freq, SPL, distance, water=None):
     """
     Apply seawater absorption attenuation to SPL values.
 
-    Uses the empirical formula for frequency-dependent absorption
-    coefficient alpha(f) [dB/km] and subtracts the total attenuation
-    over ``distance``.
+    Uses the frequency-dependent absorption coefficient alpha(f) [dB/km] of Ainslie and McColm (see
+    :func:`absorption_coefficient`) and subtracts the total attenuation over ``distance``.
 
     Parameters
     ----------
@@ -163,6 +210,9 @@ def add_absorption(freq, SPL, distance):
         SPL values in dB, same shape as ``freq``.
     distance : float
         Wave travel distance in m.
+    water : dict, optional
+        Water of the absorption: T [degC], S [ppt], pH [-] and z [m] (readers.solver, from the file). Default
+        WATER_DEFAULT.
 
     Returns
     -------
@@ -172,6 +222,7 @@ def add_absorption(freq, SPL, distance):
     freq = np.asarray(freq)
     distance = np.asarray(distance)/1000.0  # Convert distance to km
     SPL = np.asarray(SPL)
+    water = WATER_DEFAULT if water is None else water
 
     if freq.size > 1:
         if distance.ndim > 0 and distance.shape != SPL.shape[1:]:
@@ -180,12 +231,8 @@ def add_absorption(freq, SPL, distance):
         if distance.shape != SPL.shape:
             raise ValueError(f"Distance shape {distance.shape} must match SPL spatial shape {SPL.shape[1:]}")
 
-    def alpha(f):
-        fx = (f/1000)**2
-        return 0.0033 + 0.11*fx/(1+fx) + 44*fx/(4100+fx) + 0.0003*fx
-    
     # Broadcast
-    alpha_vals = alpha(freq)
+    alpha_vals = absorption_coefficient(freq, water["T"], water["S"], water["pH"], water["z"])
     for _ in range(distance.ndim):
         alpha_vals = alpha_vals[..., np.newaxis]
     
@@ -406,7 +453,7 @@ def smooth_fractional_octave(freqs, spectrum, fraction=12, domain='db'):
 
     return out.reshape(spectrum.shape)
 
-def pressure_to_PSD(p, df, p_ref=1e-6, absorption=False, freq=None, distance=None, enbw=HANN_ENBW):
+def pressure_to_PSD(p, df, p_ref=1e-6, absorption=False, freq=None, distance=None, enbw=HANN_ENBW, water=None):
     """
     Convert complex pressure amplitudes to Power Spectral Density (PSD) in dB
     re (p_ref²/Hz).
@@ -436,6 +483,8 @@ def pressure_to_PSD(p, df, p_ref=1e-6, absorption=False, freq=None, distance=Non
     enbw : float, optional
         Equivalent noise bandwidth of the FFT window, in bins (see :func:`SPL_to_OASPL`). Default
         HANN_ENBW; 1.0 for spectra without a window.
+    water : dict, optional
+        Water of the absorption (see :func:`pressure_to_SPL`).
 
     Returns
     -------
@@ -455,7 +504,7 @@ def pressure_to_PSD(p, df, p_ref=1e-6, absorption=False, freq=None, distance=Non
 
     # Compute SPL in dB re p_ref
     spl = pressure_to_SPL(p, p_ref=p_ref, absorption=absorption,
-                          freq=freq, distance=distance)
+                          freq=freq, distance=distance, water=water)
 
     # Convert to PSD: PSD = SPL - 10*log10(df)
     # Use np.subtract with broadcasting along frequency axis

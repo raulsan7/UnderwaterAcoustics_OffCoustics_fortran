@@ -110,7 +110,8 @@ src/
 │   ├── Sorting.f90              Sorting
 │   ├── Timing.f90               Timing
 │   ├── SignalProcessing.f90     SignalProcessing
-│   └── SpecialFunctions.f90     SpecialFunctions
+│   ├── SpecialFunctions.f90     SpecialFunctions
+│   └── SeawaterAbsorption.f90   SeawaterAbsorption
 ├── input/
 │   ├── Args_parser.f90          Args_parser
 │   ├── InputEmitters.f90        InputEmitters
@@ -160,9 +161,10 @@ What every module contains, and what must not go there:
 | `Timing` | `format_elapsed` | Anything else |
 | `SignalProcessing` | `compute_rfft` (mean removal, Hann window, FFTW), `HANN_ENBW` | Turbine or solver knowledge |
 | `SpecialFunctions` | `compute_hankel_complex` (public; `H0` and `H1` are optional and only the ones present are evaluated), the private `bessel_k0`, `bessel_k1` | Method-specific kernels |
+| `SeawaterAbsorption` | `absorption_ainslie_mccolm(f, T, S, pH, z)` (elemental, dB/km: Ainslie & McColm 1998, Eqs. 1-3, f in Hz, z in m), `DB_PER_NEPER` | Solver state, the depth convention (the solver chooses z) |
 | `Args_parser` | `get_input_path` (command-line directory of the namelists), `read_input_files` (finds the files of §1.1 and calls one reader per file), the entry of the parser | Readers of individual namelists |
 | `InputEmitters` | `read_turbine_config`, `read_farm_config`, `read_frequency_source_config`, `read_time_source_config`, the private `read_source_file` (positions and orders from a file, both manual readers) and `join_given` | Solver or step settings |
-| `InputSolver` | `read_solver_config`, `read_environment_config`, one `read_X_config` per method | Emitter or step settings |
+| `InputSolver` | `read_solver_config`, `read_environment_config` (with the absorption: `absorption`, `temperature`, `salinity`, `pH`, their defaults and checks), one `read_X_config` per method | Emitter or step settings |
 | `InputPostProcessing` | `read_computation_config`, `read_do_config`, one reader per `run_*` step | Emitter or solver settings |
 | `InputChecks` | `check_time_window`, `check_fits`, `check_file_exists`, `check_all_or_none`, `check_count`, `check_source_positions`, `check_source_orders` | Namelist reading |
 | `Emitter` | Abstract `Emitter_t` and its default `get_enbw` | Turbine or farm specifics |
@@ -176,9 +178,9 @@ What every module contains, and what must not go there:
 | `OpenFASTReader` | SubDyn summary and `.out`/`.outb` channel readers | Physics |
 | `StructureModel` | Geometry and hydrodynamic corrections of the members: `remove_duplicate_nodes`, `divide_span`, `integral_elipse_z`, `alpha_hankel` | Data of a concrete turbine |
 | `DrivetrainExcitation` | Drivetrain spectra (`drivetrain10MW_excitation_spectrum`, `drivetrain2MW_excitation_spectrum` and its helpers), `generate_timeseries_banded_sines`, `filter_non_useful_freqs` | Turbine state |
-| `AcousticSolver` | Abstract `AcousticSolver_t`, its deferred interfaces, the interfaces of the submodule procedures, `check_observers_distances`, `check_sources_in_water`, `compute_pressure_masked`, `pressure_norm`, the water-column queries (`z_seabed_base`, `in_water_base`) | Method kernels, emitter types |
+| `AcousticSolver` | Abstract `AcousticSolver_t`, its deferred interfaces, the interfaces of the submodule procedures, `check_observers_distances`, `check_sources_in_water`, `set_absorption` (tabulates `alpha_dB`, `alpha` and `z_alpha`), `compute_pressure_masked`, `pressure_norm`, the water-column queries (`z_seabed_base`, `in_water_base`) | Method kernels, emitter types |
 | `AcousticSolver_steps` | `run()`, every `run_*` step, `dummy_run_sphere` | Reads of `depth_base` (use the queries), method kernels |
-| `AcousticSolver_output` | `resolve_save_path`, `check_update`, `update_parameters`, `save_shared_parameters` and their private helpers | Pressure computations |
+| `AcousticSolver_output` | `resolve_save_path`, `check_update`, `update_parameters`, `save_shared_parameters`, `write_txt_water` and their private helpers | Pressure computations |
 | `SolverFactory` | `new_solver`: one `CASE` per method | Anything else |
 | `methods/*` | One acoustic method each, extending `AcousticSolver_t` | Emitter types (they only see `Emitter_t`) |
 
@@ -196,7 +198,7 @@ Kinds  ->  types  ->  utils  ->  input / emitters  ->  solvers  ->  app
 |---|---|
 | Kinds | `Kinds` |
 | types | `SourceTypes`, `ConfigTypes` |
-| utils | `FFTW3`, `StringUtils`, `FileUtils`, `HDF5Utils`, `CSVReader`, `ExpressionParser`, `Sorting`, `Timing`, `SignalProcessing`, `SpecialFunctions` |
+| utils | `FFTW3`, `StringUtils`, `FileUtils`, `HDF5Utils`, `CSVReader`, `ExpressionParser`, `Sorting`, `Timing`, `SignalProcessing`, `SpecialFunctions`, `SeawaterAbsorption` |
 | input | `InputChecks`, `InputEmitters`, `InputSolver`, `InputPostProcessing`, `Args_parser` |
 | emitters | `OpenFASTReader`, `StructureModel`, `DrivetrainExcitation`, `Emitter`, `WindTurbine`, `DTU10MWMonopile`, `DTU10MWFloating`, `SAITEC2MWFloating`, `TurbineFactory`, `WindFarm`, `ManualSources`, `FrequencySource`, `TimeSource` |
 | solvers | `AcousticSolver`, `AcousticSolver_output`, `AcousticSolver_steps`, `ImageMethod`, `AnalyticalNormalModes`, `SolverFactory` |
@@ -260,12 +262,12 @@ Deferred procedures, implemented by every method:
 
 | Procedure | Contract |
 |---|---|
-| `init(self, sources, config)` | Moves `xyz`, `Force`, `Freqs` and `order` out of `sources` (`MOVE_ALLOC`), stops if a source has an order without a kernel (both methods implement `SOURCE_MONOPOLE` and `SOURCE_DIPOLE`), copies `env`, `run_inputs` and the solver settings (`save_path`, `extra_label`, `block_size`, `debug`, `in_cluster`, `update_existing`, `mask_distance`), reads its own `Config_X_t`, calls `check_sources_in_water` once its environment (seabed included) is set, calls `build_save_path`, prints `get_name()`, and frees `sources` and `config` |
+| `init(self, sources, config)` | Moves `xyz`, `Force`, `Freqs` and `order` out of `sources` (`MOVE_ALLOC`), stops if a source has an order without a kernel (both methods implement `SOURCE_MONOPOLE` and `SOURCE_DIPOLE`), copies `env`, `run_inputs` and the solver settings (`save_path`, `extra_label`, `block_size`, `debug`, `in_cluster`, `update_existing`, `mask_distance`), reads its own `Config_X_t`, calls `check_sources_in_water` once its environment (seabed included) is set and `set_absorption` (the frequencies are known), calls `build_save_path`, prints `get_name()`, and frees `sources` and `config` |
 | `get_name(self)` | Returns the human-readable name and stores it in `solver_name` (written as the `Method` dataset) |
-| `compute_pressure(self, observers, block_size, total_pressure)` | Pressure `(Nfreqs, Nobs)` at `observers (Nobs, 3)` for every source frequency. The parallel blocks split the observers, never the sources. One kernel per multipole order present is called (`has_dipoles`, `has_monopoles`); each one skips (`cycle`) the sources of the other orders, and its result is accumulated before the next kernel is called. With dipoles only, only the dipole kernel runs, so a set of dipoles is computed as before the monopoles (the effect on the bits is in §8). Called only through `compute_pressure_masked` |
+| `compute_pressure(self, observers, block_size, total_pressure)` | Pressure `(Nfreqs, Nobs)` at `observers (Nobs, 3)` for every source frequency. The parallel blocks split the observers, never the sources. One kernel per multipole order present is called (`has_dipoles`, `has_monopoles`); each one skips (`cycle`) the sources of the other orders, and its result is accumulated before the next kernel is called. With dipoles only, only the dipole kernel runs, so a set of dipoles is computed as before the monopoles (the effect on the bits is in §8). With `env % absorption` the kernels use `alpha(f)` [Np/m]: IM the complex wavenumber k + i*alpha on every path (`exp(-alpha*R)`, and `1/R + alpha - i*k` in the dipole); ANM `exp(-delta_m*r)` on the Hankel functions of every propagating mode, `delta_m = Im sqrt((k + i*alpha)^2 - k_zm^2)`; without it the loops of before run unchanged. Called only through `compute_pressure_masked` |
 | `save_parameters(self, emitter)` | In this order: `check_update(emitter)`, its own datasets, `save_shared_parameters(emitter)`, `emitter % save_params`, `write_txt_summary(emitter)` |
 | `build_save_path(self)` | Calls `resolve_save_path(method_tag)` with its tag, e.g. `_IM30`, `_ANM24` |
-| `write_txt_summary(self, emitter)` | Writes the `.dat` header: title, `emitter % write_txt`, environment and solver blocks |
+| `write_txt_summary(self, emitter)` | Writes the `.dat` header: title, `emitter % write_txt`, environment (ending with `write_txt_water`) and solver blocks |
 
 Water-column queries (non-deferred, overridable, implemented in the parent):
 
@@ -290,7 +292,9 @@ The `run_*` steps never read `depth_base`: at their reference point they ask `z_
 Other shared procedures:
 - `compute_pressure_masked(label, observers, block_size, total_pressure)`: the wrapper every step uses. Observers closer than `mask_distance` to a source node (`check_observers_distances`) or outside the water column (`in_water`) are not computed and get NaN; one WARNING line per criterion reports how many. Without masked observers it is a plain `compute_pressure` call.
 - `check_sources_in_water()`: stops the run, naming the first offender and the seabed there, if a source is outside the water column (`in_water` on `sources % xyz`). The input readers only check that `z <= 0`, because the seabed belongs to the method. Every `init` must call it (§5.3).
-- `save_shared_parameters(emitter)`: writes `Method` (`solver_name`) and, if `emitter % get_enbw() > 0`, `ENBW`. Neither goes to the `.dat`.
+- `save_shared_parameters(emitter)`: writes `Method` (`solver_name`) and, if `emitter % get_enbw() > 0`, `ENBW`; neither goes to the `.dat`. Then the water: `T_wat`, `S_wat`, `pH_wat` when given (not `DEFAULT_R`), and `z_alpha`, `Alpha_dBkm` with `env % absorption`.
+- `set_absorption()`: with `env % absorption`, tabulates the volume absorption at every frequency (`alpha_dB` [dB/km], `alpha` [Np/m]) at `z_alpha = depth_base/2` and prints it; without it, does nothing. Every `init` must call it (§5.3).
+- `write_txt_water(u)`: the water lines at the end of the `ENVIRONMENT` block of the `.dat` (temperature, salinity, pH when given; formula, depth, alpha at f_min and f_max with absorption); nothing when none is set, so the summaries without absorption keep their content.
 - `run()`: executes the enabled steps in a fixed order (spectrums, polar, decay, line, sphere, sliceXY, sliceXZ, sliceVertical, cylinder).
 - `run_sphere`: a no-op in the parent (`dummy_run_sphere`, which switches `do_sphere` off); `ImageMethod` overrides it with the free-field sphere.
 - `resolve_save_path`, `check_update`, `update_parameters`: see §6.3.
@@ -360,7 +364,7 @@ The planned emitters are in §7.1.
    - The check of `init` lists the orders it supports and stops on any other.
    - `compute_pressure` calls the kernel of each order present and accumulates its result before calling the next one.
    - If it builds images, every node carries the order of its parent source (as `ImageSystem_t % order`).
-2. Its `init` calls `CALL self % check_sources_in_water()` once the environment of the method is set (its seabed included) and before anything is saved. The compiler cannot enforce it: without that line the sources are never checked, and one below the seabed gives finite but wrong pressures.
+2. Its `init` calls `CALL self % check_sources_in_water()` once the environment of the method is set (its seabed included) and before anything is saved. The compiler cannot enforce it: without that line the sources are never checked, and one below the seabed gives finite but wrong pressures. It also calls `CALL self % set_absorption()`, and with `env % absorption` its kernels apply `alpha` (wavenumber k + i*alpha) and its `write_txt_summary` calls `write_txt_water`: not enforced either, and without it the file says `Alpha_dBkm` while its pressures lack the absorption (and the plotting no longer applies it).
 3. `Config_X_t EXTENDS(Config_Method_t)` in `types/ConfigTypes.f90`.
 4. `read_X_config` in `input/InputSolver.f90`, and its `CASE` in `read_input_files` (`input/Args_parser.f90`), with its own `.nml` in `input_files/AcousticMethods/<method>.nml`.
 5. Its `CASE` in `new_solver` (`solvers/SolverFactory.f90`).
@@ -391,7 +395,7 @@ Complex arrays are stored as `(2, N...)` in Fortran order, i.e. `(..., N, 2)` (r
 |---|---|
 | `ImageMethod % save_parameters` | `N_images`, `c_wat`, `rho_wat`, `Lower_HBC`, `p_ref` |
 | `AnalyticalNormalModes % save_parameters` | `Nmodes`, `H`, `c_wat`, `rho_wat`, `Lower_HBC`, `p_ref` |
-| `save_shared_parameters` | `Method` (`"Images Method"`, `"Analytical Normal Modes"`), `ENBW` (1.5, only for forces from a windowed FFT: turbines, farms, `TimeSource`) |
+| `save_shared_parameters` | `Method` (`"Images Method"`, `"Analytical Normal Modes"`), `ENBW` (1.5, only for forces from a windowed FFT: turbines, farms, `TimeSource`); `T_wat` [degC], `S_wat` [ppt], `pH_wat` only when given in `Environment.nml` (or set by `absorption`); `z_alpha` [m] and `Alpha_dBkm` `(Nfreqs)` [dB/km] only with `absorption` (their presence tells the plotting that the pressures include it) |
 | turbine (`save_turbine_params`) | `case_type`, `WindSpeed`, `WindDir`, `Depth`, `AxisPos`, `BariPos` |
 | turbine (`save_specific_params`) | `Case_type`, `Structure_nodes` plus the type's geometry (`D`, `rho_mat`, `wet_area`; `col_D`, `XsecA`, `XsecB`, `t`, `col_members`, `pon_members`; `Diam_y`, `Diam_z`, `float_members`, `joint_members`) |
 | farm (`save_params_WindFarm`) | `Nturbines`, `Source_offset`, and every turbine dataset with the suffix `_i` (e.g. `WindSpeed_2`, `Structure_nodes_2`) |
@@ -421,7 +425,7 @@ Written next to the HDF5 file (same name, `.dat`), with blocks between separator
    - or `WIND FARM` (layout table) followed by `>>> Turbine i` and the blocks of every turbine;
    - or `FREQUENCY-DOMAIN SOURCES`: counts, the line `Multipole   : dipole | monopole | mixed`, positions (`F14.6`; only for `mixed`, a last column `order [-]`), the lines `Source file`, `Freq. grid`, `Freq. file`, the expressions or `Force file` when the input was not written in the namelist, then the title of the forces (followed, if there is a monopole, by the line `Monopoles   : volume velocity Q [m^3/s] in the Fx columns (Fy and Fz are 0)`) and the force table (`I4,I4,F12.4,6ES16.8`: index of frequency and source, frequency, Re and Im of Fx, Fy, Fz) if it has at most 200 frequencies and 20 sources, and checksums at full precision (`ES23.15`: sums of `f` and `f**2`; per source and component the sums of Re F, Im F, |F|^2, i Re F, i Im F, with `i` the frequency index) when it is larger or was not written by hand. An input written by hand keeps exactly the table it always had;
    - or `TIME-DOMAIN SOURCES`: counts, the `Multipole` line, positions (with the `order` column for `mixed`), `Source file` if used, the time axis (`N samples`, `First time`, `Time step`, `Skipf`, `Fmin`, `Fmax`, `Time file` if used), the title of the forces and, if there is a monopole, the same `Monopoles` line, the expressions or `Force file`, and per source and component `sum(F)`, `sum(F**2)` and `sum(i*F)` of the series.
-3. `ENVIRONMENT` and `SOLVER: <name>` blocks (`write_txt_summary`).
+3. `ENVIRONMENT` and `SOLVER: <name>` blocks (`write_txt_summary`). The `ENVIRONMENT` block ends with the lines of `write_txt_water`: `Temperature`, `Salinity` and `pH` (`F8.2`) when given and, with absorption, `Absorption       : Ainslie & McColm (1998)`, `Absorption depth` and `Alpha at f_min`, `Alpha at f_max` (`ES10.3` dB/km); so `check_update` rebuilds a file when the absorption or the water changes.
 4. `POST-PROCESSING STEPS EXECUTED` (`update_parameters`): one block per step (`Spectrums:`, `Polar:`, ...) with the parameters actually used, defaults resolved.
 5. A final `=` separator.
 
@@ -468,7 +472,7 @@ Decided on 2026-10-02; the status of each item is given.
 - Verification with the dipoles of a turbine, exported and read back as manual sources: they must reproduce its `P_*` datasets. The impedance-corrected forces handed to the solver are not saved in the turbine HDF5 today, so they must first be written out.
 
 ### 7.2 Acoustic methods
-- `Config_Environment_t` will grow optional arrays: c(z), ρ(z), attenuation, bathymetry H(x, y), sediment. It keeps the base scalars, so the simple methods keep working. Each method checks in `init` that the data it needs is present.
+- `Config_Environment_t` will grow optional arrays: c(z), ρ(z), attenuation, bathymetry H(x, y), sediment. It keeps the base scalars, so the simple methods keep working. Each method checks in `init` that the data it needs is present. The volume absorption of the water is already a scalar option (`absorption`, 14/10/2026); the losses of a penetrable seabed, larger in shallow water, need a sediment.
 - The boundaries belong to each method: constants in IM and ANM, arrays in complex methods. A method publishes the seabed by overriding `z_seabed`; `in_water` and `check_sources_in_water` follow it.
 - Overriding a whole `run_*` is the exception (precedent: IM's `run_sphere`).
 
@@ -505,5 +509,14 @@ Any change that is meant not to change the results follows `Programming_style_gu
 - an unordered mixed set (dipole, monopole, dipole) against the sum of its sources run one by one: 1.4e-16 (IM) and 2.2e-16 (ANM);
 - with dipoles only, the shipped `FrequencySource` and `TimeSource` cases (with the `.nml` files of before) and the DTU 10 MW monopile (`decay`) against the binary of before: identical with IM; with ANM identical except the `P_*` datasets, by at most 2.3e-16 (see below);
 - the debug build (`-fcheck=all`) runs all of them without a runtime error, and `-Wall` gives only the 9 accepted warnings.
+
+**Absorption.** A change in the absorption or in the kernels also repeats the checks of 14/10/2026 (`absorption = .true.`; `OMP_NUM_THREADS` 1 to 4):
+- `Alpha_dBkm` against Ainslie & McColm in Python, 36 Hz to 20 kHz: at most 5.5e-16 (relative); the plotting's `absorption_coefficient`, the same;
+- ANM monopole and dipole (H = 25 m, 46 Hz to 20 kHz, 31 observers to 3 km) against the same model written in Python (`scipy` Hankel functions): 4.5e-13 and 2.3e-12; against the Hankel functions of the complex `k_rm` (the exact solution with k + i*alpha): 1.2e-6 to 4.1e-4;
+- one mode (`Nmodes = 1`): `|p_on / p_off| = exp(-delta_1 r)` to 3.3e-16;
+- IM without images (`N_images = 0`) against the closed forms with k + i*alpha: 1.5e-16 (monopole), 3.6e-17 (dipole);
+- IM (2000 and 4000 images) against ANM, monopole, 5 and 20 kHz, 0.1 to 1 km: 0.001 to 0.017 dB rms (0.012 to 0.055 dB without absorption); the effect of the absorption agrees within 0.07 dB;
+- with `absorption = .false.` (and the template `Environment.nml` with the new lines), the shipped `FrequencySource` and `TimeSource` cases with IM and ANM, all steps, against the binary of before: identical HDF5, `.dat` and stdout;
+- the debug build runs them without a runtime error, and `-Wall` gives only the 9 accepted warnings.
 
 **Normal-mode references before 13/10/2026.** The 1/rho of the two terms of `dipolar_pressure_NM` is applied once to the tabulated source shapes `Psi_m(z_s)` and `Psi_m'(z_s)`, instead of twice inside the sum over the modes (2.2 % less time: 175.9 s against 179.9 s for the DTU 10 MW monopile, `decay`, one thread). The `P_*` datasets of the normal modes with dipoles changed in the last bit (at most 2.3e-16, relative); every other dataset, the `.dat`, stdout and the positions of the NaN are identical, and the image method is unchanged. An ANM reference made before that date is no longer bitwise comparable and must be regenerated; the IM references remain valid. Moving the loop over the sources outside was also tried: identical results and the same time (180.6 s), so the loop order was kept.

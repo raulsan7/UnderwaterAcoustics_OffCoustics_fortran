@@ -5,8 +5,9 @@
 ! path (resolve_save_path), the update of an existing output of the same
 ! case (check_update, then update_parameters with the merge of the
 ! previous .dat), the .dat block of every post-processing step that ran
-! (update_parameters), and the datasets shared by every solver
-! (save_shared_parameters).
+! (update_parameters), the datasets shared by every solver
+! (save_shared_parameters) and the water lines of the .dat summary
+! (write_txt_water).
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -440,7 +441,12 @@ MODULE SUBROUTINE save_shared_parameters(self, emitter_obj)
     ! save_parameters right after its own datasets: the solver name (Method,
     ! from get_name) and, only when the emitter forces come from a windowed
     ! FFT (get_enbw > 0), the equivalent noise bandwidth of that window in
-    ! bins (ENBW). Neither is written in the .dat summary.
+    ! bins (ENBW). Neither is written in the .dat summary. Then the water of
+    ! the volume absorption: temperature, salinity and pH when given (T_wat,
+    ! S_wat, pH_wat) and, with env % absorption, the depth of the formula
+    ! and alpha(f) in dB/km (z_alpha, Alpha_dBkm), whose presence tells that
+    ! the pressures already include the absorption (write_txt_water writes
+    ! the same in the .dat summary).
     ! -------------------------------------------------------------------------
 
     CLASS(AcousticSolver_t), INTENT(IN) :: self       ! [-] Solver instance
@@ -456,6 +462,55 @@ MODULE SUBROUTINE save_shared_parameters(self, emitter_obj)
     enbw = emitter_obj % get_enbw()
     if (enbw > 0.0_WP) CALL save_variable(self % save_path, "ENBW", enbw)
 
+    ! Water of the volume absorption: the properties given, and alpha(f) when the pressures include it
+    if (self % env % temperature /= DEFAULT_R) CALL save_variable(self % save_path, "T_wat", self % env % temperature)
+    if (self % env % salinity /= DEFAULT_R)    CALL save_variable(self % save_path, "S_wat", self % env % salinity)
+    if (self % env % pH /= DEFAULT_R)          CALL save_variable(self % save_path, "pH_wat", self % env % pH)
+
+    if (self % env % absorption) then
+        CALL save_variable(self % save_path, "z_alpha", self % z_alpha)
+        CALL save_variable(self % save_path, "Alpha_dBkm", self % alpha_dB)
+    end if
+
 END SUBROUTINE save_shared_parameters
+
+
+MODULE SUBROUTINE write_txt_water(self, u)
+    ! -------------------------------------------------------------------------
+    ! Appends to the ENVIRONMENT block of the .dat summary, open in unit u,
+    ! the water of the volume absorption: one line per given temperature,
+    ! salinity and pH and, with env % absorption, the formula, its depth and
+    ! alpha at the lowest and highest frequency. Writes nothing when none
+    ! of them is set, so the summaries of the cases without absorption
+    ! keep their former content (check_update compares them).
+    ! -------------------------------------------------------------------------
+
+    CLASS(AcousticSolver_t), INTENT(IN) :: self    ! [-] Solver instance
+    INTEGER(I32)           , INTENT(IN) :: u       ! [-] Unit of the open .dat file
+
+    ! Local variables
+    INTEGER(I32) :: i_min, i_max
+
+
+    if (self % env % temperature /= DEFAULT_R) &
+        write(u, '(A,F8.2,A)') 'Temperature      : ', self % env % temperature, ' degC'
+    if (self % env % salinity /= DEFAULT_R) &
+        write(u, '(A,F8.2,A)') 'Salinity         : ', self % env % salinity, ' ppt'
+    if (self % env % pH /= DEFAULT_R) &
+        write(u, '(A,F8.2)')   'pH               : ', self % env % pH
+
+    if (.not. self % env % absorption) return
+
+    i_min = int(minloc(self % sources % Freqs, dim=1), I32)
+    i_max = int(maxloc(self % sources % Freqs, dim=1), I32)
+
+    write(u, '(A)')                'Absorption       : Ainslie & McColm (1998)'
+    write(u, '(A,F8.2,A)')         'Absorption depth : ', self % z_alpha, ' m'
+    write(u, '(A,ES10.3,A,F0.2,A)') 'Alpha at f_min   : ', self % alpha_dB(i_min), ' dB/km at ', &
+                                    self % sources % Freqs(i_min), ' Hz'
+    write(u, '(A,ES10.3,A,F0.2,A)') 'Alpha at f_max   : ', self % alpha_dB(i_max), ' dB/km at ', &
+                                    self % sources % Freqs(i_max), ' Hz'
+
+END SUBROUTINE write_txt_water
 
 END SUBMODULE AcousticSolver_output

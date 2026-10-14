@@ -131,7 +131,7 @@ def plot_polar(case             : dict  = None,        # [-] Case
                     print(f"plot_polar(): no frequencies in band {label}, skipping it")
                     continue
 
-                oaspl = au.OASPL_band(p, mask, p_ref, absorption, Freqs, distances, enbw=c["ENBW"])
+                oaspl = au.OASPL_band(p, mask, p_ref, absorption, Freqs, distances, enbw=c["ENBW"], water=c["water"])
                 series.append((c, theta_plot, np.append(oaspl, oaspl[0]), label, b))
 
         else:
@@ -142,7 +142,7 @@ def plot_polar(case             : dict  = None,        # [-] Case
 
             vals, unit_label = convert_to(p[idx, :], mode, df, enbw=c["ENBW"])
 
-            if absorption and mode in ("SPL", "PSD"): vals = au.add_absorption(f, vals, distances)
+            if absorption and mode in ("SPL", "PSD"): vals = au.add_absorption(f, vals, distances, water=c["water"])
 
             series.append((c, theta_plot, np.append(vals, vals[0]), f"{unit_label} at {f:.2f} [Hz]", 0))
 

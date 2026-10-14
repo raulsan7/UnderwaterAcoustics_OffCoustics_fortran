@@ -91,6 +91,7 @@ OBJS := \
     $(BUILD)/Timing.o \
     $(BUILD)/SignalProcessing.o \
     $(BUILD)/SpecialFunctions.o \
+    $(BUILD)/SeawaterAbsorption.o \
     $(BUILD)/InputChecks.o \
     $(BUILD)/InputEmitters.o \
     $(BUILD)/InputSolver.o \
@@ -161,6 +162,9 @@ $(BUILD)/SignalProcessing.o: $(SRC_DIR)/utils/SignalProcessing.f90 $(BUILD)/Kind
 $(BUILD)/SpecialFunctions.o: $(SRC_DIR)/utils/SpecialFunctions.f90 $(BUILD)/Kinds.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
+$(BUILD)/SeawaterAbsorption.o: $(SRC_DIR)/utils/SeawaterAbsorption.f90 $(BUILD)/Kinds.o | $(BUILD)
+	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
+
 $(BUILD)/InputChecks.o: $(SRC_DIR)/input/InputChecks.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
@@ -215,7 +219,7 @@ $(BUILD)/FrequencySource.o: $(SRC_DIR)/emitters/FrequencySource.f90 $(BUILD)/Kin
 $(BUILD)/TimeSource.o: $(SRC_DIR)/emitters/TimeSource.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/HDF5Utils.o $(BUILD)/CSVReader.o $(BUILD)/SignalProcessing.o $(BUILD)/ExpressionParser.o $(BUILD)/ManualSources.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/AcousticSolver.o: $(SRC_DIR)/solvers/AcousticSolver.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/Emitter.o | $(BUILD)
+$(BUILD)/AcousticSolver.o: $(SRC_DIR)/solvers/AcousticSolver.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/SeawaterAbsorption.o $(BUILD)/Emitter.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 # Submodules depend on their parent's object (gfortran writes their .smod

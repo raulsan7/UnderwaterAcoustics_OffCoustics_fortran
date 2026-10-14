@@ -90,7 +90,7 @@ def plot_cylinder(case            : dict = None,        # [-] Case
     title_extra = ""
     # Select mode
     if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
+        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances, enbw=case["ENBW"], water=case["water"])
         unit_label = r"OASPL [dB re 1$\mu$ Pa]"
 
     elif mode == 'SWL':
@@ -104,7 +104,7 @@ def plot_cylinder(case            : dict = None,        # [-] Case
 
         vals, unit_label = convert_to(p, mode, df, enbw=case["ENBW"])
 
-        if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, distances)
+        if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, distances, water=case["water"])
 
     # Plot
     theta_plot = np.append(theta, 360.)

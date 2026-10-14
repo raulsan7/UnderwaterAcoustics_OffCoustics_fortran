@@ -16,7 +16,7 @@
 MODULE InputSolver
 
 USE InputChecks, ONLY: check_fits
-USE Kinds, ONLY: I32, WP, DEFAULT_I
+USE Kinds, ONLY: I32, WP, DEFAULT_I, DEFAULT_R
 USE ConfigTypes, ONLY: Config_ImageMethod_t, Config_AnalyticalNormalModes_t, Config_t
 
 IMPLICIT NONE
@@ -122,10 +122,16 @@ END SUBROUTINE read_solver_config
 SUBROUTINE read_environment_config(path, config)
     ! -------------------------------------------------------------------------
     ! Reads the "environment_config" namelist from Environment.nml (base
-    ! water depth, speed of sound, density and reference pressure) and packs
-    ! the values into config % env. Every value must be strictly positive:
-    ! a zero or negative depth, sound speed or density gives NaN pressures
-    ! or a late stop in the solvers, and p_ref <= 0 breaks every dB level.
+    ! water depth, speed of sound, density and reference pressure, and the
+    ! volume absorption of sea water: switch, temperature, salinity and pH)
+    ! and packs the values into config % env. Every base value must be
+    ! strictly positive: a zero or negative depth, sound speed or density
+    ! gives NaN pressures or a late stop in the solvers, and p_ref <= 0
+    ! breaks every dB level. Temperature, salinity and pH stay DEFAULT_R when
+    ! not given; with absorption they default to 10 degC, 35 ppt and 8 (with a
+    ! warning), and a warning flags a water outside the ranges in which the
+    ! formula of Ainslie and McColm (1998) was checked against
+    ! Francois-Garrison.
     ! -------------------------------------------------------------------------
 
     CHARACTER(len=*), INTENT(IN)    :: path      ! [-] Path to Environment.nml
@@ -140,13 +146,21 @@ SUBROUTINE read_environment_config(path, config)
     REAL(WP) :: speed_sound_base
     REAL(WP) :: density_base
     REAL(WP) :: reference_pressure
+    LOGICAL  :: absorption
+    REAL(WP) :: temperature
+    REAL(WP) :: salinity
+    REAL(WP) :: pH
 
     ! --- 1. Configuration namelist --- !
     NAMELIST /environment_config/ &
         depth_base,               &
         speed_sound_base,         &
         density_base,             &
-        reference_pressure
+        reference_pressure,       &
+        absorption,               &
+        temperature,              &
+        salinity,                 &
+        pH
 
 
     ! --- 2. Defaults --- !
@@ -154,6 +168,10 @@ SUBROUTINE read_environment_config(path, config)
     speed_sound_base   = 1500.0_WP
     density_base       = 1025.0_WP
     reference_pressure = 1.0e-6_WP
+    absorption         = .false.
+    temperature        = DEFAULT_R
+    salinity           = DEFAULT_R
+    pH                 = DEFAULT_R
 
     ! --- 3. Open and read namelist file --- !
     open(newunit=unit_num, file=path, status='old', action='read', iostat=ierr)
@@ -182,11 +200,46 @@ SUBROUTINE read_environment_config(path, config)
         error stop
     end if
 
-    ! --- 5. Pack values into Config_t --- !
+    ! --- 5. Water of the volume absorption: defaults, physical values, ranges of the formula --- !
+    if (absorption .and. temperature == DEFAULT_R) then
+        temperature = 10.0_WP
+        write(*, '(A)') " WARNING: &environment_config: absorption without temperature, 10 degC assumed"
+    end if
+    if (absorption .and. salinity == DEFAULT_R) then
+        salinity = 35.0_WP
+        write(*, '(A)') " WARNING: &environment_config: absorption without salinity, 35 ppt assumed"
+    end if
+    if (absorption .and. pH == DEFAULT_R) then
+        pH = 8.0_WP
+        write(*, '(A)') " WARNING: &environment_config: absorption without pH, 8 assumed"
+    end if
+
+    ! A given value must be that of liquid sea water (written with .not. to reject NaN too)
+    if ((temperature /= DEFAULT_R .and. .not. (temperature > -5.0_WP .and. temperature < 50.0_WP)) .or. &
+        (salinity /= DEFAULT_R .and. .not. (salinity >= 0.0_WP .and. salinity < 100.0_WP)) .or.         &
+        (pH /= DEFAULT_R .and. .not. (pH > 0.0_WP .and. pH < 14.0_WP))) then
+        write(*, '(A)') " ERROR: &environment_config: temperature must be in (-5, 50) degC, salinity in " // &
+                        "[0, 100) ppt and pH in (0, 14)"
+        write(*, '(A,3ES14.6)') "        values read:", temperature, salinity, pH
+        error stop
+    end if
+
+    if (absorption .and. .not. (temperature > -6.0_WP .and. temperature < 35.0_WP .and. salinity > 5.0_WP .and. &
+                                salinity < 50.0_WP .and. pH > 7.7_WP .and. pH < 8.3_WP .and.                   &
+                                depth_base < 7000.0_WP)) then
+        write(*, '(A)') " WARNING: &environment_config: water outside the ranges in which the absorption formula " // &
+                        "was checked (-6 < T < 35 degC, 5 < S < 50 ppt, 7.7 < pH < 8.3, depth < 7 km)"
+    end if
+
+    ! --- 6. Pack values into Config_t --- !
     config % env % depth_base         = depth_base
     config % env % speed_sound_base   = speed_sound_base
     config % env % density_base       = density_base
     config % env % reference_pressure = reference_pressure
+    config % env % absorption         = absorption
+    config % env % temperature        = temperature
+    config % env % salinity           = salinity
+    config % env % pH                 = pH
 
 END SUBROUTINE read_environment_config
 

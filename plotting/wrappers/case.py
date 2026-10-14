@@ -9,6 +9,8 @@ Description: The Case contract between the wrappers (one per emitter) and the ge
              Method, Method_name, Method_tag, c_wat, rho_wat, p_ref, Lower_HBC
                                   solver parameters, as readers.solver.read_solver_params
              Depth                water depth [m], read only through seabed_depth(case, x, y)
+             water, Alpha_dBkm    water of the seawater absorption (T, S, pH, z) and alpha(f) [dB/km] when the
+                                  solver already applied it to the pressures (None otherwise)
              Freqs, ENBW          frequencies [Hz] and window bandwidth [bins] (1.0 without window)
              bin_width            spectral bin width [Hz] for PSD; None for tonal sources
              nodes                (N, 3) points drawn over the maps, NaN rows removed (may be (0, 3))
@@ -59,7 +61,8 @@ STEP_KEYS = {
 OPTIONAL_STEP_KEYS = {"has_cylinder": ["dA_cylinder"]}     # Older files lack it: plot_cylinder computes it
 
 # Solver parameters, the same for every emitter (the method-specific ones only when the file has them)
-SOLVER_KEYS   = ["Method", "Method_name", "Method_tag", "ENBW", "c_wat", "rho_wat", "p_ref", "Lower_HBC", "Depth", "Freqs"]
+SOLVER_KEYS   = ["Method", "Method_name", "Method_tag", "ENBW", "c_wat", "rho_wat", "p_ref", "Lower_HBC", "Depth", "Freqs",
+                 "water", "Alpha_dBkm"]
 METHOD_KEYS   = ["Nmodes", "H", "N_images"]
 
 REQUIRED_KEYS = ["Path", "Name", "Emitter", "label", "bin_width", "nodes", "origin", "centre", "direction", "specific"] \
@@ -145,6 +148,12 @@ def validate_case(case: dict = None):     # [-] Case built by a wrapper
 
     freqs = case["Freqs"]
     check(isinstance(freqs, np.ndarray) and freqs.ndim == 1 and freqs.size > 0, "Freqs must be a non-empty 1D array")
+    water = case["water"]
+    check(isinstance(water, dict) and all(is_float(water.get(key)) for key in ("T", "S", "pH", "z")),
+          "water must be a dict of floats T, S, pH, z")
+    alpha = case["Alpha_dBkm"]
+    check(alpha is None or (isinstance(alpha, np.ndarray) and isinstance(freqs, np.ndarray) and alpha.shape == freqs.shape),
+          "Alpha_dBkm must be None or an array shaped as Freqs")
     check(case["bin_width"] is None or (is_float(case["bin_width"]) and case["bin_width"] > 0),
           "bin_width must be a positive float or None")
 

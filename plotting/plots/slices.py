@@ -126,7 +126,7 @@ def plot_sliceXY(case            : dict  = None,         # [-] Case
 
     # Select mode
     if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
+        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances, enbw=case["ENBW"], water=case["water"])
         unit_label = r"OASPL [dB re 1$\mu$ Pa]"
     elif mode == 'SWL':
         print("WARNING plot_sliceXY(): SWL not yet implemented")
@@ -138,7 +138,7 @@ def plot_sliceXY(case            : dict  = None,         # [-] Case
         title_extra = f"at {f:.2f} Hz"
 
         vals, unit_label = convert_to(p_f, mode, df, enbw=case["ENBW"])
-        if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, distances)
+        if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, distances, water=case["water"])
 
     # Plot (NaN: holes)
     contour_set = ax.contourf(X, Y, vals, levels=60, cmap=cmap)
@@ -235,7 +235,7 @@ def plot_sliceXZ(case            : dict  = None,         # [-] Case
 
     # Select mode
     if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
+        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances, enbw=case["ENBW"], water=case["water"])
         unit_label = r"OASPL [dB re 1$\mu$ Pa]"
     elif mode == 'SWL':
         print("WARNING plot_sliceXZ(): SWL not yet implemented")
@@ -247,7 +247,7 @@ def plot_sliceXZ(case            : dict  = None,         # [-] Case
         title_extra = f"at {f:.2f} Hz"
 
         vals, unit_label = convert_to(p_f, mode, df, enbw=case["ENBW"])
-        if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, distances)
+        if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, distances, water=case["water"])
 
     # Plot (upper half of the range, NaN: holes)
     contour_set = ax.contourf(X, Z, vals, levels=get_contour_levels(vals), cmap=cmap, extend='min')
@@ -350,7 +350,7 @@ def plot_sliceVertical(case            : dict  = None,         # [-] Case
 
     # Select mode
     if mode == 'OASPL':
-        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
+        vals = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances, enbw=case["ENBW"], water=case["water"])
         unit_label = r"OASPL [dB re 1$\mu$ Pa]"
     elif mode == 'SWL':
         print("WARNING plot_sliceVertical(): SWL not yet implemented")
@@ -362,7 +362,7 @@ def plot_sliceVertical(case            : dict  = None,         # [-] Case
         title_extra = f"at {f:.2f} Hz"
 
         vals, unit_label = convert_to(p_f, mode, df, enbw=case["ENBW"])
-        if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, distances)
+        if absorption and mode in ('SPL', 'PSD'): vals = au.add_absorption(f, vals, distances, water=case["water"])
 
     # Plot (upper half of the range, NaN: holes)
     contour_set = ax.contourf(U, Z, vals, levels=get_contour_levels(vals), cmap=cmap, extend='min')

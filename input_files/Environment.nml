@@ -1,12 +1,23 @@
 ! =====================================================================
 ! Environment configuration file
 ! =====================================================================
+! Volume absorption of sea water (absorption = .true.): formula of
+! Ainslie & McColm (1998) with the temperature, salinity and pH below,
+! evaluated at mid-depth. temperature, salinity and pH default to 10 degC,
+! 35 ppt and 8 (with a warning) when absorption is on and they are not
+! given; when given, they are also written to the outputs (the plotting
+! uses them for its own absorption). Below 100 Hz it is below 1e-3 dB/km.
+! =====================================================================
 
 &environment_config
     depth_base = 30.0             ! [m] Default site water depth
     speed_sound_base = 1500.0     ! [m/s] Speed of sound in the fluid
     density_base = 1025.0         ! [kg/m3] Fluid density
     reference_pressure = 1.0e-6   ! [Pa] Reference pressure used for dB/SPL calculations
+    absorption = .false.          ! [-] Whether the volume absorption of sea water is applied
+    ! temperature = 10.0          ! [degC] Water temperature (absorption)
+    ! salinity = 35.0             ! [ppt] Water salinity (absorption)
+    ! pH = 8.0                    ! [-] Water acidity (absorption)
 /
 
 

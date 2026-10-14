@@ -9,7 +9,10 @@
 ! boundary conditions applied per bounce, then the pressure field is
 ! computed as the superposition of all real+image contributions at each
 ! observer point, with one free-field kernel per multipole order (with
-! optional multi-observer chunked/parallel evaluation).
+! optional multi-observer chunked/parallel evaluation). With the volume
+! absorption of the environment, the wavenumber of every kernel is the
+! complex k + i*alpha, so each real or image contribution decays as
+! exp(-alpha*r) along its own path.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -106,8 +109,9 @@ SUBROUTINE init_ImageMethod(self, sources, config)
     ! Constructor of the Image Method solver. Copies the shared solver/env/
     ! turbine data from the parent AcousticSolver_t setup, reads the method-
     ! specific parameters (N_images, boundary planes, reflection coefficients,
-    ! singularity tolerance) from the configuration, resolves the output save
-    ! path and builds the initial image system.
+    ! singularity tolerance) from the configuration, tabulates the volume
+    ! absorption alpha(f) if requested, resolves the output save path and
+    ! builds the initial image system.
     ! -------------------------------------------------------------------------
 
     CLASS(ImageMethod_t)  , INTENT(INOUT)              :: self       ! [-] Solver instance
@@ -154,6 +158,9 @@ SUBROUTINE init_ImageMethod(self, sources, config)
 
     ! Sources inside the water column (the seabed is known from here on)
     CALL self % check_sources_in_water()
+
+    ! Volume absorption of sea water at every frequency (only with env % absorption)
+    CALL self % set_absorption()
 
     ! Build save_path
     CALL self % build_save_path()
@@ -391,6 +398,7 @@ SUBROUTINE write_txt_summary_ImageMethod(self, emitter_obj)
     write(u, '(A,F8.2,A)')   'Density          : ', self % env % density_base, ' kg/m^3'
     write(u, '(A,ES10.2,A)') 'Reference press. : ', self % env % reference_pressure, ' Pa'
     write(u, '(A,F8.2,A)')   'Depth            : ', self % env % depth_base, ' m'
+    CALL self % write_txt_water(u)
     write(u, *)
 
     write(u, '(A)') repeat('-', 70)
@@ -637,6 +645,10 @@ SUBROUTINE dipole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_all
     ! factors of each pair are computed once, and exp(i*k*r) is evaluated as
     ! cmplx(cos(k*r), sin(k*r)), so the loop is vectorized with SIMD sin/cos.
     ! The sources are accumulated in the same order as before (j ascending).
+    ! With the volume absorption of the environment the wavenumber is the
+    ! complex k + i*alpha: the term gets exp(-alpha*r) and its near-field
+    ! factor becomes 1/r + alpha - i*k (a separate loop, so the one without
+    ! absorption is unchanged).
     ! -------------------------------------------------------------------------
 
     CLASS(ImageMethod_t), INTENT(IN)               :: self              ! [-] Solver instance
@@ -651,6 +663,7 @@ SUBROUTINE dipole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_all
     ! Local variables
     INTEGER(I32)              :: NFreqs, Nnodes, Nob
     INTEGER(I32)              :: j, f, k
+    LOGICAL                   :: absorbing
     REAL(WP)    , ALLOCATABLE :: k_wave(:)
     REAL(WP)                  :: dx, dy, dz, r, r_inv, scal, kr, epsv
     COMPLEX(WP)               :: F_dot_r
@@ -664,8 +677,9 @@ SUBROUTINE dipole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_all
     epsv   = self % eps
 
     ALLOCATE(p_out(NFreqs, Nob))
-    p_out  = (0.0_WP, 0.0_WP)
-    k_wave = 2.0_WP * PI * Freqs / self % env % speed_sound_base
+    p_out     = (0.0_WP, 0.0_WP)
+    k_wave    = 2.0_WP * PI * Freqs / self % env % speed_sound_base
+    absorbing = self % env % absorption
 
     do j = 1, Nnodes
         if (order(j) /= SOURCE_DIPOLE) cycle    ! Monopoles: monopole_pressure_images
@@ -681,13 +695,24 @@ SUBROUTINE dipole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_all
             scal  = real(BC_all(j), WP) * r_inv * r_inv / (4.0_WP * PI)
 
             ! Frequencies innermost: unit stride, vectorized (SIMD sin/cos)
-            !$OMP SIMD PRIVATE(F_dot_r, kr)
-            do f = 1, NFreqs
-                kr          = k_wave(f) * r
-                F_dot_r     = Force(f, j, 1) * dx + Force(f, j, 2) * dy + Force(f, j, 3) * dz
-                p_out(f, k) = p_out(f, k) + F_dot_r * cmplx(r_inv, -k_wave(f), kind=WP) * &
-                              cmplx(cos(kr), sin(kr), kind=WP) * scal
-            end do
+            if (absorbing) then
+                ! Volume absorption: complex wavenumber k + i*alpha
+                !$OMP SIMD PRIVATE(F_dot_r, kr)
+                do f = 1, NFreqs
+                    kr          = k_wave(f) * r
+                    F_dot_r     = Force(f, j, 1) * dx + Force(f, j, 2) * dy + Force(f, j, 3) * dz
+                    p_out(f, k) = p_out(f, k) + F_dot_r * cmplx(r_inv + self % alpha(f), -k_wave(f), kind=WP) * &
+                                  cmplx(cos(kr), sin(kr), kind=WP) * exp(-self % alpha(f) * r) * scal
+                end do
+            else
+                !$OMP SIMD PRIVATE(F_dot_r, kr)
+                do f = 1, NFreqs
+                    kr          = k_wave(f) * r
+                    F_dot_r     = Force(f, j, 1) * dx + Force(f, j, 2) * dy + Force(f, j, 3) * dz
+                    p_out(f, k) = p_out(f, k) + F_dot_r * cmplx(r_inv, -k_wave(f), kind=WP) * &
+                                  cmplx(cos(kr), sin(kr), kind=WP) * scal
+                end do
+            end if
         end do
     end do
 
@@ -705,7 +730,10 @@ SUBROUTINE monopole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_a
     ! already in Force. The frequency factor -i*w*rho/(4*pi) = -i*f*rho/2 is
     ! computed once per frequency and the distance factor BC/r once per pair
     ! (r floored at eps). Same loop structure as dipole_pressure_images:
-    ! frequencies innermost, with unit stride and SIMD sin/cos.
+    ! frequencies innermost, with unit stride and SIMD sin/cos. With the
+    ! volume absorption of the environment the wavenumber is the complex
+    ! k + i*alpha, so the term gets exp(-alpha*r) (a separate loop, so the one
+    ! without absorption is unchanged).
     ! -------------------------------------------------------------------------
 
     CLASS(ImageMethod_t), INTENT(IN)               :: self              ! [-] Solver instance
@@ -720,6 +748,7 @@ SUBROUTINE monopole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_a
     ! Local variables
     INTEGER(I32)              :: NFreqs, Nnodes, Nob
     INTEGER(I32)              :: j, f, k
+    LOGICAL                   :: absorbing
     REAL(WP)    , ALLOCATABLE :: k_wave(:)
     COMPLEX(WP) , ALLOCATABLE :: src_fac(:)
     REAL(WP)                  :: dx, dy, dz, r, scal, kr, epsv
@@ -733,9 +762,10 @@ SUBROUTINE monopole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_a
     epsv   = self % eps
 
     ALLOCATE(p_out(NFreqs, Nob))
-    p_out   = (0.0_WP, 0.0_WP)
-    k_wave  = 2.0_WP * PI * Freqs / self % env % speed_sound_base
-    src_fac = cmplx(0.0_WP, -0.5_WP * Freqs * self % env % density_base, kind=WP)    ! -i*w*rho/(4*pi)
+    p_out     = (0.0_WP, 0.0_WP)
+    k_wave    = 2.0_WP * PI * Freqs / self % env % speed_sound_base
+    src_fac   = cmplx(0.0_WP, -0.5_WP * Freqs * self % env % density_base, kind=WP)    ! -i*w*rho/(4*pi)
+    absorbing = self % env % absorption
 
     do j = 1, Nnodes
         if (order(j) /= SOURCE_MONOPOLE) cycle    ! Dipoles: dipole_pressure_images
@@ -750,11 +780,21 @@ SUBROUTINE monopole_pressure_images(self, obs_pos, Freqs, nodes_pos, Force, BC_a
             scal = real(BC_all(j), WP) / r
 
             ! Frequencies innermost: unit stride, vectorized (SIMD sin/cos)
-            !$OMP SIMD PRIVATE(kr)
-            do f = 1, NFreqs
-                kr          = k_wave(f) * r
-                p_out(f, k) = p_out(f, k) + Force(f, j, 1) * src_fac(f) * cmplx(cos(kr), sin(kr), kind=WP) * scal
-            end do
+            if (absorbing) then
+                ! Volume absorption: complex wavenumber k + i*alpha
+                !$OMP SIMD PRIVATE(kr)
+                do f = 1, NFreqs
+                    kr          = k_wave(f) * r
+                    p_out(f, k) = p_out(f, k) + Force(f, j, 1) * src_fac(f) * cmplx(cos(kr), sin(kr), kind=WP) * &
+                                  exp(-self % alpha(f) * r) * scal
+                end do
+            else
+                !$OMP SIMD PRIVATE(kr)
+                do f = 1, NFreqs
+                    kr          = k_wave(f) * r
+                    p_out(f, k) = p_out(f, k) + Force(f, j, 1) * src_fac(f) * cmplx(cos(kr), sin(kr), kind=WP) * scal
+                end do
+            end if
         end do
     end do
 
@@ -771,10 +811,11 @@ SUBROUTINE run_sphere(self)
     ! -999, of the automatic one: the distance from the centre to the
     ! farthest source plus 3/k at f_farfield.
     ! Then evaluates the free-field pressure on that surface (temporarily
-    ! forcing N_images = 0, i.e. no boundary reflections) for later
-    ! far-field/radiated-power post-processing. Reshapes and saves the
-    ! pressure field, observer coordinates, angular/vertical grids and surface
-    ! element area to the HDF5 output.
+    ! forcing N_images = 0, i.e. no boundary reflections, and switching off
+    ! the volume absorption, since the sphere measures the power radiated by
+    ! the sources) for later far-field/radiated-power post-processing.
+    ! Reshapes and saves the pressure field, observer coordinates,
+    ! angular/vertical grids and surface element area to the HDF5 output.
     ! -------------------------------------------------------------------------
 
     CLASS(ImageMethod_t), INTENT(INOUT) :: self    ! [-] Solver instance
@@ -791,6 +832,7 @@ SUBROUTINE run_sphere(self)
     REAL(WP)                  :: dz, dtheta, zc, r_xy, theta_c, a_max
     REAL(WP)                  :: dA, f_farfield_, k_far
     INTEGER(I32)              :: n_theta_, nz_, i, j, idx, Nobs
+    LOGICAL                   :: absorbing
 
 
     ! Defaults (resolved once, persisted back into run_inputs)
@@ -860,9 +902,12 @@ SUBROUTINE run_sphere(self)
         '>> [Sphere]     r=', r_, ' m | center=(', center_(1), ',', center_(2), ',', center_(3), &
         ') m | grid=', n_theta_, ' azim x ', nz_, ' z = ', Nobs
 
+    absorbing               = self % env % absorption
+    self % env % absorption = .false.
     CALL self % set_N_images(0_I32)
     CALL self % compute_pressure_masked('Sphere', observers_, self % block_size, p)
     CALL self % restore_default_images()
+    self % env % absorption = absorbing
 
     if (self % debug) write(*, '(A,F10.4)') '   Pressure norm : ', pressure_norm(p)
 

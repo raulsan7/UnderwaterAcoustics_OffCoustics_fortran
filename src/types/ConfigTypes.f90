@@ -141,9 +141,11 @@ END TYPE Config_TimeSource_t
 TYPE :: Config_Environment_t
     ! -------------------------------------------------------------------------
     ! Holds the base environmental/fluid properties read from the input namelist
-    ! file (site depth, speed of sound, density, reference pressure). These act
-    ! as the default medium properties used by every acoustic solver, unless a
-    ! solver-method-specific configuration overrides them.
+    ! file (site depth, speed of sound, density, reference pressure) and the
+    ! volume absorption of sea water (switch, temperature, salinity and pH of
+    ! the formula of Ainslie and McColm, 1998). These act as the default medium
+    ! properties used by every acoustic solver, unless a solver-method-specific
+    ! configuration overrides them.
     ! -------------------------------------------------------------------------
 
     ! --- Input parameters --- !
@@ -151,6 +153,10 @@ TYPE :: Config_Environment_t
     REAL(WP) :: speed_sound_base      ! [m/s] Base speed of sound in fluid
     REAL(WP) :: density_base          ! [kg/m^3] Base fluid density
     REAL(WP) :: reference_pressure    ! [Pa] Fluid reference pressure
+    LOGICAL  :: absorption            ! [-] Whether the volume absorption of sea water is applied
+    REAL(WP) :: temperature           ! [degC] Water temperature (DEFAULT_R if not given)
+    REAL(WP) :: salinity              ! [ppt] Water salinity (DEFAULT_R if not given)
+    REAL(WP) :: pH                    ! [-] Water acidity (DEFAULT_R if not given)
 
 END TYPE Config_Environment_t
 

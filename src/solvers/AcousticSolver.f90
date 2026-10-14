@@ -4,8 +4,9 @@
 ! Defines AcousticSolver_t, the abstract parent type for all acoustic
 ! propagation solvers (ImageMethod_t and AnalyticalNormalModes_t). It holds
 ! the shared solver state (sources and their reference geometry,
-! environment, save path, block size, debug/cluster flags), the observer
-! masking and the water-column queries (z_seabed, in_water), and
+! environment and its volume absorption per frequency, save path, block
+! size, debug/cluster flags), the observer masking and the water-column
+! queries (z_seabed, in_water), and
 ! declares the generic observer-geometry post-processing
 ! routines (spectrums, polar, cylinder, decay, line, sliceXY, sliceXZ,
 ! sliceVertical, sphere) shared by every concrete solver, implemented in the
@@ -26,6 +27,7 @@ MODULE AcousticSolver
 USE Kinds
 USE Emitter, ONLY: Emitter_t
 USE SourceTypes, ONLY: AcousticSource_t
+USE SeawaterAbsorption, ONLY: absorption_ainslie_mccolm, DB_PER_NEPER
 USE ConfigTypes, ONLY: Config_Environment_t, Config_Computation_t, Config_t
 
 IMPLICIT NONE
@@ -54,16 +56,21 @@ TYPE, ABSTRACT :: AcousticSolver_t
     CHARACTER(len=50)          :: solver_name = 'None'  ! [-] Solver name
     CHARACTER(len=512)         :: save_path   = 'None'  ! [-] Path to save acoustics
     CHARACTER(len=100)         :: extra_label = 'None'  ! [-] Label appended to the file name ('None' or '': none)
+    REAL(WP)                   :: z_alpha     = 0.0_WP  ! [m] Depth at which the volume absorption is evaluated
+    REAL(WP)     , ALLOCATABLE :: alpha_dB(:)           ! [dB/km] Volume absorption per frequency (with absorption)
+    REAL(WP)     , ALLOCATABLE :: alpha(:)              ! [1/m] Same, in nepers per metre (pressure amplitude)
 
     CONTAINS
 
     ! --- Public type-bound procedures --- !
     PROCEDURE :: check_observers_distances              ! Observer mask: .false. closer than mask_distance to a source
     PROCEDURE :: check_sources_in_water                 ! Stops the run if a source lies outside the water column
+    PROCEDURE :: set_absorption                         ! Volume absorption alpha(f) of sea water (env % absorption)
     PROCEDURE :: compute_pressure_masked                ! compute_pressure with NaN at the masked observers
     PROCEDURE :: resolve_save_path                      ! Output path shared by every solver (build_save_path helper)
     PROCEDURE :: check_update                           ! Keeps an existing output only if it holds the same case
-    PROCEDURE :: save_shared_parameters                 ! Datasets written by every solver (Method, ENBW)
+    PROCEDURE :: save_shared_parameters                 ! Datasets written by every solver (Method, ENBW, water)
+    PROCEDURE :: write_txt_water                        ! Water and volume absorption lines of the .dat summary
     PROCEDURE :: update_parameters                      ! Appends run_* parameters actually used to the .dat
     PROCEDURE :: run                                    ! Config-driven entry point: every enabled do_* step
     PROCEDURE :: run_spectrums                          ! Subroutines to compute acoustic pressure
@@ -101,7 +108,8 @@ ABSTRACT INTERFACE
         ! Constructor: copies the shared and method-specific configuration into
         ! the solver and prepares it for the pressure computations. Once the
         ! environment of the method is set (its seabed included) and before
-        ! anything is saved, it must call check_sources_in_water.
+        ! anything is saved, it must call check_sources_in_water and
+        ! set_absorption.
         ! -------------------------------------------------------------------------
 
         IMPORT :: AcousticSolver_t, AcousticSource_t, Config_t
@@ -247,13 +255,33 @@ INTERFACE
         ! save_parameters right after its own datasets: the solver name (Method,
         ! from get_name) and, only when the emitter forces come from a windowed
         ! FFT (get_enbw > 0), the equivalent noise bandwidth of that window in
-        ! bins (ENBW). Neither is written in the .dat summary.
+        ! bins (ENBW). Neither is written in the .dat summary. Then the water of
+        ! the volume absorption: temperature, salinity and pH when given (T_wat,
+        ! S_wat, pH_wat) and, with env % absorption, the depth of the formula
+        ! and alpha(f) in dB/km (z_alpha, Alpha_dBkm), whose presence tells that
+        ! the pressures already include the absorption (write_txt_water writes
+        ! the same in the .dat summary).
         ! -------------------------------------------------------------------------
 
         CLASS(AcousticSolver_t), INTENT(IN) :: self       ! [-] Solver instance
         CLASS(Emitter_t)       , INTENT(IN) :: emitter_obj    ! [-] Emitter that produced the sources
 
     END SUBROUTINE save_shared_parameters
+
+    MODULE SUBROUTINE write_txt_water(self, u)
+        ! -------------------------------------------------------------------------
+        ! Appends to the ENVIRONMENT block of the .dat summary, open in unit u,
+        ! the water of the volume absorption: one line per given temperature,
+        ! salinity and pH and, with env % absorption, the formula, its depth and
+        ! alpha at the lowest and highest frequency. Writes nothing when none
+        ! of them is set, so the summaries of the cases without absorption
+        ! keep their former content (check_update compares them).
+        ! -------------------------------------------------------------------------
+
+        CLASS(AcousticSolver_t), INTENT(IN) :: self    ! [-] Solver instance
+        INTEGER(I32)           , INTENT(IN) :: u       ! [-] Unit of the open .dat file
+
+    END SUBROUTINE write_txt_water
 
     MODULE SUBROUTINE run_spectrums(self)
         ! -------------------------------------------------------------------------
@@ -432,6 +460,47 @@ SUBROUTINE check_sources_in_water(self)
     error stop
 
 END SUBROUTINE check_sources_in_water
+
+
+SUBROUTINE set_absorption(self)
+    ! -------------------------------------------------------------------------
+    ! Tabulates the volume absorption of sea water at every source frequency,
+    ! alpha_dB [dB/km] and alpha [Np/m], with the formula of Ainslie and
+    ! McColm (1998) at the temperature, salinity and pH of the environment and
+    ! at mid-depth of the water column (z_alpha = depth_base/2, whose effect
+    ! is below 1 % for depths under 100 m), and prints them. The kernels turn
+    ! it into the decay of each mode or image. Without env % absorption it
+    ! does nothing: alpha stays unallocated and nothing is printed. Every init
+    ! must call it once the frequencies and the environment are set.
+    ! -------------------------------------------------------------------------
+
+    CLASS(AcousticSolver_t), INTENT(INOUT) :: self    ! [-] Solver instance
+
+    ! Local variables
+    INTEGER(I32) :: i_min, i_max
+
+
+    if (.not. self % env % absorption) return
+
+    self % z_alpha  = 0.5_WP * self % env % depth_base
+    self % alpha_dB = absorption_ainslie_mccolm(self % sources % Freqs, self % env % temperature, &
+                                                self % env % salinity, self % env % pH, self % z_alpha)
+    self % alpha    = self % alpha_dB / (1000.0_WP * DB_PER_NEPER)
+
+    i_min = int(minloc(self % sources % Freqs, dim=1), I32)
+    i_max = int(maxloc(self % sources % Freqs, dim=1), I32)
+
+    write(*,*) ''
+    write(*, '(A,F0.2,A,F0.2,A,F0.2,A,F0.2,A)') ' >> Volume absorption (Ainslie & McColm 1998): T = ', &
+        self % env % temperature, ' degC, S = ', self % env % salinity, ' ppt, pH = ', self % env % pH, &
+        ', z = ', self % z_alpha, ' m'
+    write(*, '(A,ES10.3,A,F0.2,A,ES10.3,A,F0.2,A)') '    alpha = ', self % alpha_dB(i_min), ' dB/km at ', &
+        self % sources % Freqs(i_min), ' Hz to ', self % alpha_dB(i_max), ' dB/km at ', &
+        self % sources % Freqs(i_max), ' Hz'
+    if (self % sources % Freqs(i_min) < 100.0_WP) &
+        write(*, '(A)') '    Note: below 100 Hz the formula is extrapolated (checked between 100 Hz and 1 MHz)'
+
+END SUBROUTINE set_absorption
 
 
 FUNCTION check_observers_distances(self, observers) RESULT(valid)

@@ -71,7 +71,10 @@ the same names and arguments for every emitter:
 
 Every plot takes `mode` (`'OASPL'`, `'SPL'`, `'PSD'`, `'ABS'`, `'REAL'`, `'IMAG'`, `'PHASE'`), `target_frequency`,
 `absorption`, `filter_under`, `filter_over` and `ax_in` where it applies. Steps missing in a file (older runs,
-interrupted runs) are skipped with a message. Mode `'SWL'` is not implemented: the maps print a message and stay
+interrupted runs) are skipped with a message. The absorption is that of Ainslie & McColm (1998), the formula of the
+solver, with the water of the file (`T_wat`, `S_wat`, `pH_wat`; 10 degC, 35 ppt and pH 8 when missing) at half the
+water depth; it is not applied when the solver already did it (`Alpha_dBkm` in the file, `absorption = .true.` in
+`Environment.nml`), which is the only correct absorption with several sources. Mode `'SWL'` is not implemented: the maps print a message and stay
 empty, the decay, line and polar plots fall back to SPL, and the spectrum stops with an error.
 
 ## Wind speeds (`--ws`)
@@ -153,7 +156,7 @@ plotting/
 │   └── specific/   exclusive functions: structure (turbine, farm), sphere metrics, sources
 ├── compare/        comparison of any emitter: panels, titles and legends, one function per plot
 ├── plot_utils/     command line, files, saving, style (AcademicStyle), colors, LaTeX escaping, conversions, drawing
-├── utils/          AcousticUtils (SPL, PSD, OASPL, 1/3 octave, absorption), EnvironmentalData (thresholds, Ge 2025)
+├── utils/          AcousticUtils (SPL, PSD, OASPL, 1/3 octave, absorption of Ainslie & McColm), EnvironmentalData (thresholds, Ge 2025)
 ```
 
 Three layers: `.hdf5` -> reader (what Fortran saved) -> wrapper (the Case) -> plots. The Case is a plain dict

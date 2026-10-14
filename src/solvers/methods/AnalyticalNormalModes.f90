@@ -8,9 +8,10 @@
 ! source, monopole or dipole, as a superposition of analytical normal modes:
 ! a vertical modal shape Psi_m(z) times a horizontal cylindrical wave given by
 ! Hankel functions of the first kind, either propagating (real k_rm) or
-! evanescent (imaginary k_rm), with one kernel per multipole order. The
-! pressure is computed at each observer point with the same chunked/parallel
-! evaluation scheme used by the Image Method.
+! evanescent (imaginary k_rm), with one kernel per multipole order. With the
+! volume absorption of the environment, each propagating mode decays as
+! exp(-delta_m*r). The pressure is computed at each observer point with the
+! same chunked/parallel evaluation scheme used by the Image Method.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -83,9 +84,10 @@ SUBROUTINE init_AnalyticalNormalModes(self, sources, config)
     ! solver/env/turbine data from the parent AcousticSolver_t setup, reads the
     ! method-specific parameters (Nmodes, boundary planes, singularity
     ! tolerance) from the configuration, checks the waveguide depth against the
-    ! turbine/environment depth, resolves the number of modes if requested
-    ! automatically (propagating modes at f_max plus a near-field buffer),
-    ! resolves the output save path and prints the mode summary table.
+    ! turbine/environment depth, tabulates the volume absorption alpha(f) if
+    ! requested, resolves the number of modes if requested automatically
+    ! (propagating modes at f_max plus a near-field buffer), resolves the
+    ! output save path and prints the mode summary table.
     ! -------------------------------------------------------------------------
 
     CLASS(AnalyticalNormalModes_t), INTENT(INOUT)              :: self       ! [-] Solver instance
@@ -133,6 +135,9 @@ SUBROUTINE init_AnalyticalNormalModes(self, sources, config)
 
     ! Sources inside the water column (the seabed is known from here on)
     CALL self % check_sources_in_water()
+
+    ! Volume absorption of sea water at every frequency (only with env % absorption)
+    CALL self % set_absorption()
 
     ! Number of modes
     if (self % Nmodes == DEFAULT_I) then
@@ -391,6 +396,7 @@ SUBROUTINE write_txt_summary_AnalyticalNormalModes(self, emitter_obj)
     write(u, '(A,F8.2,A)')   'Density          : ', self % env % density_base, ' kg/m^3'
     write(u, '(A,ES10.2,A)') 'Reference press. : ', self % env % reference_pressure, ' Pa'
     write(u, '(A,F8.2,A)')   'Depth            : ', self % env % depth_base, ' m'
+    CALL self % write_txt_water(u)
     write(u, *)
 
     write(u, '(A)') repeat('-', 70)
@@ -592,7 +598,10 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, order, p_
     ! m, so every later mode is smaller still. The 1/rho of both terms is
     ! frequency independent, so it is applied once to the tabulated source
     ! shapes, not inside the sum over the modes. The global i/4 coefficient is
-    ! applied at the end.
+    ! applied at the end. With the volume absorption of the environment, H0
+    ! and H1 of each propagating mode are multiplied by exp(-delta_m*r), with
+    ! delta_m = Im sqrt((k + i*alpha)^2 - k_zm^2); the change O(delta_m/k_rm)
+    ! of the factor k_rm of the horizontal term is neglected.
     ! -------------------------------------------------------------------------
 
     CLASS(AnalyticalNormalModes_t), INTENT(IN)               :: self              ! [-] Solver instance
@@ -608,9 +617,10 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, order, p_
     REAL(WP)    , PARAMETER   :: CUTOFF_GAP  = 2.0e-6_WP  ! [-] Minimum |k^2 - k_zm^2| / k_zm^2 (|k/k_zm - 1| >= 1e-6)
     INTEGER(I32)              :: NFreqs, Nnodes, Nob, Nm
     INTEGER(I32)              :: j, f, k, im
-    REAL(WP)                  :: epsv, rho, dx, dy, r, r_inv, kr_sq
+    LOGICAL                   :: absorbing
+    REAL(WP)                  :: epsv, rho, dx, dy, r, r_inv, kr_sq, att
     COMPLEX(WP)               :: k_rm, H0, H1, fx, fy, fz, coef_z, coef_xy, F_dot_rhat, p_acc
-    REAL(WP)    , ALLOCATABLE :: k_wave(:), k_zm(:), kappa_ref(:)
+    REAL(WP)    , ALLOCATABLE :: k_wave(:), k_zm(:), kappa_ref(:), delta_tab(:,:)
     REAL(WP)    , ALLOCATABLE :: psi_z(:,:), psi_zs(:,:), dpsi_zs(:,:)
     COMPLEX(WP) , ALLOCATABLE :: k_rm_tab(:,:)
 
@@ -658,6 +668,25 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, order, p_
         kappa_ref(f) = aimag(k_rm_tab(1, f))
     end do
 
+    ! Volume absorption: with the complex wavenumber k + i*alpha of the medium, every propagating mode
+    ! gets delta_m = Im sqrt((k + i*alpha)^2 - k_zm^2) (alpha*k/k_rm away from its cutoff, bounded by
+    ! sqrt(alpha*k) at it) and decays as exp(-delta_m*r) on top of its Hankel functions of the real k_rm;
+    ! the evanescent modes, already decaying, are left as they are
+    absorbing = self % env % absorption
+    if (absorbing) then
+        ALLOCATE(delta_tab(Nm, NFreqs))
+        do f = 1, NFreqs
+            do im = 1, Nm
+                if (aimag(k_rm_tab(im, f)) == 0.0_WP) then
+                    delta_tab(im, f) = aimag(sqrt(cmplx(real(k_rm_tab(im, f), WP)**2 - self % alpha(f)**2, &
+                                                        2.0_WP * k_wave(f) * self % alpha(f), kind=WP)))
+                else
+                    delta_tab(im, f) = 0.0_WP
+                end if
+            end do
+        end do
+    end if
+
     ! Loop over observers and sources, then frequencies, modes innermost
     do k = 1, Nob
         do j = 1, Nnodes
@@ -690,6 +719,13 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, order, p_
 
                     CALL compute_hankel_complex(k_rm, r, H0, H1)
 
+                    ! Volume absorption: decay of this mode
+                    if (absorbing) then
+                        att = exp(-delta_tab(im, f) * r)
+                        H0  = H0 * att
+                        H1  = H1 * att
+                    end if
+
                     p_acc = p_acc + psi_z(k, im) * (coef_z * H0 + coef_xy * H1 * F_dot_rhat)
                 end do
 
@@ -701,6 +737,7 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, order, p_
     ! Global coefficient
     p_out = 0.25_WP * I1 * p_out
     DEALLOCATE(k_zm, psi_z, psi_zs, dpsi_zs, k_rm_tab, kappa_ref)
+    if (ALLOCATED(delta_tab)) DEALLOCATE(delta_tab)
 
 END SUBROUTINE dipolar_pressure_NM
 
@@ -720,7 +757,10 @@ SUBROUTINE monopolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, order, 
     ! Psi_m, so neither is applied. The modal shapes, the horizontal
     ! wavenumbers and the evanescent cutoff are those of dipolar_pressure_NM;
     ! only H0 is evaluated. The factor w/4 is applied once per source,
-    ! observer and frequency, after the sum over the modes.
+    ! observer and frequency, after the sum over the modes. With the volume
+    ! absorption of the environment, H0 of each propagating mode is
+    ! multiplied by exp(-delta_m*r), with delta_m = Im sqrt((k + i*alpha)^2 -
+    ! k_zm^2), as in dipolar_pressure_NM.
     ! -------------------------------------------------------------------------
 
     CLASS(AnalyticalNormalModes_t), INTENT(IN)               :: self              ! [-] Solver instance
@@ -736,9 +776,10 @@ SUBROUTINE monopolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, order, 
     REAL(WP)    , PARAMETER   :: CUTOFF_GAP  = 2.0e-6_WP  ! [-] Minimum |k^2 - k_zm^2| / k_zm^2 (|k/k_zm - 1| >= 1e-6)
     INTEGER(I32)              :: NFreqs, Nnodes, Nob, Nm
     INTEGER(I32)              :: j, f, k, im
+    LOGICAL                   :: absorbing
     REAL(WP)                  :: epsv, dx, dy, r, kr_sq
     COMPLEX(WP)               :: k_rm, H0, p_acc
-    REAL(WP)    , ALLOCATABLE :: k_wave(:), w_4(:), k_zm(:), kappa_ref(:)
+    REAL(WP)    , ALLOCATABLE :: k_wave(:), w_4(:), k_zm(:), kappa_ref(:), delta_tab(:,:)
     REAL(WP)    , ALLOCATABLE :: psi_z(:,:), psi_zs(:,:)
     COMPLEX(WP) , ALLOCATABLE :: k_rm_tab(:,:)
 
@@ -785,6 +826,25 @@ SUBROUTINE monopolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, order, 
         kappa_ref(f) = aimag(k_rm_tab(1, f))
     end do
 
+    ! Volume absorption: with the complex wavenumber k + i*alpha of the medium, every propagating mode
+    ! gets delta_m = Im sqrt((k + i*alpha)^2 - k_zm^2) (alpha*k/k_rm away from its cutoff, bounded by
+    ! sqrt(alpha*k) at it) and decays as exp(-delta_m*r) on top of its Hankel functions of the real k_rm;
+    ! the evanescent modes, already decaying, are left as they are
+    absorbing = self % env % absorption
+    if (absorbing) then
+        ALLOCATE(delta_tab(Nm, NFreqs))
+        do f = 1, NFreqs
+            do im = 1, Nm
+                if (aimag(k_rm_tab(im, f)) == 0.0_WP) then
+                    delta_tab(im, f) = aimag(sqrt(cmplx(real(k_rm_tab(im, f), WP)**2 - self % alpha(f)**2, &
+                                                        2.0_WP * k_wave(f) * self % alpha(f), kind=WP)))
+                else
+                    delta_tab(im, f) = 0.0_WP
+                end if
+            end do
+        end do
+    end if
+
     ! Loop over observers and sources, then frequencies, modes innermost
     do k = 1, Nob
         do j = 1, Nnodes
@@ -807,6 +867,7 @@ SUBROUTINE monopolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, order, 
                     if ((aimag(k_rm) - kappa_ref(f)) * r > EVAN_CUTOFF) exit
 
                     CALL compute_hankel_complex(k_rm, r, H0=H0)
+                    if (absorbing) H0 = H0 * exp(-delta_tab(im, f) * r)    ! Volume absorption: decay of this mode
 
                     p_acc = p_acc + psi_z(k, im) * psi_zs(j, im) * H0
                 end do
@@ -818,6 +879,7 @@ SUBROUTINE monopolar_pressure_NM(self, obs_pos, Freqs, nodes_pos, Force, order, 
     end do
 
     DEALLOCATE(k_zm, psi_z, psi_zs, k_rm_tab, kappa_ref)
+    if (ALLOCATED(delta_tab)) DEALLOCATE(delta_tab)
 
 END SUBROUTINE monopolar_pressure_NM
 

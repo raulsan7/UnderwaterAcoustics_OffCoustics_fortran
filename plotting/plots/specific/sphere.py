@@ -77,7 +77,7 @@ def compute_sphere_metrics(case            : dict  = None,         # [-] Case
     distances = np.full((n_theta, nz), r)
 
     # --- 1. Compute OASPL and Directional SL --- #
-    oaspl = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances, enbw=case["ENBW"])
+    oaspl = au.pressure_to_OASPL(p, p_ref, absorption, Freqs, distances, enbw=case["ENBW"], water=case["water"])
     sl    = oaspl + 20 * np.log10(r)
 
     # --- 2. Compute Radiated Power (W) --- #
