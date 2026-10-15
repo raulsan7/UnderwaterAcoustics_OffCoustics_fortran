@@ -13,12 +13,12 @@
 ! ===============================================================================
 MODULE SpecialFunctions
 
-USE Kinds, ONLY: WP, PI
+USE Kinds, ONLY: I32, WP, PI, I1
 
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: compute_hankel_complex
+PUBLIC :: compute_hankel_complex, gamma_hankel
 
 
 CONTAINS
@@ -111,7 +111,7 @@ PURE FUNCTION bessel_k1(x) RESULT(k1)
     REAL(WP)             :: k1    ! [-] K1(x)
 
     ! Local variables
-    REAL(WP) :: y, t, i1
+    REAL(WP) :: y, t, i11
 
 
     if (x <= 0.0_WP) then
@@ -121,13 +121,13 @@ PURE FUNCTION bessel_k1(x) RESULT(k1)
 
     if (x <= 2.0_WP) then
         y  = (x / 3.75_WP)**2
-        i1 = x * (0.5_WP + y * (0.87890594_WP + y * (0.51498869_WP + &
+        i11 = x * (0.5_WP + y * (0.87890594_WP + y * (0.51498869_WP + &
              y * (0.15084934_WP + y * (0.02658733_WP + y * (0.00301532_WP + &
              y * 0.00032411_WP))))))
 
         t  = x / 2.0_WP
         y  = t * t
-        k1 = log(t) * i1 + (1.0_WP / x) * (1.0_WP + y * (0.15443144_WP + &
+        k1 = log(t) * i11 + (1.0_WP / x) * (1.0_WP + y * (0.15443144_WP + &
              y * (-0.67278579_WP + y * (-0.18156897_WP + y * (-0.01919402_WP + &
              y * (-0.00110404_WP + y * (-0.00004686_WP)))))))
     else
