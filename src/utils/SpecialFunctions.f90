@@ -18,7 +18,7 @@ USE Kinds, ONLY: I32, WP, PI, I1
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: compute_hankel_complex, gamma_hankel
+PUBLIC :: compute_hankel_complex
 
 
 CONTAINS

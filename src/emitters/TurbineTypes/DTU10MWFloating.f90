@@ -114,7 +114,7 @@ SUBROUTINE compute_force_DTU10MWFloating(self, config, verbose)
     ! -------------------------------------------------------------------------
     ! Computes the structural nodal forces from the OpenFAST accelerations:
     ! flattens and RFFTs the acceleration time series, combines it with the
-    ! per-node dry+added mass (F = -A*m_eff), optionally filters the result to
+    ! per-node dry+added mass (F = +A*m_eff), optionally filters the result to
     ! the frequencies actually excited by the drivetrain, and finally strips
     ! out dry and duplicated nodes so only the wetted structure remains, ready
     ! to be treated as an array of point dipoles.
