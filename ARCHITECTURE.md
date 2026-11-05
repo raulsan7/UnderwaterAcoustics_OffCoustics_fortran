@@ -132,7 +132,8 @@ src/
 │   └── TurbineTypes/
 │       ├── DTU10MWMonopile.f90  DTU10MWMonopile
 │       ├── DTU10MWFloating.f90  DTU10MWFloating
-│       └── SAITEC2MWFloating.f90 SAITEC2MWFloating
+│       ├── SAITEC2MWFloating.f90 SAITEC2MWFloating
+│       └── MYSE3MWMonopile.f90  MYSE3MWMonopile
 └── solvers/
     ├── AcousticSolver.f90       AcousticSolver (parent module)
     ├── AcousticSolver_steps.f90 SUBMODULE (AcousticSolver) AcousticSolver_steps
@@ -177,7 +178,7 @@ What every module contains, and what must not go there:
 | `TimeSource` | `TimeSource_t`: the time axis, the force series (expressions of `t` or a file), their spectrum with `compute_rfft`, its datasets and `.dat` block | Frequency-domain input, turbine or farm specifics |
 | `OpenFASTReader` | SubDyn summary and `.out`/`.outb` channel readers | Physics |
 | `StructureModel` | Geometry and hydrodynamic corrections of the members: `remove_duplicate_nodes`, `divide_span`, `integral_elipse_z`, `alpha_hankel` | Data of a concrete turbine |
-| `DrivetrainExcitation` | Drivetrain spectra (`drivetrain10MW_excitation_spectrum`, `drivetrain2MW_excitation_spectrum` and its helpers), `generate_timeseries_banded_sines`, `filter_non_useful_freqs` | Turbine state |
+| `DrivetrainExcitation` | Drivetrain spectra (`drivetrain10MW_excitation_spectrum`, `drivetrain2MW_excitation_spectrum` and its helpers, `drivetrain3MW_excitation_spectrum` and the reader of its force files `read_drivetrain3MW_force_file`), `generate_timeseries_banded_sines`, `filter_non_useful_freqs` | Turbine state |
 | `AcousticSolver` | Abstract `AcousticSolver_t`, its deferred interfaces, the interfaces of the submodule procedures, `check_observers_distances`, `check_sources_in_water`, `set_absorption` (tabulates `alpha_dB`, `alpha` and `z_alpha`), `compute_pressure_masked`, `pressure_norm`, the water-column queries (`z_seabed_base`, `in_water_base`) | Method kernels, emitter types |
 | `AcousticSolver_steps` | `run()`, every `run_*` step, `dummy_run_sphere` | Reads of `depth_base` (use the queries), method kernels |
 | `AcousticSolver_output` | `resolve_save_path`, `check_update`, `update_parameters`, `save_shared_parameters`, `write_txt_water` and their private helpers | Pressure computations |
@@ -200,7 +201,7 @@ Kinds  ->  types  ->  utils  ->  input / emitters  ->  solvers  ->  app
 | types | `SourceTypes`, `ConfigTypes` |
 | utils | `FFTW3`, `StringUtils`, `FileUtils`, `HDF5Utils`, `CSVReader`, `ExpressionParser`, `Sorting`, `Timing`, `SignalProcessing`, `SpecialFunctions`, `SeawaterAbsorption` |
 | input | `InputChecks`, `InputEmitters`, `InputSolver`, `InputPostProcessing`, `Args_parser` |
-| emitters | `OpenFASTReader`, `StructureModel`, `DrivetrainExcitation`, `Emitter`, `WindTurbine`, `DTU10MWMonopile`, `DTU10MWFloating`, `SAITEC2MWFloating`, `TurbineFactory`, `WindFarm`, `ManualSources`, `FrequencySource`, `TimeSource` |
+| emitters | `OpenFASTReader`, `StructureModel`, `DrivetrainExcitation`, `Emitter`, `WindTurbine`, `DTU10MWMonopile`, `DTU10MWFloating`, `SAITEC2MWFloating`, `MYSE3MWMonopile`, `TurbineFactory`, `WindFarm`, `ManualSources`, `FrequencySource`, `TimeSource` |
 | solvers | `AcousticSolver`, `AcousticSolver_output`, `AcousticSolver_steps`, `ImageMethod`, `AnalyticalNormalModes`, `SolverFactory` |
 | app | `main` |
 
@@ -221,7 +222,8 @@ Emitter_t (ABSTRACT)                to_source, save_params, write_txt DEFERRED; 
 ├── WindTurbine_t (ABSTRACT)        + 6 DEFERRED; init with the alias init_base
 │   ├── DTU10MWMonopile_t
 │   ├── DTU10MWFloating_t
-│   └── SAITEC2MWFloating_t
+│   ├── SAITEC2MWFloating_t
+│   └── MYSE3MWMonopile_t
 ├── WindFarm_t                      turbines(:) of TurbineSlot_t (CLASS(WindTurbine_t))
 └── ManualSources_t (ABSTRACT)      to_source, save_params, write_txt; aliases *_base; init DEFERRED
     ├── FrequencySource_t           init, write_txt
@@ -240,9 +242,12 @@ Emitter_t (ABSTRACT)                to_source, save_params, write_txt DEFERRED; 
 `init` is not part of the `Emitter_t` contract because every emitter is built differently, so `main.f90` calls it through a variable of the concrete type (§5.2).
 
 **`WindTurbine_t`** implements the contract with `turbine_to_source`, `save_params_turbine` (`save_turbine_params` + `save_specific_params`), `write_txt_turbine` (`write_turbine_txt`) and `get_enbw_turbine`. It is itself a template for the turbine types:
-- **Shared:** `init`, `read_input`, `translate_align_with_WindDir`, `filter_frequencies` (rpm from `read_curve`, the type's `excitation_spectrum`, synthetic signal, frequency mask).
+- **Shared:** `init`, `read_input`, `translate_align_with_WindDir`, `filter_frequencies` (rpm from `read_curve`, the type's `excitation_spectrum`, synthetic signal, frequency mask). By default every peak is a band of 50 sine components, each keeping the bins within one bin of it; a type whose drivetrain lines are pure tones sets `pure_tones = .true.`, and then each peak is a single line that keeps the bins within 1.5 bins (the three nearest, the main lobe of the Hann window for a tone on a bin, also when rounding or a window that is not a whole number of periods puts it slightly off the bin).
+- **OpenFAST paths:** by default `init` builds `OP_output_dir // OP_subdir // rootname // '.outb'` (`.out`) and `// '.SD.sum.yaml'`. `OP_subdir` is the folder of the turbine type inside `OP_output_dir`, hardcoded by each type: `DTU10MWMonopile/`, `DTU10MWFloating/`, `SENVION2MWFloating/` (`SAITEC2MWFloating`), `MYSE3MWMonopile/`; `init` stops if a type leaves it unset. A full path in `OP_output_filename` or `OP_SubDyn_filename` is used as given.
 - **Deferred:** `compute_force`, `compute_mass`, `excitation_spectrum(self, rpm, freqs_amp, keys)`, `save_specific_params`, `write_specific_params_txt`, `get_impedance_corrected_force`.
-- A turbine type overrides `init` to set its own data (`path_rpm`, `is_monopile`, ...) and calls the shared one as `CALL self % init_base(config)`: `init_base` is a second binding of the same procedure (`PROCEDURE :: init_base => init`), which the child does not override, so it always reaches the parent version.
+- A turbine type overrides `init` to set its own data (`path_rpm`, `OP_subdir`, `is_monopile`, ...) and calls the shared one as `CALL self % init_base(config)`: `init_base` is a second binding of the same procedure (`PROCEDURE :: init_base => init`), which the child does not override, so it always reaches the parent version.
+
+**`MYSE3MWMonopile_t`** (MySE 3.0-135 of Beleolico, OpenFAST case `Beleolico_offshore_turbine`) follows `DTU10MWMonopile_t`: the pile is SubDyn members M1-M7 from the seabed (z = -14 m) to z = 0 (`Nmembers = 7`, `Nnodes = 5`, also in the `SDtwr` runs, whose tower members come after them), with constant diameters 5.0 / 4.88 m, steel and no internal water. Its drivetrain lines are the pure tones of the prescribed nacelle force of the runs (`pure_tones`): `drivetrain3MW_excitation_spectrum` reproduces the lines of `scripts/07_drivetrain_timeseries.py` (families A-D, frequencies rounded to the 1/T_win grid of the runs, close lines merged). With `filter_freqs`, `init` reads `rpm` and `T_win` from `<rootname>.force.json` (next to the `.outb`) and stops if the rpm of `wind_speed_curves_MYSE_3MW/rpm_ws.csv` at `WindSpeed` does not give the same lines: `WindSpeed` must be the wind of the run (`operating_points.csv` of the case).
 
 **`WindFarm_t`** implements it with `farm_to_source_WindFarm`, `save_params_WindFarm`, `write_txt_WindFarm` and `get_enbw_WindFarm`; turbine `i` owns the sources `src_offset(i)+1 : src_offset(i+1)` of the merged set. It is not abstract.
 
@@ -335,7 +340,7 @@ What each consumer takes from them:
 ## 5. How to add...
 
 ### 5.1 A turbine type
-1. `src/emitters/TurbineTypes/X.f90`: `X_t EXTENDS(WindTurbine_t)` with its geometry and the deferred procedures, `excitation_spectrum` included. Its `init` sets `path_rpm` (and any data path), `is_monopile`, and calls `CALL self % init_base(config)`.
+1. `src/emitters/TurbineTypes/X.f90`: `X_t EXTENDS(WindTurbine_t)` with its geometry and the deferred procedures, `excitation_spectrum` included. Its `init` sets `path_rpm` (and any data path), `OP_subdir` (its folder in `OP_output_dir`, where its OpenFAST runs go), `is_monopile` (and `pure_tones` if its drivetrain lines are pure tones), and calls `CALL self % init_base(config)`.
 2. If its drivetrain is new, add the spectrum to `emitters/DrivetrainExcitation.f90` and call it from `excitation_spectrum`.
 3. One `CASE` in `new_turbine` (`emitters/TurbineFactory.f90`).
 4. Optionally its short label in `type_alias` (`emitters/WindFarm.f90`) for the default farm file name.

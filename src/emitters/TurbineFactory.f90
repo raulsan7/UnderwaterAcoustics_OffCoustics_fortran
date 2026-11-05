@@ -3,7 +3,8 @@
 ! ===============================================================================
 ! Defines new_turbine, the factory that allocates a wind turbine of the
 ! concrete type named by its case_type (DTU10MWMonopile, DTU10MWFloating,
-! SAITEC2MWFloating). Shared by the single-turbine and the wind-farm paths.
+! SAITEC2MWFloating, MYSE3MWMonopile). Shared by the single-turbine and the
+! wind-farm paths.
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -32,6 +33,7 @@ SUBROUTINE new_turbine(case_type, wt)
 
     USE DTU10MWMonopile  , ONLY: DTU10MWMonopile_t
     USE DTU10MWFloating  , ONLY: DTU10MWFloating_t
+    USE MYSE3MWMonopile  , ONLY: MYSE3MWMonopile_t
     USE SAITEC2MWFloating, ONLY: SAITEC2MWFloating_t
 
     CHARACTER(len=*)    , INTENT(IN)               :: case_type    ! [-] Turbine model tag
@@ -45,6 +47,8 @@ SUBROUTINE new_turbine(case_type, wt)
         ALLOCATE(DTU10MWFloating_t :: wt)
     CASE ('SAITEC2MWFloating')
         ALLOCATE(SAITEC2MWFloating_t :: wt)
+    CASE ('MYSE3MWMonopile')
+        ALLOCATE(MYSE3MWMonopile_t :: wt)
     CASE DEFAULT
         write(*,*) 'Unsupported turbine type: ' // trim(case_type)
         error stop

@@ -28,7 +28,7 @@
 &turbine
     case_type = 'DTU10MWMonopile'          ! [-] Turbine model
     rootname = 'DTU_DeltaWind_mn_ws11.4'   ! [-] OpenFAST run name (no extension)
-    OP_output_dir = '../OP_output/'        ! [-] Directory of the OpenFAST output/SubDyn files
+    OP_output_dir = '../OP_output/'        ! [-] Directory of the OpenFAST output/SubDyn files (in the subfolder of the turbine type)
     WindSpeed = 11.4                       ! [m/s] Wind speed of this operating point
     WindDir = 0.0                          ! [deg] Wind direction (0 deg points to +x, anticlockwise)
     AxisPos = 0.0, 0.0                     ! [m] Turbine axis (x, y) position in the global frame

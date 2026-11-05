@@ -402,6 +402,8 @@ FUNCTION type_alias(case_type) RESULT(alias)
         alias = 'DTU10FL'
     CASE ('SAITEC2MWFloating')
         alias = 'SAITEC2FL'
+    CASE ('MYSE3MWMonopile')
+        alias = 'MYSE3MN'
     CASE DEFAULT
         alias = trim(case_type)
     END SELECT

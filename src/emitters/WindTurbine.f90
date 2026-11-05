@@ -62,11 +62,13 @@ TYPE, ABSTRACT, EXTENDS(Emitter_t) :: WindTurbine_t
 
     CHARACTER(len=:), ALLOCATABLE :: OP_output_path     ! [-] OpenFAST output file path
     CHARACTER(len=:), ALLOCATABLE :: OP_SubDyn_path     ! [-] OpenFAST SubDyn file path
+    CHARACTER(len=:), ALLOCATABLE :: OP_subdir          ! [-] Subfolder of OP_output_dir of the turbine type
     CHARACTER(len=:), ALLOCATABLE :: path_rpm           ! [-] Path where variables depending on rpm are located
     CHARACTER(len=:), ALLOCATABLE :: case_type          ! [-] Tag to distinguish turbine
 
     ! --- Derived variables --- !
     LOGICAL  :: is_monopile                             ! [-] Whether turbine is monopile or floating
+    LOGICAL  :: pure_tones = .false.                    ! [-] Whether the drivetrain peaks are pure tones, not bands
     REAL(WP) :: df                                      ! [Hz] FFT bin width 1/(nt*dt), defines the shared frequency grid of a wind farm
 
     CONTAINS
@@ -192,7 +194,9 @@ CONTAINS
 SUBROUTINE init(self, config)
     ! -------------------------------------------------------------------------
     ! Initializes the turbine properties using the configuration loaded from
-    ! the input namelist files.
+    ! the input namelist files. The default OpenFAST paths are built inside
+    ! the subfolder of OP_output_dir of the turbine type (OP_subdir), which
+    ! every concrete type sets before calling this routine.
     ! -------------------------------------------------------------------------
 
     CLASS(WindTurbine_t)      , INTENT(INOUT) :: self      ! [-] Turbine instance
@@ -202,6 +206,9 @@ SUBROUTINE init(self, config)
     CHARACTER(len=5) :: ext
     LOGICAL          :: exists
 
+
+    if (.not. ALLOCATED(self % OP_subdir)) error stop "WindTurbine % init: OP_subdir not set by the turbine type " &
+                                                      // trim(config % case_type)
 
     self % rootname      = config % rootname
     self % case_type     = config % case_type
@@ -221,14 +228,15 @@ SUBROUTINE init(self, config)
     ! Set paths
     if (to_upper(trim(config % OP_output_path)) == 'NONE' .or. &    ! "None" or "Default", in any case
         to_upper(trim(config % OP_output_path)) == 'DEFAULT') then
-        self % OP_output_path = trim(self % OP_output_dir) // trim(self % rootname) // trim(ext)
+        self % OP_output_path = trim(self % OP_output_dir) // self % OP_subdir // trim(self % rootname) // trim(ext)
     else
         self % OP_output_path = trim(config % OP_output_path)
     end if
 
     if (to_upper(trim(config % OP_SubDyn_path)) == 'NONE' .or. &    ! "None" or "Default", in any case
         to_upper(trim(config % OP_SubDyn_path)) == 'DEFAULT') then
-        self % OP_SubDyn_path = trim(self % OP_output_dir) // trim(self % rootname) // ".SD.sum.yaml"
+        self % OP_SubDyn_path = trim(self % OP_output_dir) // self % OP_subdir // trim(self % rootname) &
+                                // ".SD.sum.yaml"
     else
         self % OP_SubDyn_path = trim(config % OP_SubDyn_path)
     end if
@@ -391,6 +399,12 @@ FUNCTION filter_frequencies(self, freqs_over) RESULT(mask)
     ! drivetrain excitation peaks of the turbine type (its excitation_spectrum)
     ! at the current wind speed's rpm, so the force spectrum can be restricted
     ! to the physically relevant frequencies. Shared by every turbine type.
+    ! A peak is a band of 50 sine components whose frequencies keep the bins
+    ! within one bin of them. When the type flags its peaks as pure tones
+    ! (pure_tones) a peak is a single line at its frequency, which keeps the
+    ! bins within 1.5 bins of it: the three nearest bins, the main lobe of the
+    ! Hann window of compute_rfft for a tone on a bin, whether or not the
+    ! tone falls exactly on a bin.
     ! -------------------------------------------------------------------------
 
     USE CSVReader, ONLY: read_curve
@@ -405,10 +419,15 @@ FUNCTION filter_frequencies(self, freqs_over) RESULT(mask)
     REAL(WP)         , ALLOCATABLE :: freqs_amp(:,:)
     REAL(WP)         , ALLOCATABLE :: freqs_to_use(:)
     REAL(WP)         , ALLOCATABLE :: tmp_signal(:)
-    REAL(WP)                       :: rpm, freqs_over_
+    REAL(WP)                       :: rpm, freqs_over_, width_bins
+    INTEGER(I32)                   :: nfreq
 
 
     freqs_over_ = 10.0_WP ; if (present(freqs_over)) freqs_over_ = freqs_over
+
+    ! Sine components per peak and half-width [bins] of the band kept around each component
+    nfreq      = merge(1_I32, 50_I32, self % pure_tones)
+    width_bins = merge(1.5_WP, 1.0_WP, self % pure_tones)
 
     ! Read rpm at current wind speed
     rpm = read_curve(self % path_rpm, self % WindSpeed)
@@ -418,11 +437,11 @@ FUNCTION filter_frequencies(self, freqs_over) RESULT(mask)
 
     ! Get allowed frequencies
     CALL generate_timeseries_banded_sines(peaks=freqs_amp, keys=keys, t=self % Time, &
-                                          zeta=0.02_WP, used_freqs=.true., a=tmp_signal, &
+                                          zeta=0.02_WP, nfreq=nfreq, used_freqs=.true., a=tmp_signal, &
                                           freqs_out=freqs_to_use)
 
     ! Build mask
-    mask = filter_non_useful_freqs(self % Freqs, freqs_to_use, freqs_over_)
+    mask = filter_non_useful_freqs(self % Freqs, freqs_to_use, freqs_over_, width_bins=width_bins)
 
     DEALLOCATE(tmp_signal)
 

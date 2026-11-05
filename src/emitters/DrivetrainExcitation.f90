@@ -2,10 +2,12 @@
 ! MODULE: DrivetrainExcitation
 ! ===============================================================================
 ! Defines the drivetrain excitation of the turbine types: the excitation
-! spectra of the DTU 10 MW (drivetrain10MW_excitation_spectrum) and SAITEC
-! 2 MW (drivetrain2MW_excitation_spectrum) drivetrains, the synthetic time
-! series built from them (generate_timeseries_banded_sines), and the mask
-! of the frequencies worth keeping (filter_non_useful_freqs).
+! spectra of the DTU 10 MW (drivetrain10MW_excitation_spectrum), SAITEC
+! 2 MW (drivetrain2MW_excitation_spectrum) and MySE 3.0-135
+! (drivetrain3MW_excitation_spectrum, with the reader of its force files
+! read_drivetrain3MW_force_file) drivetrains, the synthetic time series
+! built from them (generate_timeseries_banded_sines), and the mask of the
+! frequencies worth keeping (filter_non_useful_freqs).
 ! -------------------------------------------------------------------------------
 ! Author  : Raul Sanz Ramirez
 ! Contact : raul.sanz.ramirez@upm.es
@@ -23,7 +25,7 @@ IMPLICIT NONE
 
 PRIVATE
 PUBLIC :: generate_timeseries_banded_sines, filter_non_useful_freqs, drivetrain10MW_excitation_spectrum, &
-          drivetrain2MW_excitation_spectrum
+          drivetrain2MW_excitation_spectrum, drivetrain3MW_excitation_spectrum, read_drivetrain3MW_force_file
 
 
 CONTAINS
@@ -198,24 +200,26 @@ SUBROUTINE generate_timeseries_banded_sines(peaks, keys, t, zeta, nfreq, seed, &
 END SUBROUTINE generate_timeseries_banded_sines
 
 
-FUNCTION filter_non_useful_freqs(freqs, maintain_freqs, freqs_over, freqs_under) RESULT(mask)
+FUNCTION filter_non_useful_freqs(freqs, maintain_freqs, freqs_over, freqs_under, width_bins) RESULT(mask)
     ! -------------------------------------------------------------------------
     ! Builds a logical mask selecting which frequencies to keep. Frequencies
     ! outside the [freqs_over, freqs_under] zone are always kept; frequencies
-    ! inside that zone are kept only if they lie within one frequency bin (df)
-    ! of one of the maintain_freqs values, so that physically relevant peaks
-    ! are preserved while the rest of the band is discarded.
+    ! inside that zone are kept only if they lie within one frequency bin (df,
+    ! or width_bins bins when given) of one of the maintain_freqs values, so
+    ! that physically relevant peaks are preserved while the rest of the band
+    ! is discarded.
     ! -------------------------------------------------------------------------
 
     REAL(WP), INTENT(IN)           :: freqs(:)             ! [Hz] Frequency vector (Nfreqs)
     REAL(WP), INTENT(IN)           :: maintain_freqs(:)    ! [Hz] Frequencies to preserve inside the filter zone
     REAL(WP), INTENT(IN), OPTIONAL :: freqs_over           ! [Hz] Lower limit of the filter zone
     REAL(WP), INTENT(IN), OPTIONAL :: freqs_under          ! [Hz] Upper limit of the filter zone
+    REAL(WP), INTENT(IN), OPTIONAL :: width_bins           ! [-] Half-width of the kept band around each frequency
     LOGICAL , ALLOCATABLE          :: mask(:)              ! [-] Frequency mask (Nfreqs), .true. to keep
 
     ! Local variables
     INTEGER(I32)              :: n, j
-    REAL(WP)                  :: df, freqs_over_, freqs_under_
+    REAL(WP)                  :: df, half_width, freqs_over_, freqs_under_
     LOGICAL     , ALLOCATABLE :: filter_zone(:)
 
 
@@ -231,6 +235,8 @@ FUNCTION filter_non_useful_freqs(freqs, maintain_freqs, freqs_over, freqs_under)
         df = 0.0_WP
     end if
 
+    half_width = df ; if (present(width_bins)) half_width = width_bins * df
+
     ! Define filter zone (frequencies to consider for removal)
     filter_zone  = .true.
     freqs_over_  = minval(freqs)
@@ -244,9 +250,9 @@ FUNCTION filter_non_useful_freqs(freqs, maintain_freqs, freqs_over, freqs_under)
     ! Outside filter zone: keep all frequencies
     mask = .not. filter_zone
 
-    ! Inside filter zone: keep only if within df of any maintain_freqs
+    ! Inside filter zone: keep only if within half_width of any maintain_freqs
     do j = 1, size(maintain_freqs)
-        WHERE (filter_zone .and. abs(freqs - maintain_freqs(j)) <= df)
+        WHERE (filter_zone .and. abs(freqs - maintain_freqs(j)) <= half_width)
             mask = .true.
         END WHERE
     end do
@@ -257,7 +263,7 @@ END FUNCTION filter_non_useful_freqs
 
 
 ! ===============================================================================
-! DRIVETRAIN EXCITATIONS
+! DTU 10 MW DRIVETRAIN EXCITATIONS
 ! ===============================================================================
 SUBROUTINE drivetrain10MW_excitation_spectrum(rpm, damping, p_shaft, alpha_mesh, freqs_amp, keys)
     ! -------------------------------------------------------------------------
@@ -742,5 +748,239 @@ SUBROUTINE read_bar_csv(filename, ncols, data)
     close(fu)
 
 END SUBROUTINE read_bar_csv
+
+
+! ===============================================================================
+! MINGYANG SMART ENERGY 3 MW DRIVETRAIN EXCITATION
+! ===============================================================================
+SUBROUTINE drivetrain3MW_excitation_spectrum(rpm, T_win, freqs_amp, keys)
+    ! -------------------------------------------------------------------------
+    ! Constructs the excitation spectrum (frequencies + amplitudes) of the
+    ! MySE 3.0-135 drivetrain (two-stage planetary gearbox), the prescribed
+    ! nacelle force of the Beleolico OpenFAST runs, reproducing the CONFIG of
+    ! scripts/07_drivetrain_timeseries.py (Beleolico_offshore_turbine): pure
+    ! tones at the rotor-locked orders N (f = N rpm / 60) of the stage-2 mesh
+    ! (A: N = i1 Zr2 k = 540 k, k = 1-8), the stage-1 mesh (B: N = Zr1 k =
+    ! 100 k, k = 1-30), the high-speed-shaft sidebands (C: N = 540 k +- i1 i2,
+    ! k = 1-2) and the stage intermodulation (D: N = 540 k +- Zr1, k = 1-2).
+    ! The amplitudes are relative to the first A line: the torque scaling of
+    ! the force is common to every line and cancels in the normalization. As
+    ! in the force files, only lines with exact frequency in [f_min, f_max]
+    ! are kept, the frequencies are rounded to the 1/T_win grid of the
+    ! analysis window of the runs, and lines closer than min_sep_bins grid
+    ! steps are merged (amplitudes added, label of the largest one first, e.g.
+    ! 'A5+B27'), so the frequencies are those of the force file of that rpm.
+    ! Normalized to unit RMS.
+    ! -------------------------------------------------------------------------
+
+    REAL(WP)         , INTENT(IN)               :: rpm               ! [rpm] Rotor speed
+    REAL(WP)         , INTENT(IN)               :: T_win             ! [s] Analysis window of the force file
+    REAL(WP)         , INTENT(OUT), ALLOCATABLE :: freqs_amp(:,:)    ! [-] Peaks (N, 2): frequency [Hz], amplitude
+    CHARACTER(len=20), INTENT(OUT), ALLOCATABLE :: keys(:)           ! [-] Peak labels (N)
+
+    ! Local variables
+    ! Gearbox tooth numbers (stage-1 ring and sun, stage-2 ring and sun)
+    REAL(WP), PARAMETER :: zr1 = 100.0_WP, zs1 = 25.0_WP, zr2 = 108.0_WP, zs2 = 28.0_WP
+
+    ! Harmonics k of the families, amplitude ratios to the A line of the same k and harmonic decay
+    ! (S_k tabulated for k = 1-4, S_4 (4 / k)**s_exp beyond)
+    INTEGER(I32)    , PARAMETER :: nk_A = 8_I32, nk_B = 30_I32, nk_sb = 2_I32
+    REAL(WP)        , PARAMETER :: ratio_B = 3.2_WP
+    REAL(WP)        , PARAMETER :: ratio_sb(2) = [0.5_WP, 0.25_WP]
+    CHARACTER(len=1), PARAMETER :: name_sb(2) = ['C', 'D']
+    REAL(WP)        , PARAMETER :: s_tab(4) = [1.0_WP, 0.29_WP, 0.15_WP, 0.10_WP], s_exp = 1.7_WP
+
+    ! Band of the lines and merging distance [grid steps]
+    REAL(WP)    , PARAMETER :: f_min = 1.0_WP, f_max = 1000.0_WP
+    INTEGER(I32), PARAMETER :: min_sep_bins = 3_I32
+
+    REAL(WP)                       :: i1, i2, N_A, N_HSS, f_exact, fk, ak, rms
+    REAL(WP)                       :: N_sb(2)
+    INTEGER(I32)                   :: n_raw, n_band, n_lines, i, j, k, kk, sb, best
+    REAL(WP)         , ALLOCATABLE :: S_k(:), orders(:), amps_raw(:), freqs(:), amps(:)
+    CHARACTER(len=20), ALLOCATABLE :: labels_raw(:), labels(:)
+    CHARACTER(len=20)              :: key_tmp
+
+
+    if (T_win <= 0.0_WP) error stop "drivetrain3MW_excitation_spectrum: T_win must be positive"
+
+    ! --- 1. Gear orders and harmonic decay --- !
+    i1    = 1.0_WP + zr1 / zs1
+    i2    = 1.0_WP + zr2 / zs2
+    N_A   = i1 * zr2
+    N_HSS = i1 * i2
+    N_sb  = [N_HSS, zr1]
+
+    ALLOCATE(S_k(max(nk_A, nk_B, nk_sb)))
+    do k = 1, size(S_k)
+        if (k <= size(s_tab)) then
+            S_k(k) = s_tab(k)
+        else
+            S_k(k) = s_tab(size(s_tab)) * (real(size(s_tab), WP) / real(k, WP))**s_exp
+        end if
+    end do
+
+    ! --- 2. Orders, amplitudes and labels of every line (A, B, then C and D) --- !
+    n_raw = nk_A + nk_B + 4_I32 * nk_sb
+    ALLOCATE(orders(n_raw), amps_raw(n_raw), labels_raw(n_raw))
+
+    j = 0_I32
+    do k = 1, nk_A
+        j           = j + 1_I32
+        orders(j)   = N_A * real(k, WP)
+        amps_raw(j) = S_k(k)
+        write(labels_raw(j), '(A,I0)') 'A', k
+    end do
+
+    do k = 1, nk_B
+        j           = j + 1_I32
+        orders(j)   = zr1 * real(k, WP)
+        amps_raw(j) = ratio_B * S_k(k)
+        write(labels_raw(j), '(A,I0)') 'B', k
+    end do
+
+    do i = 1, 2
+        do k = 1, nk_sb
+            do sb = -1, 1, 2
+                j           = j + 1_I32
+                orders(j)   = N_A * real(k, WP) + real(sb, WP) * N_sb(i)
+                amps_raw(j) = ratio_sb(i) * S_k(k)
+                write(labels_raw(j), '(A,I0,A)') name_sb(i), k, merge('+', '-', sb > 0_I32)
+            end do
+        end do
+    end do
+
+    ! --- 3. Frequencies on the 1/T_win grid, only the lines in [f_min, f_max] --- !
+    ALLOCATE(freqs(n_raw), amps(n_raw), labels(n_raw))
+    n_band = 0_I32
+    do j = 1, n_raw
+        f_exact = orders(j) * rpm / 60.0_WP
+        if (f_exact < f_min .or. f_exact > f_max) cycle
+
+        n_band         = n_band + 1_I32
+        freqs(n_band)  = anint(f_exact * T_win) / T_win
+        amps(n_band)   = amps_raw(j)
+        labels(n_band) = labels_raw(j)
+    end do
+    DEALLOCATE(S_k, orders, amps_raw, labels_raw)
+
+    ! --- 4. Sort by frequency (carrying amps/labels along, stable insertion sort) --- !
+    do i = 2, n_band
+        fk      = freqs(i)
+        ak      = amps(i)
+        key_tmp = labels(i)
+        kk      = i - 1_I32
+        do while (kk >= 1_I32)
+            if (freqs(kk) <= fk) exit
+            freqs(kk+1)  = freqs(kk)
+            amps(kk+1)   = amps(kk)
+            labels(kk+1) = labels(kk)
+            kk           = kk - 1_I32
+        end do
+        freqs(kk+1)  = fk
+        amps(kk+1)   = ak
+        labels(kk+1) = key_tmp
+    end do
+
+    ! --- 5. Merge lines closer than min_sep_bins grid steps to the previous one of their group --- !
+    ALLOCATE(freqs_amp(n_band, 2), keys(n_band))
+    n_lines = 0_I32
+    i       = 1_I32
+    do while (i <= n_band)
+        kk = i
+        do while (kk + 1_I32 <= n_band)
+            if (nint((freqs(kk+1) - freqs(kk)) * T_win) < min_sep_bins) then
+                kk = kk + 1_I32
+            else
+                exit
+            end if
+        end do
+
+        best    = i - 1_I32 + maxloc(amps(i:kk), dim=1)
+        key_tmp = labels(best)
+        do j = i, kk
+            if (j /= best) key_tmp = trim(key_tmp) // '+' // trim(labels(j))
+        end do
+
+        n_lines               = n_lines + 1_I32
+        freqs_amp(n_lines, 1) = freqs(best)
+        freqs_amp(n_lines, 2) = sum(amps(i:kk))
+        keys(n_lines)         = key_tmp
+        i                     = kk + 1_I32
+    end do
+    DEALLOCATE(freqs, amps, labels)
+
+    if (n_lines < n_band) then
+        freqs_amp = freqs_amp(1:n_lines, :)
+        keys      = keys(1:n_lines)
+    end if
+
+    ! --- 6. Normalize to unit RMS: sqrt(sum(A^2/2)) = 1 --- !
+    if (n_lines > 0_I32) then
+        rms             = sqrt(sum(freqs_amp(:, 2)**2) / 2.0_WP)
+        freqs_amp(:, 2) = freqs_amp(:, 2) / rms
+    end if
+
+END SUBROUTINE drivetrain3MW_excitation_spectrum
+
+
+SUBROUTINE read_drivetrain3MW_force_file(path, rpm, T_win)
+    ! -------------------------------------------------------------------------
+    ! Reads the rotor speed and the analysis window of a drivetrain force
+    ! file of the Beleolico runs from its description <rootname>.force.json
+    ! (written by 07_drivetrain_timeseries.py and copied next to the .outb by
+    ! the run scripts): its first "rpm" (the top-level one, the rotor speed of
+    ! the force lines) and "T_win" (of its configuration). A missing file or
+    ! key stops the program.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN)  :: path     ! [-] Path to the .force.json file
+    REAL(WP)        , INTENT(OUT) :: rpm      ! [rpm] Rotor speed of the force lines
+    REAL(WP)        , INTENT(OUT) :: T_win    ! [s] Analysis window of the force lines (grid 1/T_win)
+
+
+    rpm   = read_json_number(path, 'rpm')
+    T_win = read_json_number(path, 'T_win')
+
+END SUBROUTINE read_drivetrain3MW_force_file
+
+
+FUNCTION read_json_number(path, key) RESULT(val)
+    ! -------------------------------------------------------------------------
+    ! Returns the number of the first '"key": value' pair of a JSON file
+    ! written with one pair per line (Python json.dump with indent). A file
+    ! that cannot be opened, a missing key or a value that is not a number
+    ! stops the program.
+    ! -------------------------------------------------------------------------
+
+    CHARACTER(len=*), INTENT(IN) :: path    ! [-] Path to the JSON file
+    CHARACTER(len=*), INTENT(IN) :: key     ! [-] Key, without quotes
+    REAL(WP)                     :: val     ! [-] Value of the first pair with that key
+
+    ! Local variables
+    INTEGER(I32)        :: fu, ios, pos
+    CHARACTER(len=2048) :: line
+
+
+    open(newunit=fu, file=trim(path), status='old', action='read', iostat=ios)
+    if (ios /= 0_I32) error stop "read_json_number: could not open file " // trim(path)
+
+    do
+        read(fu, '(A)', iostat=ios) line
+        if (ios /= 0_I32) exit
+
+        pos = index(line, '"' // key // '":')
+        if (pos == 0_I32) cycle
+
+        read(line(pos+len(key)+3:), *, iostat=ios) val
+        close(fu)
+        if (ios /= 0_I32) error stop "read_json_number: value of " // key // " is not a number in " // trim(path)
+        return
+    end do
+
+    close(fu)
+    error stop "read_json_number: key " // key // " not found in " // trim(path)
+
+END FUNCTION read_json_number
 
 END MODULE DrivetrainExcitation

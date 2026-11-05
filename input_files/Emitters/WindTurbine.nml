@@ -5,12 +5,12 @@
 &turbine_config
 
     ! --- Turbine identification --- !
-    case_type = 'DTU10MWMonopile'             ! [-] Turbine model: 'DTU10MWMonopile', 'DTU10MWFloating' or 'SAITEC2MWFloating'
+    case_type = 'DTU10MWMonopile'             ! [-] Turbine model: 'DTU10MWMonopile', 'DTU10MWFloating', 'SAITEC2MWFloating' or 'MYSE3MWMonopile'
     rootname = 'DTU_DeltaWind_mn_ws11.4'          ! [-] OpenFAST run name (no extension), used to locate its output files
 
     ! --- OpenFAST input files --- !
-    OP_output_dir = '../OP_output/'             ! [-] Directory containing the OpenFAST output/SubDyn files
-    OP_output_filename = 'None'                 ! [-] OpenFAST output file name; 'None'/'Default' builds it from rootname+dir
+    OP_output_dir = '../OP_output/'             ! [-] Directory with one subfolder per turbine type (fixed by the type, e.g. DTU10MWMonopile/) with its OpenFAST files
+    OP_output_filename = 'None'                 ! [-] OpenFAST output file name; 'None'/'Default' builds it from dir+subfolder+rootname
     OP_SubDyn_filename = 'None'                 ! [-] OpenFAST SubDyn summary file name; 'None'/'Default' builds it likewise
     Binary = .true.                             ! [-] Whether the OpenFAST output is binary (.outb) instead of text (.out)
 

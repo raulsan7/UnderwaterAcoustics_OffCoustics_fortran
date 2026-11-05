@@ -74,9 +74,10 @@ CONTAINS
 SUBROUTINE init_DTU10MWFloating(self, config)
     ! -------------------------------------------------------------------------
     ! Platform-specific constructor: resolves the (hardcoded) path to the DTU
-    ! 10 MW rpm-vs-wind-speed curve, flags this turbine as non-monopile, then
-    ! delegates to the shared base-class init for the common parameters and
-    ! checks that the hardcoded member IDs exist in the structural model.
+    ! 10 MW rpm-vs-wind-speed curve and the subfolder of OP_output_dir, flags
+    ! this turbine as non-monopile, then delegates to the shared base-class
+    ! init for the common parameters and checks that the hardcoded member IDs
+    ! exist in the structural model.
     ! -------------------------------------------------------------------------
 
     CLASS(DTU10MWFloating_t)  , INTENT(INOUT) :: self      ! [-] Turbine instance
@@ -87,8 +88,9 @@ SUBROUTINE init_DTU10MWFloating(self, config)
     INTEGER(I32) :: n_req
 
 
-    ! Define path to rpm curve (hardcoded)
-    self % path_rpm = "../wind_speed_curves_DTU_10MW/rpm_ws.csv"
+    ! Define path to rpm curve and subfolder of the OpenFAST files (hardcoded)
+    self % path_rpm  = "../wind_speed_curves_DTU_10MW/rpm_ws.csv"
+    self % OP_subdir = "DTU10MWFloating/"
 
     ! Verify that the rpm curve file exists
     inquire(file=self % path_rpm, exist=exists)

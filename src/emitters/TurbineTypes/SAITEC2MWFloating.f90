@@ -79,9 +79,10 @@ SUBROUTINE init_SAITEC2MWFloating(self, config)
     ! -------------------------------------------------------------------------
     ! Platform-specific constructor: resolves the (hardcoded) paths to the
     ! SAITEC 2 MW rpm-vs-wind-speed curve and drivetrain bar-chart amplitude
-    ! data, flags this turbine as non-monopile, then delegates to the shared
-    ! base-class init for the common parameters and checks that the hardcoded
-    ! member IDs exist in the structural model.
+    ! data and the subfolder of OP_output_dir (SENVION2MWFloating/, the
+    ! OpenFAST model of the turbine), flags this turbine as non-monopile, then
+    ! delegates to the shared base-class init for the common parameters and
+    ! checks that the hardcoded member IDs exist in the structural model.
     ! -------------------------------------------------------------------------
 
     CLASS(SAITEC2MWFloating_t), INTENT(INOUT) :: self      ! [-] Turbine instance
@@ -92,10 +93,11 @@ SUBROUTINE init_SAITEC2MWFloating(self, config)
     INTEGER(I32) :: n_req
 
 
-    ! Define paths to rpm curve and drivetrain bar-chart data (hardcoded)
+    ! Define paths to rpm curve, drivetrain bar-chart data and OpenFAST files (hardcoded)
     self % path_rpm   = "../wind_speed_curves_SAITEC_2MW/rpm_ws.csv"
     self % path_barRB = "../wind_speed_curves_SAITEC_2MW/Bar_RB12.csv"
     self % path_barGB = "../wind_speed_curves_SAITEC_2MW/Bar_GB123.csv"
+    self % OP_subdir  = "SENVION2MWFloating/"
 
     ! Verify that the required curve/data files exist
     inquire(file=self % path_rpm, exist=exists)

@@ -63,9 +63,10 @@ CONTAINS
 
 SUBROUTINE init_DTU10MWMonopile(self, config)
     ! -------------------------------------------------------------------------
-    ! Sets the monopile-specific (hardcoded) rpm-curve path, marks the turbine
-    ! as monopile-founded, and delegates to the base WindTurbine_t % init for
-    ! the remaining shared initialization steps.
+    ! Sets the monopile-specific (hardcoded) rpm-curve path and subfolder of
+    ! OP_output_dir, marks the turbine as monopile-founded, and delegates to
+    ! the base WindTurbine_t % init for the remaining shared initialization
+    ! steps.
     ! -------------------------------------------------------------------------
 
     CLASS(DTU10MWMonopile_t)  , INTENT(INOUT) :: self      ! [-] Turbine instance
@@ -75,8 +76,9 @@ SUBROUTINE init_DTU10MWMonopile(self, config)
     LOGICAL :: exists
 
 
-    ! Path to the rpm curve file (hardcoded)
-    self % path_rpm = "../wind_speed_curves_DTU_10MW/rpm_ws.csv"
+    ! Path to the rpm curve file and subfolder of the OpenFAST files (hardcoded)
+    self % path_rpm  = "../wind_speed_curves_DTU_10MW/rpm_ws.csv"
+    self % OP_subdir = "DTU10MWMonopile/"
 
     ! Verify that the rpm curve file exists
     inquire(file=self % path_rpm, exist=exists)

@@ -105,6 +105,7 @@ OBJS := \
     $(BUILD)/DTU10MWMonopile.o \
     $(BUILD)/DTU10MWFloating.o \
     $(BUILD)/SAITEC2MWFloating.o \
+    $(BUILD)/MYSE3MWMonopile.o \
     $(BUILD)/TurbineFactory.o \
     $(BUILD)/WindFarm.o \
     $(BUILD)/ManualSources.o \
@@ -204,7 +205,10 @@ $(BUILD)/DTU10MWFloating.o: $(SRC_DIR)/emitters/TurbineTypes/DTU10MWFloating.f90
 $(BUILD)/SAITEC2MWFloating.o: $(SRC_DIR)/emitters/TurbineTypes/SAITEC2MWFloating.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/HDF5Utils.o $(BUILD)/SignalProcessing.o $(BUILD)/OpenFASTReader.o $(BUILD)/StructureModel.o $(BUILD)/DrivetrainExcitation.o $(BUILD)/WindTurbine.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
-$(BUILD)/TurbineFactory.o: $(SRC_DIR)/emitters/TurbineFactory.f90 $(BUILD)/WindTurbine.o $(BUILD)/DTU10MWMonopile.o $(BUILD)/DTU10MWFloating.o $(BUILD)/SAITEC2MWFloating.o | $(BUILD)
+$(BUILD)/MYSE3MWMonopile.o: $(SRC_DIR)/emitters/TurbineTypes/MYSE3MWMonopile.f90 $(BUILD)/Kinds.o $(BUILD)/ConfigTypes.o $(BUILD)/FileUtils.o $(BUILD)/HDF5Utils.o $(BUILD)/CSVReader.o $(BUILD)/SignalProcessing.o $(BUILD)/StructureModel.o $(BUILD)/DrivetrainExcitation.o $(BUILD)/WindTurbine.o | $(BUILD)
+	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
+
+$(BUILD)/TurbineFactory.o: $(SRC_DIR)/emitters/TurbineFactory.f90 $(BUILD)/WindTurbine.o $(BUILD)/DTU10MWMonopile.o $(BUILD)/DTU10MWFloating.o $(BUILD)/SAITEC2MWFloating.o $(BUILD)/MYSE3MWMonopile.o | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -c $< -o $@
 
 $(BUILD)/WindFarm.o: $(SRC_DIR)/emitters/WindFarm.f90 $(BUILD)/Kinds.o $(BUILD)/SourceTypes.o $(BUILD)/ConfigTypes.o $(BUILD)/StringUtils.o $(BUILD)/HDF5Utils.o $(BUILD)/SignalProcessing.o $(BUILD)/Emitter.o $(BUILD)/WindTurbine.o $(BUILD)/TurbineFactory.o | $(BUILD)
