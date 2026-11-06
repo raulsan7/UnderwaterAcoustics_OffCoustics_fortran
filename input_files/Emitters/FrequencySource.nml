@@ -90,10 +90,20 @@
 ! =====================================================================
 
 &frequency_source_config
+    ! Debug case of group_by_axes: 7 sources on 2 vertical axes, both of them mixed (dipoles and monopoles)
+    !   Axis A, (x, y) = ( 0.0,  0.0): sources 1-3 (dipole, monopole, dipole)
+    !   Axis B, (x, y) = (40.0, 25.0): sources 4-7 (dipole, dipole, monopole, dipole)
+
     ! --- Sources --- !
-    Nsources = 1                                ! [-] Number of sources (-999 with source_file: its rows)
-    source_xyz(1, 1:3) = 0.0, 0.0, -10.0        ! [m] (a) Source 1: x, y, z
-    source_order(1) = 1                         ! [-] (a) Source 1: 1 dipole, 0 monopole (1 if left out)
+    Nsources = 7                                ! [-] Number of sources (-999 with source_file: its rows)
+    source_xyz(1, 1:3) =  0.0,  0.0,  -5.0      ! [m] (a) Source 1: x, y, z (axis A)
+    source_xyz(2, 1:3) =  0.0,  0.0, -12.0      ! [m] (a) Source 2 (axis A)
+    source_xyz(3, 1:3) =  0.0,  0.0, -20.0      ! [m] (a) Source 3 (axis A)
+    source_xyz(4, 1:3) = 40.0, 25.0,  -3.0      ! [m] (a) Source 4 (axis B)
+    source_xyz(5, 1:3) = 40.0, 25.0,  -9.0      ! [m] (a) Source 5 (axis B)
+    source_xyz(6, 1:3) = 40.0, 25.0, -16.0      ! [m] (a) Source 6 (axis B)
+    source_xyz(7, 1:3) = 40.0, 25.0, -24.0      ! [m] (a) Source 7 (axis B)
+    source_order(1:7) = 1, 0, 1, 1, 1, 0, 1     ! [-] (a) 1 dipole, 0 monopole (1 if left out)
     source_file = 'None'                        ! [-] (b) Text file, rows x y z [order], instead of (a)
 
     ! --- Frequency axis --- !
@@ -105,16 +115,29 @@
     freq_file = 'None'                          ! [-] (c) Text file with the frequencies
 
     ! --- Every source: Fx, Fy, Fz [N] (dipole) or Q [m^3/s] in the first component (monopole) --- !
-    force_re(1, 1, 1:3) =  10.0, 0.0, 0.0       ! [N] (a) f1 =  15 Hz, source 1: force along x
-    force_re(2, 1, 1:3) = 300.0, 0.0, 0.0       ! [N] (a) f2 =  50 Hz, source 1
-    force_re(3, 1, 1:3) = 100.0, 0.0, 0.0       ! [N] (a) f3 = 100 Hz, source 1
-    ! force_re(1, 1, 1) = 1.0e-3                ! [m^3/s] (a) Source 1 as a monopole: source_order(1) = 0,
-    ! force_re(2, 1, 1) = 3.0e-2                ! [m^3/s] (a) the three lines above commented out, and
-    ! force_re(3, 1, 1) = 1.0e-2                ! [m^3/s] (a) Re Q at f1, f2, f3 (Fy and Fz left out)
-    ! force_im(2, 1, 1:3) = 0.0, 0.0, 50.0                      ! [N] (a) Imaginary part (optional)
-    ! force_re_expr(1, 1:3) = '0', '0', '100/(1+(f/50)**2)'     ! [N] (b) Real part as a function of f [Hz]
-    ! force_im_expr(1, 1:3) = '0', '0', '0'                     ! [N] (b) Imaginary part ('0' if left out)
-    ! force_re_expr(1, 1) = '2*sqrt(2)*1.0e-6*10**(150/20)/(f*1025)'    ! [m^3/s] (b) Monopole of SL = 150 dB
+    force_re(1, 1, 1:3) =  10.0,   0.0,   0.0   ! [N] (a) f1 =  15 Hz, source 1 (dipole, axis A)
+    force_re(2, 1, 1:3) = 300.0,   0.0,   0.0   ! [N] (a) f2 =  50 Hz, source 1
+    force_re(3, 1, 1:3) = 100.0,   0.0,   0.0   ! [N] (a) f3 = 100 Hz, source 1
+    force_re(1, 2, 1)   = 1.0e-3                ! [m^3/s] (a) f1, source 2 (monopole, axis A): Re Q
+    force_re(2, 2, 1)   = 3.0e-2                ! [m^3/s] (a) f2, source 2
+    force_re(3, 2, 1)   = 1.0e-2                ! [m^3/s] (a) f3, source 2
+    force_re(1, 3, 1:3) =   0.0,  20.0,  50.0   ! [N] (a) f1, source 3 (dipole, axis A)
+    force_re(2, 3, 1:3) =   0.0, 150.0, 200.0   ! [N] (a) f2, source 3
+    force_re(3, 3, 1:3) =   0.0,  80.0, 100.0   ! [N] (a) f3, source 3
+    force_re(1, 4, 1:3) =  30.0,  30.0,   0.0   ! [N] (a) f1, source 4 (dipole, axis B)
+    force_re(2, 4, 1:3) = 100.0, 100.0,   0.0   ! [N] (a) f2, source 4
+    force_re(3, 4, 1:3) =  50.0,  50.0,   0.0   ! [N] (a) f3, source 4
+    force_re(1, 5, 1:3) =   0.0,   0.0,  80.0   ! [N] (a) f1, source 5 (dipole, axis B)
+    force_re(2, 5, 1:3) =   0.0,   0.0, 250.0   ! [N] (a) f2, source 5
+    force_re(3, 5, 1:3) =   0.0,   0.0, 120.0   ! [N] (a) f3, source 5
+    force_re(1, 6, 1)   = 2.0e-3                ! [m^3/s] (a) f1, source 6 (monopole, axis B): Re Q
+    force_re(2, 6, 1)   = 1.0e-2                ! [m^3/s] (a) f2, source 6
+    force_re(3, 6, 1)   = 5.0e-3                ! [m^3/s] (a) f3, source 6
+    force_re(1, 7, 1:3) =  40.0, -20.0,  10.0   ! [N] (a) f1, source 7 (dipole, axis B)
+    force_re(2, 7, 1:3) = 200.0, -50.0,  60.0   ! [N] (a) f2, source 7
+    force_re(3, 7, 1:3) =  90.0, -30.0,  30.0   ! [N] (a) f3, source 7
+    force_im(2, 4, 1:3) =   0.0,   0.0,  40.0   ! [N] (a) Imaginary part (optional): f2, source 4
+    force_im(2, 6, 1)   = 5.0e-3                ! [m^3/s] (a) Imaginary part: f2, source 6 (Im Q)
     force_re_file = 'None'                      ! [-] (c) Text file with the real part
     force_im_file = 'None'                      ! [-] (c) Text file with the imaginary part ('None' = 0)
 /

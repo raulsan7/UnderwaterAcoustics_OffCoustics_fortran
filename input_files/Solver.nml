@@ -3,7 +3,7 @@
 ! =====================================================================
 
 &solver_config
-    simulation_type = 'TimeSource'     ! [-] 'WindTurbine', 'WindFarm', 'FrequencySource' or 'TimeSource': reads Emitters/<simulation_type>.nml and ComputationSetups/<simulation_type>_CS.nml
+    simulation_type = 'FrequencySource' ! [-] 'WindTurbine', 'WindFarm', 'FrequencySource' or 'TimeSource': reads Emitters/<simulation_type>.nml and ComputationSetups/<simulation_type>_CS.nml
     method = 'AnalyticalNormalModes'    ! [-] Acoustic solver: 'ImageMethod' or 'AnalyticalNormalModes'
     save_path = 'None'                  ! [-] Output file base path/name; 'None'/'Default' builds it from the turbine/solver settings
     extra_label = 'None'                ! [-] Appended to the file name as "_<extra_label>"; 'None' or '' adds nothing

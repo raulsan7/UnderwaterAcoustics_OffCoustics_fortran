@@ -1,6 +1,6 @@
 # Architecture of the off-coustics Fortran solver
 
-This document describes how the solver in `FORTRAN/src` and `FORTRAN/app` is organised after the refactor of 10/2026 and the manual sources added since (`FrequencySource`, `TimeSource`): the data flow, the modules and their layers, the contracts between them, the output interface, and the decisions taken for future work. The code is the reference; this file tells where things are and why they are there. It describes the code with `frequency_source_inputs.patch` applied (08/10/2026) and the monopoles of the manual sources (13/10/2026).
+This document describes how the solver in `FORTRAN/src` and `FORTRAN/app` is organised after the refactor of 10/2026 and the manual sources added since (`FrequencySource`, `TimeSource`): the data flow, the modules and their layers, the contracts between them, the output interface, and the decisions taken for future work. The code is the reference; this file tells where things are and why they are there. It describes the code with `frequency_source_inputs.patch` applied (08/10/2026), the monopoles of the manual sources (13/10/2026), and the grouping of the sources into vertical axes used by the normal-mode kernels (06/11/2026).
 
 All Fortran code follows `Programming_style_guidelines.txt`.
 
@@ -150,7 +150,7 @@ What every module contains, and what must not go there:
 | Module | Contains | Must not contain |
 |---|---|---|
 | `Kinds` | Kind parameters (`I32`, `WP`, ...), `PI`, `I1`, the parser sentinels `DEFAULT_R`, `DEFAULT_I` and the parser buffer sizes `MAX_PARSE_OBS`, `MAX_PARSE_SRC`, `MAX_PARSE_FREQ` | Types or procedures |
-| `SourceTypes` | `AcousticSource_t`, `GeometricData_t`, the multipole labels `SOURCE_MONOPOLE`, `SOURCE_DIPOLE` and the strength convention of each order (force of a dipole, volume velocity of a monopole) | Procedures, configuration |
+| `SourceTypes` | `AcousticSource_t`, `GeometricData_t`, `AxisGroup_t`, the multipole labels `SOURCE_MONOPOLE`, `SOURCE_DIPOLE` and the strength convention of each order (force of a dipole, volume velocity of a monopole), and `group_by_axes`, the only procedure (it groups the sources into vertical axes from their own `xyz` and `order`) | Other procedures, configuration |
 | `ConfigTypes` | Every `Config_*_t` filled in by the parser, including `Config_Method_t` and its extensions | Procedures, run-time state |
 | `FFTW3` | C bindings of FFTW3 | Anything else |
 | `StringUtils` | `to_upper`, `split_tokens`, `is_data_line` | File or HDF5 I/O |
@@ -267,9 +267,9 @@ Deferred procedures, implemented by every method:
 
 | Procedure | Contract |
 |---|---|
-| `init(self, sources, config)` | Moves `xyz`, `Force`, `Freqs` and `order` out of `sources` (`MOVE_ALLOC`), stops if a source has an order without a kernel (both methods implement `SOURCE_MONOPOLE` and `SOURCE_DIPOLE`), copies `env`, `run_inputs` and the solver settings (`save_path`, `extra_label`, `block_size`, `debug`, `in_cluster`, `update_existing`, `mask_distance`), reads its own `Config_X_t`, calls `check_sources_in_water` once its environment (seabed included) is set and `set_absorption` (the frequencies are known), calls `build_save_path`, prints `get_name()`, and frees `sources` and `config` |
+| `init(self, sources, config)` | Moves `xyz`, `Force`, `Freqs` and `order` out of `sources` (`MOVE_ALLOC`), stops if a source has an order without a kernel (both methods implement `SOURCE_MONOPOLE` and `SOURCE_DIPOLE`), copies `env`, `run_inputs` and the solver settings (`save_path`, `extra_label`, `block_size`, `debug`, `in_cluster`, `update_existing`, `mask_distance`), reads its own `Config_X_t`, calls `check_sources_in_water` once its environment (seabed included) is set and `set_absorption` (the frequencies are known); `AnalyticalNormalModes` also calls `sources % group_by_axes()` right after `check_sources_in_water`; calls `build_save_path`, prints `get_name()`, and frees `sources` and `config` |
 | `get_name(self)` | Returns the human-readable name and stores it in `solver_name` (written as the `Method` dataset) |
-| `compute_pressure(self, observers, block_size, total_pressure)` | Pressure `(Nfreqs, Nobs)` at `observers (Nobs, 3)` for every source frequency. The parallel blocks split the observers, never the sources. One kernel per multipole order present is called (`has_dipoles`, `has_monopoles`); each one skips (`cycle`) the sources of the other orders, and its result is accumulated before the next kernel is called. With dipoles only, only the dipole kernel runs, so a set of dipoles is computed as before the monopoles (the effect on the bits is in §8). With `env % absorption` the kernels use `alpha(f)` [Np/m]: IM the complex wavenumber k + i*alpha on every path (`exp(-alpha*R)`, and `1/R + alpha - i*k` in the dipole); ANM `exp(-delta_m*r)` on the Hankel functions of every propagating mode, `delta_m = Im sqrt((k + i*alpha)^2 - k_zm^2)`; without it the loops of before run unchanged. Called only through `compute_pressure_masked` |
+| `compute_pressure(self, observers, block_size, total_pressure)` | Pressure `(Nfreqs, Nobs)` at `observers (Nobs, 3)` for every source frequency. The parallel blocks split the observers, never the sources. One kernel per multipole order present is called (`has_dipoles`, `has_monopoles`); each one skips (`cycle`) the sources of the other orders, and its result is accumulated before the next kernel is called. The ANM kernels also receive `sources % axis` and visit the sources by vertical axes: the horizontal distance, the Hankel functions of every mode (with their absorption factor) and the evanescent cutoff are evaluated once per observer, axis and frequency and reused by every source of the axis (an axis without sources of the kernel's order is skipped); the parallel blocks are those of before. With dipoles only, only the dipole kernel runs, so a set of dipoles is computed as before the monopoles (the effect on the bits is in §8). With `env % absorption` the kernels use `alpha(f)` [Np/m]: IM the complex wavenumber k + i*alpha on every path (`exp(-alpha*R)`, and `1/R + alpha - i*k` in the dipole); ANM `exp(-delta_m*r)` on the Hankel functions of every propagating mode, `delta_m = Im sqrt((k + i*alpha)^2 - k_zm^2)`; without it the loops of before run unchanged. Called only through `compute_pressure_masked` |
 | `save_parameters(self, emitter)` | In this order: `check_update(emitter)`, its own datasets, `save_shared_parameters(emitter)`, `emitter % save_params`, `write_txt_summary(emitter)` |
 | `build_save_path(self)` | Calls `resolve_save_path(method_tag)` with its tag, e.g. `_IM30`, `_ANM24` |
 | `write_txt_summary(self, emitter)` | Writes the `.dat` header: title, `emitter % write_txt`, environment (ending with `write_txt_water`) and solver blocks |
@@ -312,6 +312,7 @@ Other shared procedures:
 | `Force` | `(Nfreqs, Nsources, 3)` [N] | Complex source forces (radiation-impedance corrected for turbines); a monopole has its volume velocity Q [m^3/s] in component 1 and 0 in components 2-3. The convention of each order is in `SourceTypes`: peak complex amplitudes, time factor `exp(-i*w*t)` |
 | `Freqs` | `(Nfreqs)` [Hz] | Frequency vector |
 | `order` | `(Nsources)` [-] | Multipole order label: `SOURCE_MONOPOLE = 0`, `SOURCE_DIPOLE = 1` (1 for every source of a turbine or farm); saved as `Source_order` by the manual sources only |
+| `axis` | `(Naxes)` of `AxisGroup_t` | Vertical axes of the sources, not filled in by the emitters: built by `group_by_axes(tolerance)` in the `init` of the method that uses it (ANM). A source joins the first axis whose first source lies within `tolerance` in (x, y) (1 cm by default, `<=`, so 0 asks for the same x and y), or else opens a new axis. Each axis has `x`, `y` (those of its first source, at which every source of the axis is evaluated), `Nsources`, `Nmonopoles`, `Ndipoles` and `idx` (indices into `xyz`, `Force`, `order`, ascending). The axes are numbered in order of first appearance. A DTU 10 MW monopile is one axis of 25 sources; a farm of monopiles, one per turbine; scattered manual sources, one per source. Not saved |
 | `geometry % center` | `(2)` [m] | Reference centre: turbine barycentre, or mean of the farm or of the sources |
 | `geometry % origin` | `(2)` [m] | Reference origin: turbine axis, or mean of the farm or of the sources |
 | `geometry % direction` | [deg] | Reference direction: wind direction, circular mean of the farm, or 0 for point sources |
@@ -321,7 +322,7 @@ What each consumer takes from them:
 
 | Consumer | Uses |
 |---|---|
-| `compute_pressure` (methods) | `xyz`, `Force`, `Freqs`, `order` (one kernel per order) |
+| `compute_pressure` (methods) | `xyz`, `Force`, `Freqs`, `order` (one kernel per order); ANM also `axis` |
 | `check_observers_distances` | `xyz` |
 | `check_sources_in_water` | `xyz` |
 | `check_update` | `Freqs` |
@@ -366,6 +367,7 @@ The planned emitters are in §7.1.
 ### 5.3 An acoustic method
 1. `src/solvers/methods/X.f90`: `X_t EXTENDS(AcousticSolver_t)` with the deferred procedures (§4.2); `save_parameters` calls `save_shared_parameters`.
    - One kernel per multipole order it supports (the convention of each order is in `SourceTypes`); each kernel skips (`cycle`) the sources of the other orders.
+   - If part of its kernel depends only on the horizontal source-observer distance (as the Hankel functions of ANM), it can call `CALL self % sources % group_by_axes()` in `init` and evaluate that part once per axis (`sources % axis`, §4.3).
    - The check of `init` lists the orders it supports and stops on any other.
    - `compute_pressure` calls the kernel of each order present and accumulates its result before calling the next one.
    - If it builds images, every node carries the order of its parent source (as `ImageSystem_t % order`).
@@ -491,13 +493,12 @@ The sphere stays IM-only: a no-op in the parent plus the IM override, because `A
 Any change that is meant not to change the results follows `Programming_style_guidelines.txt` §8:
 
 1. Keep a copy of the original sources and build the reference binary from them. Run everything in an isolated copy (never in `FORTRAN/`, `turbine_acoustic_data/`, `farm_acoustic_data/`, `source_acoustic_data/` or `SAITEC_acoustic_data/`): a run deletes and rewrites the outputs of the same name.
-2. Builds: `make clean && make -j8`, `fpm build --flag "-O3 -fopenmp"`, and `make clean && make FFLAGS="-O3 -fopenmp -Wall"`, which must give no warning that the reference does not give (keep `-fopenmp` when overriding `FFLAGS`: without it the link fails with undefined `omp_get_wtime_`, `omp_get_max_threads_`, ...). The accepted `-Wall` warnings are the 9 `-Wunused-dummy-argument` of procedures that ignore arguments by design:
-   - `get_enbw` of `Emitter_t`, `WindTurbine_t`, `WindFarm_t` and `TimeSource_t` (`self`);
+2. Builds: `make clean && make -j8`, `fpm build --flag "-O3 -fopenmp"`, and `make clean && make FFLAGS="-O3 -fopenmp -Wall"`, which must give no warning that the reference does not give (keep `-fopenmp` when overriding `FFLAGS`: without it the link fails with undefined `omp_get_wtime_`, `omp_get_max_threads_`, ...). The accepted `-Wall` warnings are the `-Wunused-dummy-argument` of procedures that ignore arguments by design:
    - `z_seabed_base` (`x`, `y`: the default seabed is flat);
    - `to_source_ManualSources` (`config`, which the `Emitter_t` interface requires);
-   - `excitation_spectrum` of `DTU10MWMonopile_t` and `DTU10MWFloating_t` (`self`).
+   - with older gfortran versions also the unused `self` of `get_enbw` of `Emitter_t`, `WindTurbine_t`, `WindFarm_t` and `TimeSource_t`, and of `excitation_spectrum` of `DTU10MWMonopile_t` and `DTU10MWFloating_t` (9 warnings in all); gfortran 15.2 does not report an unused passed-object `self`, so it gives only the 3 above (checked 06/11/2026, the same with the sources of before).
 3. A debug build, `make FFLAGS="-O0 -g -fopenmp -fcheck=all -fbacktrace"`, must run the cases without a runtime error.
-4. Cases, with `OMP_NUM_THREADS=1` and the same `block_size` in both builds. A run is deterministic for given inputs, `block_size` and thread count, and the image method gives the same bits for any of them; the number of threads changes the observer blocks (`block_size` is clamped to `ceil(Nobs / threads)`), and the normal-mode results change in the last bits with the blocks (3.6e-16 of the peak pressure, measured 08/10/2026: with `AnalyticalNormalModes.f90` alone compiled with `-fno-tree-vectorize` the bits no longer depend on the blocks, so the cause is the auto-vectorisation of that module, most likely of the modal shapes tabulated over the observers of each block). The harness of `review/refactor_tools/` (git-ignored, kept locally, not in every checkout) runs them:
+4. Cases, with `OMP_NUM_THREADS=1` and the same `block_size` in both builds. A run is deterministic for given inputs, `block_size` and thread count, and the image method gives the same bits for any of them; the number of threads changes the observer blocks (`block_size` is clamped to `ceil(Nobs / threads)`), and the normal-mode results change in the last bits with the blocks (3.6e-16 of the peak pressure, measured 08/10/2026: with `AnalyticalNormalModes.f90` alone compiled with `-fno-tree-vectorize` the bits no longer depend on the blocks, so the cause is the auto-vectorisation of that module, most likely of the modal shapes tabulated over the observers of each block). The harness of `review/refactor_tools/` ran them (git-ignored and no longer on disk since 10/2026: the cases below are rebuilt by hand in an isolated copy):
    ```bash
    python refactor_cases.py setup   <reference_src_dir> <cases_root>
    python refactor_cases.py run     <binary> <cases_root> <tag>
@@ -523,5 +524,15 @@ Any change that is meant not to change the results follows `Programming_style_gu
 - IM (2000 and 4000 images) against ANM, monopole, 5 and 20 kHz, 0.1 to 1 km: 0.001 to 0.017 dB rms (0.012 to 0.055 dB without absorption); the effect of the absorption agrees within 0.07 dB;
 - with `absorption = .false.` (and the template `Environment.nml` with the new lines), the shipped `FrequencySource` and `TimeSource` cases with IM and ANM, all steps, against the binary of before: identical HDF5, `.dat` and stdout;
 - the debug build runs them without a runtime error, and `-Wall` gives only the 9 accepted warnings.
+
+**Vertical axes.** A change in `group_by_axes` or in the loops of the ANM kernels repeats the checks of 06/11/2026 (`OMP_NUM_THREADS=1`, against the binary of before):
+- a `FrequencySource` of 7 sources on 2 axes, both mixed (axis A at (0, 0): dipole, monopole, dipole; axis B at (40, 25): dipole, dipole, monopole, dipole), 3 frequencies, all steps, with and without absorption: `group_by_axes` gives 2 axes of 3 and 4 sources with the right counts, and every HDF5 dataset, the `.dat` and stdout are identical;
+- a farm of 4 DTU 10 MW monopiles (2 x 2, 1000 m by 800 m, 11.4, 8.0, 15.0 and 4.5 m/s; 100 sources on 4 axes of 25, 1926 frequencies, 24 modes; spectrums, polar, line): identical;
+- the shipped `TimeSource` with ANM, and the shipped `FrequencySource` and `TimeSource` with IM (which does not use the axes): identical;
+- the debug build runs them without a runtime error, `-Wall` gives only the accepted warnings, and `fpm build` compiles.
+
+The result is bit-identical because, within an axis, the sources are added in ascending order and every expression keeps its operands in the order of before: `coef_xy * H1 * F_dot_rhat` written as `coef_xy * F_dot_rhat * H1` changed the pressures by up to 3e-13 (relative). With the sources of an axis not contiguous (interleaved with those of another axis) the sum is reordered and the results change in the last bits; with a source within the tolerance but not exactly on its axis, its horizontal distance is that of the first source of the axis.
+
+Time of the same farm (spectrums, polar, line, sliceXY, sliceVertical; 5300 observers): 145 s before and 11 s after with 16 threads; spectrums, polar and line with one thread: 58.6 s and 5.2 s. The gain grows with the number of sources per axis: each Hankel function is evaluated once per axis instead of once per source. The image method has nothing to share along an axis (its `sin`/`cos` depend on the distance to each node), so it is unchanged.
 
 **Normal-mode references before 13/10/2026.** The 1/rho of the two terms of `dipolar_pressure_NM` is applied once to the tabulated source shapes `Psi_m(z_s)` and `Psi_m'(z_s)`, instead of twice inside the sum over the modes (2.2 % less time: 175.9 s against 179.9 s for the DTU 10 MW monopile, `decay`, one thread). The `P_*` datasets of the normal modes with dipoles changed in the last bit (at most 2.3e-16, relative); every other dataset, the `.dat`, stdout and the positions of the NaN are identical, and the image method is unchanged. An ANM reference made before that date is no longer bitwise comparable and must be regenerated; the IM references remain valid. Moving the loop over the sources outside was also tried: identical results and the same time (180.6 s), so the loop order was kept.

@@ -5,9 +5,7 @@
 # 1. Ignora todo en la raíz y subcarpetas
 # *
 /build*
-/turbine_acoustic_data
-/farm_acoustic_data
-/source_acoustic_data
+/*_acoustic_data
 *.hdf5
 /SAITEC*
 /figures
